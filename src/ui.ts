@@ -1015,8 +1015,8 @@ const graphScroll = $('#graph-scroll');
 $svg('#graph-svg').addEventListener('click', (ev) => {
   const el = ev.target as SVGElement;
   const hash = el.dataset?.hash ?? null;
-  if (hash === selectedHash) return;
-  selectedHash = hash;
+  // Clicking the selected row again clears the selection.
+  selectedHash = hash === selectedHash ? null : hash;
   void refresh();
 });
 

@@ -520,6 +520,12 @@ main {
   fill-opacity: 0.12;
 }
 
+#graph-svg rect.graph-row-hit {
+  fill: transparent;
+  pointer-events: fill;
+  cursor: pointer;
+}
+
 #graph-svg circle.graph-node-selected {
   fill: none;
   stroke: var(--accent);

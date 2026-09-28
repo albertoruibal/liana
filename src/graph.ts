@@ -5,6 +5,7 @@ import { REF_ICON_PATHS } from './refs';
 import { isoDate, isoDateTime } from './dates';
 
 const ROW_H = 42;
+const TOP_PAD = 24;
 const COL_W = 30;
 const DOT_R = 7;
 const LABEL_FS = 12.5; // px, keep in sync with .graph-row-label in styles.css
@@ -103,7 +104,6 @@ export function renderGraph(
   selectedHash: string | null = null,
 ): GraphMetrics {
   const ns = 'http://www.w3.org/2000/svg';
-  const TOP_PAD = 24;
   const LEFT_PAD = 24;
   const y = (row: number) => TOP_PAD + row * ROW_H;
 
@@ -422,6 +422,23 @@ export function renderGraph(
       authorText.dataset.hash = n.commit.hash;
       svg.appendChild(authorText);
     }
+  }
+
+  // --- Full-width row hit targets ---
+  // One transparent rect per row, painted on top of the edges/labels so a click
+  // anywhere on the row selects the commit. `pointer-events: fill` makes the
+  // transparent fill receive clicks while leaving the graph visible. Start after
+  // the ref column so branch/tag chips keep their own right-click context menu.
+  const hitLeft = refColumnW > 0 ? laneLeft - REF_GAP / 2 : 0;
+  for (const n of layout.nodes) {
+    const hit = document.createElementNS(ns, 'rect');
+    hit.setAttribute('x', String(hitLeft));
+    hit.setAttribute('y', String(y(n.row) - ROW_H / 2));
+    hit.setAttribute('width', String(width - hitLeft));
+    hit.setAttribute('height', String(ROW_H));
+    hit.setAttribute('class', 'graph-row-hit');
+    hit.dataset.hash = n.commit.hash;
+    svg.appendChild(hit);
   }
 
   // --- Row hover highlight ---
