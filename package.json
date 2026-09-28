@@ -1,0 +1,24 @@
+{
+  "name": "liana",
+  "description": "Minimal GitKraken clone: local-only commit graph with commit / rebase / cherry-pick",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "fixture": "bash scripts/make-fixture-repo.sh test-repo"
+  },
+  "dependencies": {
+    "lit": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.11"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

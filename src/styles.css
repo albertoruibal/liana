@@ -1,0 +1,194 @@
+/* gitkraken-lite — dark GitKraken-ish theme */
+
+:root {
+  --bg: #1e2229;
+  --bg-graph: #1e2229;
+  --bg-panel: #262b33;
+  --bg-input: #31363f;
+  --border: #3a404b;
+  --fg: #d7dce2;
+  --fg-dim: #8a919c;
+  --accent: #4fc3f7;
+  --head: #ffd54f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.repo-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+button {
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#graph-scroll {
+  flex: 1;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+#graph-pane {
+  min-width: max-content;
+  padding: 0;
+}
+
+#graph-svg text.graph-row-label {
+  fill: var(--fg);
+  font-size: 12.5px;
+}
+
+.ref-chip {
+  fill: var(--fg-dim);
+  font-size: 11px;
+}
+
+.ref-chip.ref-head {
+  fill: #1e2229;
+  font-weight: 700;
+}
+
+#detail-pane {
+  width: 340px;
+  padding: 14px;
+  overflow: auto;
+  background: var(--bg-panel);
+}
+
+#detail-pane h3 {
+  margin-top: 0;
+}
+
+.muted {
+  color: var(--fg-dim);
+}
+
+.hint {
+  font-size: 12px;
+}
+
+.error {
+  color: #e57373;
+}
+
+code {
+  background: var(--bg-input);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+ul.branch-list,
+ul.status-list {
+  list-style: none;
+  padding: 0;
+}
+
+ul.branch-list li {
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+ul.branch-list li:hover {
+  background: var(--bg-input);
+}
+
+.status-code {
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+dialog {
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 420px;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
+dialog textarea {
+  width: 100%;
+  background: var(--bg-input);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font: inherit;
+}
+
+dialog label {
+  display: block;
+  margin-bottom: 12px;
+}
+
+dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+
+#commit-status {
+  color: #e57373;
+  min-height: 18px;
+  margin-bottom: 8px;
+}

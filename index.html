@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>liana</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header id="toolbar">
+      <span id="repo-name" class="repo-name">liana</span>
+      <div class="spacer"></div>
+      <button id="btn-refresh" title="Reload commit graph">Refresh</button>
+      <button id="btn-commit" title="Stage all changes and create a commit">
+        Commit all…
+      </button>
+      <button id="btn-open-repo" title="Open a different repository folder">
+        Open repo…
+      </button>
+    </header>
+    <main>
+      <div id="graph-scroll">
+        <div id="graph-pane">
+          <svg id="graph-svg"></svg>
+        </div>
+      </div>
+      <div id="detail-pane"></div>
+    </main>
+    <dialog id="commit-dialog">
+      <form method="dialog">
+        <label>
+          Commit message
+          <textarea id="commit-message" rows="4" placeholder="What changed?"></textarea>
+        </label>
+        <div id="commit-status"></div>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button id="commit-submit" value="ok">Commit</button>
+        </menu>
+      </form>
+    </dialog>
+    <script type="module" src="/src/ui.ts"></script>
+  </body>
+</html>
