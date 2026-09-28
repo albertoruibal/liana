@@ -96,6 +96,27 @@ export interface RepoStatus {
   entries: StatusEntry[];
 }
 
+/** A configured remote with its fetch/push URL. */
+export interface RemoteInfo {
+  name: string;
+  url: string;
+}
+
+/** Sync state of the checked-out branch against its upstream, plus configured remotes. */
+export interface RemoteStatus {
+  /** Checked-out branch, or null when detached. */
+  currentBranch: string | null;
+  remotes: RemoteInfo[];
+  /** Upstream ref, e.g. "origin/main", or null when the branch has no upstream. */
+  upstream: string | null;
+  /** Commits on HEAD not on the upstream (0 when there is no upstream). */
+  ahead: number;
+  /** Commits on the upstream not on HEAD (0 when there is no upstream). */
+  behind: number;
+  /** Value of `credential.helper`, or null when unset. */
+  credentialHelper: string | null;
+}
+
 /** Reset mode for `git reset --<mode>`, controlling index/worktree handling. */
 export type ResetMode = 'soft' | 'mixed' | 'hard';
 

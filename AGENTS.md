@@ -37,8 +37,13 @@ server (`electron/server.ts`) in the packaged app.
   the client). When changing a git command, mirror it in both files and keep the
   types in `src/types.ts` identical on both sides. `npm run build` must not emit any
   `node:` import into `dist/assets/`.
-- **Operations are local-only by design.** No clone/fetch/push/pull/remotes UI.
-  If a request needs network, it's out of scope — say so instead of adding it.
+- **Network operations are limited to push / pull / login.** Clone, fetch,
+  remote *management* (add/rename/set-url), submodules, and conflict-resolution UI
+  stay out of scope. Push/pull/login are the only sanctioned network operations;
+  they must set `GIT_TERMINAL_PROMPT=0` so git never blocks on a terminal prompt,
+  and must surface git's stderr through `{error}` unchanged. Credentials come from
+  git's own credential helper / SSH agent — never persist secrets in the app.
+  If a request needs any other network capability, say so instead of adding it.
 - **Conflicts surface, never get hidden.** Rebase/cherry-pick failures return
   git's stderr through the API (`{error}`); the UI shows it with `alert()`.
   Don't swallow stderr or invent status codes.

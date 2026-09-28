@@ -1,6 +1,6 @@
 {
   "name": "liana",
-  "description": "Minimal local git GUI: local-only commit graph with commit / rebase / cherry-pick",
+  "description": "Minimal git GUI: commit graph with commit / rebase / cherry-pick, push / pull / login",
   "version": "0.1.0",
   "private": true,
   "type": "module",

@@ -5,7 +5,7 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } 
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
+import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -22,6 +22,7 @@ interface RepoTab {
   name: string;
   selectedHash: string | null;
   lastResponse: StateResponse | null;
+  remoteStatus: RemoteStatus | null;
   panX: number;
   panY: number;
   zoom: number;
@@ -34,6 +35,7 @@ let currentLayout: GraphLayout | null = null;
 let selectedHash: string | null = null;
 let repoName = '';
 let lastResponse: StateResponse | null = null;
+let remoteStatus: RemoteStatus | null = null;
 
 // Graph viewport transform: pan offset (px) and zoom scale.
 let panX = 0;
@@ -50,6 +52,7 @@ function saveActive(): void {
   if (!t) return;
   t.selectedHash = selectedHash;
   t.lastResponse = lastResponse;
+  t.remoteStatus = remoteStatus;
   t.panX = panX;
   t.panY = panY;
   t.zoom = zoom;
@@ -60,6 +63,7 @@ function loadTab(tab: RepoTab): void {
   activeId = tab.id;
   selectedHash = tab.selectedHash;
   lastResponse = tab.lastResponse;
+  remoteStatus = tab.remoteStatus;
   panX = tab.panX;
   panY = tab.panY;
   zoom = tab.zoom;
@@ -157,6 +161,21 @@ function formatDiffStat(stat: string): string {
     .join('\n');
 }
 
+/** One-line upstream sync summary shown on the repo overview. */
+function syncSummaryHtml(): string {
+  const rs = remoteStatus;
+  if (!rs) return '';
+  if (rs.remotes.length === 0) {
+    return '<p class="sync-status muted">No remote configured — add one with <code>git remote add</code> to push or pull.</p>';
+  }
+  if (!rs.upstream) return '';
+  const parts: string[] = [];
+  if (rs.ahead > 0) parts.push(`${rs.ahead} ahead`);
+  if (rs.behind > 0) parts.push(`${rs.behind} behind`);
+  const divergence = parts.length > 0 ? ` · ${parts.join(', ')}` : ' · up to date';
+  return `<p class="sync-status"><code>${esc(rs.upstream)}</code>${divergence}</p>`;
+}
+
 function renderDetail(commits: GitCommit[], state: RepoState | undefined, status: RepoStatus | undefined): void {
   const pane = $('#detail-pane');
   const commit = commits.find((c) => c.hash === selectedHash);
@@ -174,6 +193,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     html += '<h3>Repository</h3>';
     if (state) {
       html += `<p class="muted">${esc(repoName)} — ${esc(state.headBranch ?? 'detached HEAD')}</p>`;
+      html += syncSummaryHtml();
       if (state.branches.length > 0) {
         html += '<h4>Branches</h4><ul class="branch-list">';
         for (const b of state.branches) {
@@ -350,6 +370,7 @@ function renderAll(resp: StateResponse): void {
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
   setRepoDirty(resp.status?.entries.length ?? 0);
+  updateSyncButtons();
 }
 
 function setRepoDirty(count: number): void {
@@ -459,6 +480,7 @@ function renderNoRepo(): void {
       <strong>liana</strong>
       <span class="hint">Open a local git repository to see its commit graph.</span>
     </div>`;
+  updateSyncButtons();
 }
 
 /** Open a folder picker and add the chosen repository as a tab. */
@@ -500,6 +522,7 @@ async function addRepo(path: string, activate: boolean): Promise<void> {
     name: res.name,
     selectedHash: null,
     lastResponse: null,
+    remoteStatus: null,
     panX: 0,
     panY: 0,
     zoom: 1,
@@ -538,6 +561,7 @@ function closeTab(id: string): void {
       activeId = null;
       selectedHash = null;
       lastResponse = null;
+      remoteStatus = null;
       repoName = '';
       renderNoRepo();
     }
@@ -554,14 +578,19 @@ async function refresh(): Promise<void> {
     return;
   }
   try {
-    const resp = await api<StateResponse>('/state');
+    const [resp, remote] = await Promise.all([
+      api<StateResponse>('/state'),
+      api<RemoteStatus>('/remote-status').catch(() => null),
+    ]);
     // A tab switch landed while this was in flight — drop the stale response.
     if (activeId !== reqId) return;
     repoName = resp.state?.name ?? tab.name;
     tab.name = repoName;
     tab.lastResponse = resp;
+    tab.remoteStatus = remote;
     setRepoName(repoName);
     lastResponse = resp;
+    remoteStatus = remote;
     renderAll(resp);
     renderTabs();
     persistTabs();
@@ -803,7 +832,162 @@ $('#rebase-cancel').addEventListener('click', (ev) => {
   $<HTMLDialogElement>('#rebase-dialog').close();
 });
 
-$('#btn-open-repo').addEventListener('click', () => void openRepo());
+// --- Push / pull / remotes ---
+
+/** Enable the sync buttons and set an informative tooltip from the remote status. */
+function updateSyncButtons(): void {
+  const hasRepo = !!activeTab();
+  const rs = remoteStatus;
+  const push = $<HTMLButtonElement>('#btn-push');
+  const pull = $<HTMLButtonElement>('#btn-pull');
+  push.disabled = !hasRepo;
+  pull.disabled = !hasRepo;
+  if (!hasRepo) return;
+  if (!rs || rs.remotes.length === 0) {
+    push.title = 'No remote configured';
+    pull.title = 'No remote configured';
+    return;
+  }
+  const branch = rs.currentBranch ?? 'detached HEAD';
+  push.title = rs.upstream ? `Push ${branch} to ${rs.upstream}` : `Push ${branch} and set upstream`;
+  pull.title = rs.upstream ? `Pull ${rs.upstream} into ${branch}` : 'Push first to set an upstream';
+}
+
+/** Run a network git action, surfacing git's error and reloading on success. */
+async function runSync(route: '/push' | '/pull', body: unknown): Promise<void> {
+  try {
+    await api(route, body);
+    await refresh();
+  } catch (err) {
+    alert(`${route === '/push' ? 'Push' : 'Pull'} failed:\n${String(err)}`);
+  }
+}
+
+/** Push, prompting for a remote when several exist and none is the upstream. */
+async function doPush(): Promise<void> {
+  const rs = remoteStatus;
+  if (!rs) return;
+  if (rs.remotes.length === 0) {
+    alert('No remote configured. Add one with `git remote add <name> <url>`.');
+    return;
+  }
+  if (rs.upstream) {
+    await runSync('/push', {});
+    return;
+  }
+  if (rs.remotes.length === 1) {
+    await runSync('/push', {});
+    return;
+  }
+  const remote = await pickRemote('Push to which remote?');
+  if (remote) await runSync('/push', { remote });
+}
+
+async function doPull(): Promise<void> {
+  const rs = remoteStatus;
+  if (!rs) return;
+  if (!rs.upstream) {
+    alert('No upstream configured. Push this branch first to set one.');
+    return;
+  }
+  await runSync('/pull', {});
+}
+
+/** Modal remote chooser; resolves to the chosen name or null when cancelled. */
+function pickRemote(subtitle: string): Promise<string | null> {
+  const dlg = $<HTMLDialogElement>('#remote-dialog');
+  $('#remote-subtitle').textContent = subtitle;
+  const list = $('#remote-list');
+  list.replaceChildren();
+  return new Promise((resolve) => {
+    const finish = (value: string | null): void => {
+      cancel.removeEventListener('click', onCancel);
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.close();
+      resolve(value);
+    };
+    const onCancel = (): void => finish(null);
+    const cancel = $<HTMLButtonElement>('#remote-cancel');
+    cancel.addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onCancel);
+    for (const r of remoteStatus?.remotes ?? []) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn remote-choice';
+      btn.innerHTML = `<span class="remote-name">${esc(r.name)}</span><span class="remote-url muted">${esc(r.url)}</span>`;
+      btn.addEventListener('click', () => finish(r.name));
+      list.appendChild(btn);
+    }
+    dlg.showModal();
+  });
+}
+
+function renderLoginDialog(): void {
+  const rs = remoteStatus;
+  const select = $<HTMLSelectElement>('#login-remote');
+  select.replaceChildren();
+  const urlLine = $('#login-remote-url');
+  const helperLine = $('#login-helper');
+  $('#login-status').textContent = '';
+  if (!rs || rs.remotes.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'No remote configured';
+    opt.value = '';
+    select.appendChild(opt);
+    select.disabled = true;
+    urlLine.textContent = '';
+    $<HTMLButtonElement>('#login-test').disabled = true;
+  } else {
+    select.disabled = false;
+    $<HTMLButtonElement>('#login-test').disabled = false;
+    for (const r of rs.remotes) {
+      const opt = document.createElement('option');
+      opt.value = r.name;
+      opt.textContent = r.name;
+      select.appendChild(opt);
+    }
+    urlLine.textContent = rs.remotes[0]?.url ?? '';
+  }
+  helperLine.textContent = rs?.credentialHelper
+    ? rs.credentialHelper
+    : 'none — git will use the SSH agent or prompt-free helpers only';
+}
+
+$('#btn-push').addEventListener('click', () => void doPush());
+$('#btn-pull').addEventListener('click', () => void doPull());
+
+$('#btn-login').addEventListener('click', () => {
+  renderLoginDialog();
+  $<HTMLDialogElement>('#login-dialog').showModal();
+});
+
+$('#login-remote').addEventListener('change', (ev) => {
+  const name = (ev.target as HTMLSelectElement).value;
+  const r = (remoteStatus?.remotes ?? []).find((x) => x.name === name);
+  $('#login-remote-url').textContent = r?.url ?? '';
+  $('#login-status').textContent = '';
+});
+
+$('#login-test').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const remote = $<HTMLSelectElement>('#login-remote').value;
+  if (!remote) return;
+  const status = $('#login-status');
+  status.textContent = 'Testing…';
+  void (async () => {
+    try {
+      await api('/remote-test', { remote });
+      status.textContent = `Connected to ${remote}.`;
+    } catch (err) {
+      status.textContent = String(err);
+    }
+  })();
+});
+
+$('#login-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#login-dialog').close();
+});
 
 // Selection: click a dot/label — any SVG element tagged with data-hash.
 // Clicking empty SVG space clears the selection.
@@ -1129,6 +1313,11 @@ document.addEventListener('keydown', (ev) => {
   const nameDlg = $<HTMLDialogElement>('#name-dialog');
   const resetDlg = $<HTMLDialogElement>('#reset-dialog');
   const stashDlg = $<HTMLDialogElement>('#stash-dialog');
+  const loginDlg = $<HTMLDialogElement>('#login-dialog');
+  if (loginDlg.open) {
+    loginDlg.close();
+    return;
+  }
   if (resetDlg.open) {
     resetDlg.close();
     return;

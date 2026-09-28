@@ -12,6 +12,7 @@ import type {
   GitCommit,
   RebaseAction,
   RebaseTodoItem,
+  RemoteStatus,
   RepoState,
   RepoStatus,
   ResetMode,
@@ -23,6 +24,8 @@ export class GitError extends Error {
   constructor(
     message: string,
     public readonly stderr: string,
+    /** HTTP status the caller should surface; git failures default to 500. */
+    public readonly status: number = 500,
   ) {
     super(message);
   }
@@ -449,7 +452,150 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
 export async function deleteRemoteBranchPush(repoPath: string, name: string): Promise<void> {
   const m = /^([^/]+)\/(.+)$/.exec(name);
   if (!m || !m[1] || !m[2]) throw new GitError(`Not a remote branch: ${name}`, '');
-  await git(repoPath, ['push', m[1], '--delete', m[2]]);
+  await git(repoPath, ['push', m[1], '--delete', m[2]], { GIT_TERMINAL_PROMPT: '0' });
+}
+
+// --- Remotes: push / pull / login (network) (mirrors src/api.ts) ---
+
+/** `GIT_TERMINAL_PROMPT=0` so a missing credential fails fast instead of hanging. */
+const NET_ENV: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: '0' };
+
+/** Current branch name, or null when HEAD is detached / unborn. */
+export async function currentBranch(repoPath: string): Promise<string | null> {
+  try {
+    const name = (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+    return name && name !== 'HEAD' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Configured remotes with their fetch URLs, de-duplicated by name. */
+export async function loadRemotes(
+  repoPath: string,
+): Promise<Array<{ name: string; url: string }>> {
+  const names = (await git(repoPath, ['remote'])).split('\n').map((s) => s.trim()).filter(Boolean);
+  const remotes: Array<{ name: string; url: string }> = [];
+  for (const name of names) {
+    let url = '';
+    try {
+      url = (await git(repoPath, ['remote', 'get-url', name])).trim();
+    } catch {
+      url = '';
+    }
+    remotes.push({ name, url });
+  }
+  return remotes;
+}
+
+/** Upstream ref of the checked-out branch, e.g. "origin/main", or null when unset. */
+export async function upstreamRef(repoPath: string): Promise<string | null> {
+  try {
+    const out = (
+      await git(repoPath, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+    ).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadRemoteStatus(repoPath: string): Promise<RemoteStatus> {
+  const [branch, remotes, upstream, helper] = await Promise.all([
+    currentBranch(repoPath),
+    loadRemotes(repoPath).catch(() => []),
+    upstreamRef(repoPath),
+    git(repoPath, ['config', '--get', 'credential.helper']).catch(() => ''),
+  ]);
+  let ahead = 0;
+  let behind = 0;
+  if (upstream) {
+    try {
+      const out = (
+        await git(repoPath, ['rev-list', '--left-right', '--count', `${upstream}...HEAD`])
+      ).trim();
+      const [behindStr = '0', aheadStr = '0'] = out.split(/\s+/);
+      behind = Number(behindStr) || 0;
+      ahead = Number(aheadStr) || 0;
+    } catch {
+      // Upstream ref is gone (not fetched yet): report no divergence.
+    }
+  }
+  return {
+    currentBranch: branch,
+    remotes,
+    upstream,
+    ahead,
+    behind,
+    credentialHelper: helper.trim() || null,
+  };
+}
+
+/**
+ * Push the checked-out branch. With an explicit `remote`/`branch` it pushes that
+ * pair; otherwise the branch's upstream is used, or a single configured remote is
+ * adopted with `-u` when there is no upstream yet.
+ */
+export async function pushBranch(
+  repoPath: string,
+  remote?: string,
+  branch?: string,
+): Promise<string> {
+  const branchName = branch?.trim() || (await currentBranch(repoPath));
+  if (!branchName) throw new GitError('Cannot push: detached HEAD', 'Check out a branch first', 400);
+
+  const remotes = await loadRemotes(repoPath);
+  const target = remote?.trim() || '';
+  if (target) {
+    if (!remotes.some((r) => r.name === target))
+      throw new GitError(`Unknown remote: ${target}`, 'Pick a configured remote', 400);
+    const upstream = await upstreamRef(repoPath);
+    if (branch || !upstream) {
+      return (await git(repoPath, ['push', '-u', target, branchName], NET_ENV)).trim();
+    }
+    return (await git(repoPath, ['push', target], NET_ENV)).trim();
+  }
+
+  if (await upstreamRef(repoPath)) {
+    return (await git(repoPath, ['push'], NET_ENV)).trim();
+  }
+  if (remotes.length === 0) {
+    throw new GitError('No remote configured', 'Add a remote with `git remote add` first', 400);
+  }
+  if (remotes.length > 1) {
+    throw new GitError('Multiple remotes configured', 'Pick a remote to push to', 400);
+  }
+  const only = remotes[0]!;
+  return (await git(repoPath, ['push', '-u', only.name, branchName], NET_ENV)).trim();
+}
+
+/** Pull the checked-out branch (merge); callers guard the tree first. */
+export async function pullBranch(
+  repoPath: string,
+  remote?: string,
+  branch?: string,
+): Promise<string> {
+  const target = remote?.trim() || '';
+  if (target) {
+    const branchName = branch?.trim() || (await currentBranch(repoPath));
+    if (!branchName)
+      throw new GitError('Cannot pull: detached HEAD', 'Check out a branch first', 400);
+    return (await git(repoPath, ['pull', target, branchName], NET_ENV)).trim();
+  }
+  if (!(await upstreamRef(repoPath))) {
+    throw new GitError('No upstream configured', 'Push the branch first to set its upstream', 400);
+  }
+  return (await git(repoPath, ['pull'], NET_ENV)).trim();
+}
+
+/** `git ls-remote` a remote to verify connectivity and credentials. */
+export async function testRemote(repoPath: string, remote: string): Promise<void> {
+  const name = remote.trim();
+  if (!name) throw new GitError('Missing remote', 'Pick a configured remote', 400);
+  const remotes = await loadRemotes(repoPath);
+  if (!remotes.some((r) => r.name === name))
+    throw new GitError(`Unknown remote: ${name}`, 'Pick a configured remote', 400);
+  await git(repoPath, ['ls-remote', '--exit-code', name], NET_ENV);
 }
 
 /** Create a lightweight tag at `ref` (`git tag`). */

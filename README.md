@@ -1,8 +1,10 @@
 # Liana
 
-A minimal, local-only git GUI: an interactive commit graph with
-**commit**, **rebase**, and **cherry-pick**. No clone, no fetch, no push — this is a
-visual history surgeon for repositories that already live on your machine.
+A minimal git GUI: an interactive commit graph with
+**commit**, **rebase**, and **cherry-pick**, plus **push**, **pull**, and
+**login** for repositories that already live on your machine. Clone, fetch, and
+remote management are deliberately absent — this is a visual history surgeon, not
+a forge client.
 
 ## Architecture
 
@@ -70,17 +72,27 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/stash` | POST | `{message?, includeUntracked?}` | `git stash push` (`-u` when `includeUntracked`); `{stashed:false}` when clean |
 | `/api/stash-apply` | POST | `{hash}` | `git stash apply` the stash identified by its WIP commit hash (keeps the entry) |
 | `/api/stash-drop` | POST | `{hash}` | `git stash drop` the stash identified by its WIP commit hash |
+| `/api/remote-status` | GET | — | Current branch, remotes, upstream, ahead/behind counts, credential helper |
+| `/api/push` | POST | `{remote?, branch?}` | Push the current branch; sets upstream with `-u` when it has none. 400 without a remote |
+| `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); 409 if dirty |
+| `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
-`/api/cherry-pick`) return HTTP **409** with a human message instead of raw stderr;
-failed operations keep the graph intact. Interactive rebase ships behind
+`/api/cherry-pick`, `/api/pull`) return HTTP **409** with a human message instead of
+raw stderr; failed operations keep the graph intact. Interactive rebase ships behind
 `INTERACTIVE_REBASE_ENABLED` in `src/config.ts`.
+
+The toolbar's **Pull** and **Push** buttons sync the checked-out branch: push sets
+the upstream (`git push -u`) the first time, pull merges with `git pull`. **Login**
+opens a dialog showing the configured remotes and credential helper; it can test a
+remote with `git ls-remote`. Credentials are never stored by Liana — they come from
+git's own credential helper or SSH agent, and git runs with `GIT_TERMINAL_PROMPT=0`
+so a missing credential fails fast with git's error instead of hanging.
 
 Right-click a commit to create a branch/tag there or reset the checked-out branch
 to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
 chip (in the graph or the detail pane) to check it out, or delete it. Deleting a
-remote branch runs `git push <remote> --delete`, so it *is* a network operation
-even though the rest of the app stays local.
+remote branch runs `git push <remote> --delete`.
 
 ## Run
 
@@ -119,9 +131,10 @@ so it can find `git`.
 
 ## Scope: intentionally NOT here
 
-clone / fetch / push / pull / remotes / submodules / conflict resolution UI.
-Operations that would open an editor or conflict mid-rebase return git's error text
-in the API response and the UI shows it.
+clone / fetch / remote management / submodules / conflict resolution UI.
+Push, pull, and login are the only network operations. Operations that would open
+an editor or conflict mid-rebase return git's error text in the API response and
+the UI shows it.
 
 Stash entries appear as synthetic nodes in the graph (one per `git stash list`
 entry, hanging off the commit they were created on) labeled `stash@{n}`. The

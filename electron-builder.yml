@@ -13,8 +13,8 @@ linux:
     - AppImage
     - deb
   category: Development
-  synopsis: Minimal local-only git graph GUI
+  synopsis: Minimal git graph GUI
   description: >-
-    Liana is a minimal, local-only git GUI: an interactive commit graph with
-    commit, rebase, and cherry-pick.
+    Liana is a minimal git GUI: an interactive commit graph with commit, rebase,
+    and cherry-pick, plus push, pull, and login.
   maintainer: Liana

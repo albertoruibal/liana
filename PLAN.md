@@ -67,5 +67,6 @@ Verification recipe for every phase (run while `npm run dev` is up):
 
 ## Out of scope (do NOT add)
 
-clone, fetch, push, pull, remote management, stashes, submodules, conflict
-resolution UI, GitHub integrations. If a request leads there, stop and report.
+clone, fetch, remote management, submodules, conflict
+resolution UI, GitHub integrations. Push, pull, and login are the only sanctioned
+network operations (see AGENTS.md). If a request leads elsewhere, stop and report.
