@@ -74,13 +74,15 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/stash-drop` | POST | `{hash}` | `git stash drop` the stash identified by its WIP commit hash |
 | `/api/remote-status` | GET | — | Current branch, remotes, upstream, ahead/behind counts, credential helper |
 | `/api/push` | POST | `{remote?, branch?, force?}` | Push the current branch; sets upstream with `-u` when it has none. `force` adds `--force-with-lease`. 400 without a remote |
-| `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); 409 if dirty |
+| `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); proceeds with local changes, git's error surfaced if they'd be overwritten |
 | `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
-`/api/cherry-pick`, `/api/pull`) return HTTP **409** with a human message instead of
-raw stderr; failed operations keep the graph intact. Interactive rebase ships behind
-`INTERACTIVE_REBASE_ENABLED` in `src/config.ts`.
+`/api/cherry-pick`) return HTTP **409** with a human message instead of
+raw stderr; failed operations keep the graph intact. Pull is the exception: local
+changes are allowed through and git's own error is surfaced if they'd be
+overwritten. Interactive rebase ships behind `INTERACTIVE_REBASE_ENABLED` in
+`src/config.ts`.
 
 The toolbar's **Pull** and **Push** buttons sync the checked-out branch: push sets
 the upstream (`git push -u`) the first time, pull merges with `git pull`. If a push

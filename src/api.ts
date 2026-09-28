@@ -541,7 +541,10 @@ async function pushBranch(
   return (await gitRun(repoPath, ['push', ...lease, '-u', only.name, branchName], NET_ENV)).trim();
 }
 
-/** Pull the checked-out branch (merge); callers guard the tree first. */
+/**
+ * Pull the checked-out branch (merge). Local changes are allowed through; git
+ * itself refuses (and the caller surfaces its stderr) when they'd be overwritten.
+ */
 async function pullBranch(repoPath: string, remote?: string, branch?: string): Promise<string> {
   const target = remote?.trim() || '';
   if (target) {
@@ -878,8 +881,6 @@ export function createApi(defaultRepo: string | null): Api {
       }
       if (route === '/pull' && method === 'POST') {
         const { remote, branch } = JSON.parse(rawBody) as { remote?: string; branch?: string };
-        const dirty = await dirtyGuard(repoPath, 'pulling');
-        if (dirty) return { status: 409, body: { error: dirty } };
         const out = await pullBranch(repoPath, remote, branch);
         return { status: 200, body: { ok: true, output: out } };
       }

@@ -572,7 +572,10 @@ export async function pushBranch(
   return (await git(repoPath, ['push', ...lease, '-u', only.name, branchName], NET_ENV)).trim();
 }
 
-/** Pull the checked-out branch (merge); callers guard the tree first. */
+/**
+ * Pull the checked-out branch (merge). Local changes are allowed through; git
+ * itself refuses (and the caller surfaces its stderr) when they'd be overwritten.
+ */
 export async function pullBranch(
   repoPath: string,
   remote?: string,
