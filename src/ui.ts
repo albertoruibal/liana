@@ -737,6 +737,11 @@ $('#btn-about').addEventListener('click', () => {
   $<HTMLDialogElement>('#about-dialog').showModal();
 });
 
+$('#about-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#about-dialog').close();
+});
+
 // --- Wire up static UI ---
 
 $('#btn-refresh').addEventListener('click', () => void refresh());
