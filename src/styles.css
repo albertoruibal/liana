@@ -85,7 +85,20 @@ main {
 #graph-scroll {
   flex: 1;
   overflow: auto;
+}
+
+#detail-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
+  touch-action: none;
+}
+
+#detail-resizer:hover,
+#detail-resizer.dragging {
+  background: var(--accent);
 }
 
 #graph-pane {
@@ -166,7 +179,9 @@ main {
 }
 
 #detail-pane {
-  width: 340px;
+  flex: 0 0 var(--detail-width, 340px);
+  width: var(--detail-width, 340px);
+  min-width: 0;
   padding: 14px;
   overflow: auto;
   background: var(--bg-panel);
