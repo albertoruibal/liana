@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-electron/
+release/
 test-repo/
 *.log
 .DS_Store

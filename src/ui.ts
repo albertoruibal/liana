@@ -46,9 +46,12 @@ function $svg(sel: string): SVGSVGElement {
 // --- API helpers ---
 
 async function api<T>(route: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = window.liana?.token;
+  if (token) headers['x-liana-token'] = token;
   const res = await fetch(`/api${route}`, {
     method: body !== undefined ? 'POST' : 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const data = (await res.json()) as T & { error?: string };
@@ -379,9 +382,12 @@ $('#rebase-cancel').addEventListener('click', (ev) => {
 });
 
 $('#btn-open-repo').addEventListener('click', () => {
-  const p = prompt('Path to git repository:', repoName ? '' : '~/workspace/my-repo');
-  if (!p) return;
   void (async () => {
+    // Electron has no window.prompt — use the native folder picker when available.
+    const p = window.liana
+      ? await window.liana.openRepoDialog()
+      : prompt('Path to git repository:', repoName ? '' : '~/workspace/my-repo');
+    if (!p) return;
     try {
       await api('/open', { path: p });
       selectedHash = null;

@@ -1,23 +1,33 @@
 # Liana
 
-A minimal, local-only GitKraken-style git GUI: an interactive commit graph with
+A minimal, local-only git GUI: an interactive commit graph with
 **commit**, **rebase**, and **cherry-pick**. No clone, no fetch, no push — this is a
 visual history surgeon for repositories that already live on your machine.
 
 ## Architecture
 
 ```
-Browser (lit-free vanilla TS + SVG)
-  │  fetch /api/*
-  ▼
-Vite dev server (dev.ts plugin, Node)
-  │  spawn `git …`
-  ▼
-Your repository (working directory, on-disk refs)
+Renderer (lit-free vanilla TS + SVG)          Node
+  │  fetch /api/*                              │
+  ├── browser dev ──► Vite dev server (dev.ts) │
+  └── Electron ─────► electron/server.ts ──────┤
+                          (127.0.0.1 loopback)  │
+                                                ▼
+                                        src/api.ts  ──► spawn `git …`
+                                                ▼
+                        Your repository (working directory, on-disk refs)
 ```
 
-- `dev.ts` — Vite plugin that IS the backend: JSON API under `/api/*`, git CLI wrappers.
-  Runs only under `vite dev` (the production build is a static bundle).
+The backend is `src/api.ts`: a transport-agnostic, Node-only module holding every
+git wrapper and `/api` route behind `createApi(...).handle(route, method, body)`.
+Two thin adapters serve it — the Vite plugin for browser dev, and a loopback HTTP
+server for the packaged Electron app. The renderer only ever speaks `fetch('/api/*')`.
+
+- `src/api.ts` — Node-only backend: JSON route dispatch + git CLI wrappers.
+- `dev.ts` — Vite plugin adapter; runs only under `vite dev`.
+- `electron/main.ts` — main process: window, native folder dialog, git-on-PATH.
+- `electron/server.ts` — packaged mode: loopback server (UI static files + `/api`).
+- `electron/preload.ts` — `contextBridge` surface (`window.liana`).
 - `src/git.ts` — browser-side mirror of the same wrappers (typed contract, kept in sync).
 - `src/layout.ts` — lane assignment (see below). Pure function, no DOM.
 - `src/graph.ts` — SVG renderer: lanes as bezier curves, merge commits as rings,
@@ -29,7 +39,7 @@ Your repository (working directory, on-disk refs)
 Input: commits in `--date-order` (children never before parents). Each commit claims
 the lane previously reserved for it, else the lowest free lane. First-parent edges
 continue straight in the child's lane; second-parent edges curve and take a reserved
-or new lane. This is what produces the GitKraken look with parallel vertical lanes.
+or new lane. This is what produces the parallel vertical lanes.
 
 ## API
 
@@ -64,6 +74,21 @@ Create a demo repo to play with:
 npm run fixture                          # creates ./test-repo
 LIANA_REPO=$PWD/test-repo npm run dev
 ```
+
+### Electron desktop app
+
+```bash
+npm run electron:dev                     # Vite + Electron, HMR, "Open repo…" picker
+LIANA_REPO=$PWD/test-repo npm run electron:dev
+npm run electron:dist                    # -> release/Liana-0.1.0.AppImage, liana_0.1.0_amd64.deb
+```
+
+In dev the Electron window simply loads `http://localhost:5173`, so the Vite plugin
+still serves `/api`. Packaged builds start a loopback server on `127.0.0.1` (ephemeral
+port) that serves the built UI and the same API; API requests carry a per-launch
+`x-liana-token` header so other local processes cannot drive git, and the server binds
+to loopback only. On a GUI launch the app augments `PATH` with common install locations
+so it can find `git`.
 
 ## Scope: intentionally NOT here
 

@@ -1,0 +1,20 @@
+appId: dev.liana.app
+productName: Liana
+directories:
+  output: release
+executableName: liana
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+asar: true
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  synopsis: Minimal local-only git graph GUI
+  description: >-
+    Liana is a minimal, local-only git GUI: an interactive commit graph with
+    commit, rebase, and cherry-pick.
+  maintainer: Liana

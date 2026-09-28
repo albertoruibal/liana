@@ -1,20 +1,31 @@
 {
   "name": "liana",
-  "description": "Minimal GitKraken clone: local-only commit graph with commit / rebase / cherry-pick",
+  "description": "Minimal local git GUI: local-only commit graph with commit / rebase / cherry-pick",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "author": "Liana",
+  "homepage": "https://example.com/liana",
+  "main": "dist-electron/main.mjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "fixture": "bash scripts/make-fixture-repo.sh test-repo"
+    "fixture": "bash scripts/make-fixture-repo.sh test-repo",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json",
+    "electron:compile": "node scripts/build-electron.mjs",
+    "electron:dev": "node scripts/electron-dev.mjs",
+    "electron:build": "npm run build && npm run typecheck && npm run electron:compile",
+    "electron:dist": "npm run electron:build && electron-builder --linux AppImage deb"
   },
   "dependencies": {
     "lit": "^3.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.6.2",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "typescript": "~5.9.3",
     "vite": "^7.1.11"
   },
