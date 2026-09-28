@@ -11,9 +11,10 @@
       <span id="repo-name" class="repo-name">liana</span>
       <div class="spacer"></div>
       <button id="btn-refresh" title="Reload commit graph">Refresh</button>
-      <button id="btn-commit" title="Stage all changes and create a commit">
-        Commit all…
+      <button id="btn-commit" title="Create a commit">
+        Commit…
       </button>
+      <button id="btn-theme" title="Toggle light/dark theme">Theme</button>
       <button id="btn-open-repo" title="Open a different repository folder">
         Open repo…
       </button>
@@ -26,11 +27,25 @@
       </div>
       <div id="detail-pane"></div>
     </main>
+    <dialog id="rebase-dialog">
+      <h3>Interactive rebase</h3>
+      <p class="muted hint" id="rebase-summary"></p>
+      <ol id="rebase-todo"></ol>
+      <div id="rebase-status"></div>
+      <menu>
+        <button id="rebase-cancel" value="cancel">Cancel</button>
+        <button id="rebase-submit" value="ok">Rebase</button>
+      </menu>
+    </dialog>
     <dialog id="commit-dialog">
       <form method="dialog">
         <label>
           Commit message
           <textarea id="commit-message" rows="4" placeholder="What changed?"></textarea>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="commit-stage-all" checked />
+          Stage everything (otherwise commit only staged changes)
         </label>
         <div id="commit-status"></div>
         <menu>

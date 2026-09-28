@@ -3,7 +3,19 @@
 // and maxDepth guards the recursion-free code paths below.
 
 import { spawn } from 'node:child_process';
-import type { BranchInfo, GitCommit, RepoState, RepoStatus, StatusEntry } from './types';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { INTERACTIVE_REBASE_ENABLED } from './config';
+import type {
+  BranchInfo,
+  GitCommit,
+  RebaseAction,
+  RebaseTodoItem,
+  RepoState,
+  RepoStatus,
+  StatusEntry,
+} from './types';
 
 export class GitError extends Error {
   constructor(
@@ -15,7 +27,11 @@ export class GitError extends Error {
 }
 
 /** Run a git command in `repoPath`; resolves stdout, rejects GitError on nonzero exit. */
-export function git(repoPath: string, args: string[]): Promise<string> {
+export function git(
+  repoPath: string,
+  args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       cwd: repoPath,
@@ -24,6 +40,7 @@ export function git(repoPath: string, args: string[]): Promise<string> {
         GIT_CONFIG_NOSYSTEM: '1',
         // Keep output stable regardless of user locale/config
         LC_ALL: 'C',
+        ...extraEnv,
       },
     });
     let stdout = '';
@@ -131,21 +148,37 @@ export async function loadStatus(repoPath: string): Promise<RepoStatus> {
   const entries: StatusEntry[] = [];
   for (const line of out.split('\n')) {
     if (!line) continue;
-    const code = line.slice(0, 2);
+    const xy = line.slice(0, 2);
     const path = line.slice(3);
     if (!path) continue;
-    entries.push({
-      code: code === '??' ? '??' : code[1] !== ' ' && code[1] !== '?' ? code[1]! : code[0]!,
-      path,
-      staged: code[0] !== ' ' && code !== '??',
-    });
+    entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path });
   }
   return { entries };
 }
 
-/** Stage everything and create a commit. Returns the new commit hash. */
-export async function commitAll(repoPath: string, message: string): Promise<string> {
-  await git(repoPath, ['add', '-A']);
+/** Number of uncommitted entries in the working tree (staged or unstaged). */
+export async function dirtyCount(repoPath: string): Promise<number> {
+  return (await loadStatus(repoPath)).entries.length;
+}
+
+/** Returns a human error if the tree is dirty, else null. Mirrors dev.ts dirtyGuard. */
+export async function dirtyGuard(repoPath: string, op: string): Promise<string | null> {
+  const n = await dirtyCount(repoPath);
+  if (n === 0) return null;
+  const changes = n === 1 ? 'change' : 'changes';
+  return `${n} uncommitted ${changes} — commit or stash before ${op}`;
+}
+
+/**
+ * Create a commit. When `stageAll` is true, stage every change first (`add -A`);
+ * otherwise commit only what is already staged. Returns the new commit hash.
+ */
+export async function createCommit(
+  repoPath: string,
+  message: string,
+  stageAll: boolean,
+): Promise<string> {
+  if (stageAll) await git(repoPath, ['add', '-A']);
   const out = await git(repoPath, ['commit', '-m', message]);
   const hash = await git(repoPath, ['rev-parse', 'HEAD']);
   if (!out.includes('created') && !hash) throw new GitError('commit produced no hash', out);
@@ -158,10 +191,137 @@ export async function rebaseOnto(repoPath: string, onto: string): Promise<string
   return out.trim();
 }
 
-/** Cherry-pick `ref` onto the current branch. */
-export async function cherryPick(repoPath: string, ref: string): Promise<string> {
-  const out = await git(repoPath, ['cherry-pick', ref]);
+/**
+ * Cherry-pick `ref` onto the current branch.
+ * `mainline` selects the parent of a merge commit (git -m N);
+ * `record` appends "(cherry picked from ...)" to the message (git -x).
+ */
+export async function cherryPick(
+  repoPath: string,
+  ref: string,
+  opts: { mainline?: number; record?: boolean } = {},
+): Promise<string> {
+  const args = ['cherry-pick'];
+  if (opts.record) args.push('-x');
+  if (opts.mainline !== undefined) args.push('-m', String(opts.mainline));
+  args.push(ref);
+  const out = await git(repoPath, args);
   return out.trim();
+}
+
+/** `git show --stat` for a single commit, as text. */
+export async function commitDiffStat(repoPath: string, hash: string): Promise<string> {
+  return (await git(repoPath, ['show', '--stat', '--format=%h %s (%an)', hash])).trim();
+}
+
+// --- Interactive rebase (mirrors dev.ts) ---
+
+const REBASE_ACTIONS: readonly RebaseAction[] = ['pick', 'drop', 'reword', 'squash'];
+
+export interface RebasePlanItem {
+  hash: string;
+  subject: string;
+  author: string;
+  timestamp: number;
+}
+
+async function resolveCommit(repoPath: string, ref: string): Promise<string> {
+  return (await git(repoPath, ['rev-parse', '--verify', `${ref}^{commit}`])).trim();
+}
+
+/** Commits between `onto` and HEAD, oldest first, that an interactive rebase would replay. */
+export async function loadRebasePlan(
+  repoPath: string,
+  onto: string,
+): Promise<{ onto: string; items: RebasePlanItem[] }> {
+  const ontoHash = await resolveCommit(repoPath, onto);
+  const fmt = ['%H', '%s', '%an', '%at'].join('\x1f');
+  const out = await git(repoPath, [
+    'log',
+    '--reverse',
+    `--pretty=format:${fmt}`,
+    `${ontoHash}..HEAD`,
+  ]);
+  const items: RebasePlanItem[] = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const [hash = '', subject = '', author = '', ts = ''] = line.split('\x1f');
+    items.push({ hash, subject, author, timestamp: Number(ts) || 0 });
+  }
+  return { onto: ontoHash, items };
+}
+
+/** Run an interactive rebase from a generated todo list without opening an editor. */
+export async function executeRebase(
+  repoPath: string,
+  onto: string,
+  items: RebaseTodoItem[],
+): Promise<string> {
+  if (!INTERACTIVE_REBASE_ENABLED) throw new GitError('Interactive rebase disabled', '');
+  const plan = await loadRebasePlan(repoPath, onto);
+  const known = new Set(plan.items.map((i) => i.hash));
+  if (items.length === 0) throw new GitError('Empty rebase todo', 'Nothing to rebase');
+
+  // Resolve abbreviated hashes the UI may send to their full form.
+  const resolved: RebaseTodoItem[] = [];
+  for (const item of items) {
+    try {
+      resolved.push({ ...item, hash: await resolveCommit(repoPath, item.hash) });
+    } catch {
+      throw new GitError(`Unknown commit ${item.hash}`, 'Commit is not in the rebase range');
+    }
+  }
+  items = resolved;
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'liana-rebase-'));
+  try {
+    const todoLines: string[] = [];
+    let haveKept = false;
+    items.forEach((item, idx) => {
+      if (!known.has(item.hash)) {
+        throw new GitError(`Unknown commit ${item.hash}`, 'Commit is not in the rebase range');
+      }
+      if (!REBASE_ACTIONS.includes(item.action)) {
+        throw new GitError(`Bad action ${item.action}`, 'Unknown rebase action');
+      }
+      if (item.action === 'drop') {
+        todoLines.push(`drop ${item.hash}`);
+        return;
+      }
+      if ((item.action === 'reword' || item.action === 'squash') && !item.message?.trim()) {
+        throw new GitError('Missing message', `${item.action} needs a message`);
+      }
+      if (item.action === 'squash' && !haveKept) {
+        throw new GitError('Cannot squash first commit', 'Nothing to squash into');
+      }
+      if (item.action === 'squash') {
+        todoLines.push(`fixup ${item.hash}`);
+      } else {
+        todoLines.push(`pick ${item.hash}`);
+        haveKept = true;
+      }
+      if (item.action === 'reword' || item.action === 'squash') {
+        const msgPath = path.join(dir, `msg-${idx}`);
+        fs.writeFileSync(msgPath, `${item.message!.trim()}\n`);
+        todoLines.push(`exec git commit --amend -F '${msgPath}'`);
+      }
+    });
+
+    const seqEditor = path.join(dir, 'seq-editor.sh');
+    fs.writeFileSync(
+      seqEditor,
+      `#!/bin/sh\ncat > "$1" <<'LIANA_TODO_EOF'\n${todoLines.join('\n')}\nLIANA_TODO_EOF\n`,
+      { mode: 0o755 },
+    );
+
+    return (
+      await git(repoPath, ['-c', 'core.editor=true', 'rebase', '-i', plan.onto], {
+        GIT_SEQUENCE_EDITOR: seqEditor,
+      })
+    ).trim();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** List local branches with head marker, for the checkout menu. */

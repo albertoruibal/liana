@@ -37,10 +37,18 @@ or new lane. This is what produces the GitKraken look with parallel vertical lan
 |---|---|---|---|
 | `/api/state` | GET | — | Repo state, commits (date-order, first 500), status |
 | `/api/open` | POST | `{path}` | Point the server at another local repo |
-| `/api/commit` | POST | `{message}` | `git add -A` + `git commit -m` |
-| `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash |
-| `/api/cherry-pick` | POST | `{ref}` | Cherry-pick a commit hash onto current branch |
+| `/api/commit` | POST | `{message, stageAll?}` | `git commit -m`; stages everything first unless `stageAll` is false |
+| `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
+| `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
+| `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |
+| `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
+| `/api/commit-diff` | POST | `{hash}` | `git show --stat` text for the commit detail pane |
 | `/api/checkout` | POST | `{branch}` | Checkout a local branch |
+
+Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
+`/api/cherry-pick`) return HTTP **409** with a human message instead of raw stderr;
+failed operations keep the graph intact. Interactive rebase ships behind
+`INTERACTIVE_REBASE_ENABLED` in `src/config.ts`.
 
 ## Run
 

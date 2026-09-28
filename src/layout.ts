@@ -1,10 +1,14 @@
-// Lane assignment for the commit graph, in the GitKraken / git log --graph style.
+// Lane assignment for the commit graph, in the GitKraken style.
 //
 // Rules:
 // - Commits arrive in --date-order (parents never earlier in the list than children).
 // - A commit claims the lane previously reserved for it, else the lowest free lane.
-// - A lane reservation means "this lane is spoken for until commit X is laid out";
-//   edges span that whole range, so parallel branches keep their own column.
+// - A lane reservation means "this lane is spoken for until commit X is laid out".
+// - When a commit joins a parent in a *different* lane, the edge curves across and
+//   the child's lane stays occupied until it reaches the parent's row. Without this
+//   a freed lane is immediately reused by the next sibling tip, collapsing several
+//   parallel branches into one tangled column. Keeping it busy gives each branch a
+//   lane of its own, exactly like GitKraken.
 // - First parent: continues straight down in the child's own lane when the parent
 //   has no reservation yet (the classic mainline look).
 // - Second+ parents: reserved lane if one exists, otherwise a new lane; drawn curved.
@@ -20,18 +24,22 @@ export function layoutGraph(commits: GitCommit[]): GraphLayout {
 
   // lane -> hash of the commit this lane is reserved for (null = free).
   const laneTarget: (string | null)[] = [];
+  // lane -> first row at which the lane may be reused. A lane carrying a curve to
+  // another lane is busy until the curve lands on the parent's row.
+  const laneFreeAt: number[] = [];
 
-  const lowestFreeLane = (): number => {
+  const lowestFreeLane = (row: number): number => {
     for (let i = 0; i < laneTarget.length; i++) {
-      if (laneTarget[i] === null) return i;
+      if (laneTarget[i] === null && (laneFreeAt[i] ?? -1) <= row) return i;
     }
     laneTarget.push(null);
+    laneFreeAt.push(-1);
     return laneTarget.length - 1;
   };
 
   commits.forEach((commit, row) => {
     let lane = laneTarget.indexOf(commit.hash);
-    if (lane === -1) lane = lowestFreeLane();
+    if (lane === -1) lane = lowestFreeLane(row);
     laneTarget[lane] = null; // consumed: the commit itself now occupies this lane
 
     nodes.push({ commit, row, column: lane });
@@ -42,7 +50,8 @@ export function layoutGraph(commits: GitCommit[]): GraphLayout {
 
       const parentLane = laneTarget.indexOf(parentHash);
       if (parentLane !== -1) {
-        // Another edge already reserved a lane for this parent — join it.
+        // Another edge already reserved a lane for this parent — join it. The
+        // child's lane remains occupied by the curve until the parent's row.
         edges.push({
           fromRow: row,
           fromColumn: lane,
@@ -50,6 +59,7 @@ export function layoutGraph(commits: GitCommit[]): GraphLayout {
           toColumn: parentLane,
           merge: idx > 0,
         });
+        laneFreeAt[lane] = Math.max(laneFreeAt[lane] ?? -1, parentRow);
         return;
       }
 
@@ -59,7 +69,7 @@ export function layoutGraph(commits: GitCommit[]): GraphLayout {
         edges.push({ fromRow: row, fromColumn: lane, toRow: parentRow, toColumn: lane, merge: false });
       } else {
         // Branch-off point: give the parent its own new lane.
-        const target = lowestFreeLane();
+        const target = lowestFreeLane(row);
         laneTarget[target] = parentHash;
         edges.push({ fromRow: row, fromColumn: lane, toRow: parentRow, toColumn: target, merge: true });
       }

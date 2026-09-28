@@ -55,13 +55,26 @@ export interface RepoState {
 }
 
 export interface StatusEntry {
-  /** Porcelain XY code, e.g. "M", "A", "D", "??" */
-  code: string;
+  /** Index (X) status char: 'M', 'A', 'D', 'R', '?', or ' ' when unchanged in the index */
+  stagedX: string;
+  /** Worktree (Y) status char: 'M', 'D', '?', or ' ' when unchanged in the worktree */
+  unstagedY: string;
   path: string;
-  /** True when the change is in the index (X position non-blank) */
-  staged: boolean;
 }
 
 export interface RepoStatus {
   entries: StatusEntry[];
+}
+
+/** Per-commit action in an interactive-rebase todo list. */
+export type RebaseAction = 'pick' | 'drop' | 'reword' | 'squash';
+
+export interface RebaseTodoItem {
+  hash: string;
+  subject: string;
+  author: string;
+  timestamp: number;
+  action: RebaseAction;
+  /** Replacement message; required for reword/squash, ignored otherwise. */
+  message?: string;
 }

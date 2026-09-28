@@ -4,9 +4,19 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Connect, Plugin, ViteDevServer } from 'vite';
-import type { BranchInfo, GitCommit, RepoState, RepoStatus, StatusEntry } from './src/types';
+import { INTERACTIVE_REBASE_ENABLED } from './src/config';
+import type {
+  BranchInfo,
+  GitCommit,
+  RebaseAction,
+  RebaseTodoItem,
+  RepoState,
+  RepoStatus,
+  StatusEntry,
+} from './src/types';
 
 const UNIT = '\x1f';
 
@@ -19,11 +29,15 @@ export class GitError extends Error {
   }
 }
 
-export function gitRun(repoPath: string, args: string[]): Promise<string> {
+export function gitRun(
+  repoPath: string,
+  args: string[],
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       cwd: repoPath,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', LC_ALL: 'C' },
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', LC_ALL: 'C', ...extraEnv },
     });
     let stdout = '';
     let stderr = '';
@@ -112,20 +126,29 @@ async function loadStatus(repoPath: string): Promise<RepoStatus> {
   const entries: StatusEntry[] = [];
   for (const line of out.split('\n')) {
     if (!line) continue;
-    const code = line.slice(0, 2);
+    const xy = line.slice(0, 2);
     const p = line.slice(3);
     if (!p) continue;
-    entries.push({
-      code: code === '??' ? '??' : (code[1] !== ' ' && code[1] !== '?' ? code[1] : code[0]) ?? '?',
-      path: p,
-      staged: code[0] !== ' ' && code !== '??',
-    });
+    entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path: p });
   }
   return { entries };
 }
 
-async function commitAll(repoPath: string, message: string): Promise<string> {
-  await gitRun(repoPath, ['add', '-A']);
+/** Number of uncommitted (staged or unstaged) entries in the working tree. */
+async function dirtyCount(repoPath: string): Promise<number> {
+  return (await loadStatus(repoPath)).entries.length;
+}
+
+/** Guard for operations git refuses to run on a dirty tree; returns an error string or null. */
+async function dirtyGuard(repoPath: string, op: string): Promise<string | null> {
+  const n = await dirtyCount(repoPath);
+  if (n === 0) return null;
+  const changes = n === 1 ? 'change' : 'changes';
+  return `${n} uncommitted ${changes} — commit or stash before ${op}`;
+}
+
+async function createCommit(repoPath: string, message: string, stageAll: boolean): Promise<string> {
+  if (stageAll) await gitRun(repoPath, ['add', '-A']);
   await gitRun(repoPath, ['commit', '-m', message]);
   return (await gitRun(repoPath, ['rev-parse', 'HEAD'])).trim();
 }
@@ -135,9 +158,134 @@ async function rebaseOnto(repoPath: string, onto: string): Promise<string> {
   return out.trim();
 }
 
-async function cherryPick(repoPath: string, ref: string): Promise<string> {
-  const out = await gitRun(repoPath, ['cherry-pick', ref]);
+async function cherryPick(
+  repoPath: string,
+  ref: string,
+  opts: { mainline?: number; record?: boolean } = {},
+): Promise<string> {
+  const args = ['cherry-pick'];
+  if (opts.record) args.push('-x');
+  if (opts.mainline !== undefined) args.push('-m', String(opts.mainline));
+  args.push(ref);
+  const out = await gitRun(repoPath, args);
   return out.trim();
+}
+
+/** `git show --stat` for a single commit, as text. */
+async function commitDiffStat(repoPath: string, hash: string): Promise<string> {
+  return (await gitRun(repoPath, ['show', '--stat', '--format=%h %s (%an)', hash])).trim();
+}
+
+// --- Interactive rebase (Phase 5) ---
+
+interface RebasePlan {
+  /** Resolved commit hash of the rebase base. */
+  onto: string;
+  /** Commits to replay, oldest first (onto..HEAD). */
+  items: Array<Omit<RebaseTodoItem, 'action' | 'message'>>;
+}
+
+async function resolveCommit(repoPath: string, ref: string): Promise<string> {
+  return (await gitRun(repoPath, ['rev-parse', '--verify', `${ref}^{commit}`])).trim();
+}
+
+/** Commits between `onto` and HEAD, oldest first, that an interactive rebase would replay. */
+async function loadRebasePlan(repoPath: string, onto: string): Promise<RebasePlan> {
+  const ontoHash = await resolveCommit(repoPath, onto);
+  const fmt = ['%H', '%s', '%an', '%at'].join(UNIT);
+  const out = await gitRun(repoPath, [
+    'log',
+    '--reverse',
+    `--pretty=format:${fmt}`,
+    `${ontoHash}..HEAD`,
+  ]);
+  const items: RebasePlan['items'] = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const [hash = '', subject = '', author = '', ts = ''] = line.split(UNIT);
+    items.push({ hash, subject, author, timestamp: Number(ts) || 0 });
+  }
+  return { onto: ontoHash, items };
+}
+
+const REBASE_ACTIONS: readonly RebaseAction[] = ['pick', 'drop', 'reword', 'squash'];
+
+/**
+ * Run an interactive rebase from a generated todo list, without opening an editor.
+ * Deterministic by construction:
+ * - `reword` / `squash` are emitted as `fixup` + `exec git commit --amend -F <msgfile>`,
+ *   so the replacement message is applied with no GIT_EDITOR interaction.
+ * - a generated `sequence.editor` script writes the todo file.
+ */
+async function executeRebase(repoPath: string, onto: string, items: RebaseTodoItem[]): Promise<string> {
+  const plan = await loadRebasePlan(repoPath, onto);
+  const known = new Set(plan.items.map((i) => i.hash));
+  if (items.length === 0) throw new GitError('Empty rebase todo', 'Nothing to rebase');
+
+  // Resolve abbreviated hashes the UI may send to their full form.
+  const resolved: RebaseTodoItem[] = [];
+  for (const item of items) {
+    try {
+      resolved.push({ ...item, hash: await resolveCommit(repoPath, item.hash) });
+    } catch {
+      throw new GitError(`Unknown commit ${item.hash}`, 'Commit is not in the rebase range');
+    }
+  }
+  items = resolved;
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'liana-rebase-'));
+  try {
+    const todoLines: string[] = [];
+    // `squash`/`fixup`-style actions fold into the previous kept commit.
+    let haveKept = false;
+    items.forEach((item, idx) => {
+      if (!known.has(item.hash)) {
+        throw new GitError(`Unknown commit ${item.hash}`, 'Commit is not in the rebase range');
+      }
+      if (!REBASE_ACTIONS.includes(item.action)) {
+        throw new GitError(`Bad action ${item.action}`, 'Unknown rebase action');
+      }
+      if (item.action === 'drop') {
+        todoLines.push(`drop ${item.hash}`);
+        return;
+      }
+      if ((item.action === 'reword' || item.action === 'squash') && !item.message?.trim()) {
+        throw new GitError('Missing message', `${item.action} needs a message`);
+      }
+      if (item.action === 'squash' && !haveKept) {
+        throw new GitError('Cannot squash first commit', 'Nothing to squash into');
+      }
+
+      if (item.action === 'squash') {
+        todoLines.push(`fixup ${item.hash}`);
+      } else {
+        todoLines.push(`pick ${item.hash}`);
+        haveKept = true;
+      }
+
+      if (item.action === 'reword' || item.action === 'squash') {
+        const msgPath = path.join(dir, `msg-${idx}`);
+        fs.writeFileSync(msgPath, `${item.message!.trim()}\n`);
+        todoLines.push(`exec git commit --amend -F '${msgPath}'`);
+      }
+    });
+
+    const seqEditor = path.join(dir, 'seq-editor.sh');
+    const body = todoLines.join('\n');
+    fs.writeFileSync(
+      seqEditor,
+      `#!/bin/sh\ncat > "$1" <<'LIANA_TODO_EOF'\n${body}\nLIANA_TODO_EOF\n`,
+      { mode: 0o755 },
+    );
+
+    return (
+      await gitRun(repoPath, ['-c', 'core.editor=true', 'rebase', '-i', plan.onto], {
+        GIT_SEQUENCE_EDITOR: seqEditor,
+      })
+    ).trim();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // --- HTTP plumbing ---
@@ -214,22 +362,70 @@ export function apiPlugin(defaultRepo: string | null): Plugin {
             if (!repoPath) return sendJson(res, 400, { error: 'No repository open' });
 
             if (route === '/commit' && req.method === 'POST') {
-              const { message } = JSON.parse(await readBody(req)) as { message?: string };
+              const { message, stageAll } = JSON.parse(await readBody(req)) as {
+                message?: string;
+                stageAll?: boolean;
+              };
               if (!message?.trim()) return sendJson(res, 400, { error: 'Empty commit message' });
-              const hash = await commitAll(repoPath, message.trim());
+              const hash = await createCommit(repoPath, message.trim(), stageAll !== false);
               return sendJson(res, 200, { ok: true, hash });
             }
             if (route === '/rebase' && req.method === 'POST') {
               const { onto } = JSON.parse(await readBody(req)) as { onto?: string };
               if (!onto?.trim()) return sendJson(res, 400, { error: 'Missing branch' });
+              const dirty = await dirtyGuard(repoPath, 'rebasing');
+              if (dirty) return sendJson(res, 409, { error: dirty });
               const out = await rebaseOnto(repoPath, onto.trim());
               return sendJson(res, 200, { ok: true, output: out });
             }
-            if (route === '/cherry-pick' && req.method === 'POST') {
-              const { ref } = JSON.parse(await readBody(req)) as { ref?: string };
-              if (!ref?.trim()) return sendJson(res, 400, { error: 'Missing ref' });
-              const out = await cherryPick(repoPath, ref.trim());
+            if (route === '/rebase-start' && req.method === 'POST') {
+              if (!INTERACTIVE_REBASE_ENABLED) {
+                return sendJson(res, 404, { error: 'Interactive rebase disabled' });
+              }
+              const { onto } = JSON.parse(await readBody(req)) as { onto?: string };
+              if (!onto?.trim()) return sendJson(res, 400, { error: 'Missing branch' });
+              const dirty = await dirtyGuard(repoPath, 'rebasing');
+              if (dirty) return sendJson(res, 409, { error: dirty });
+              const plan = await loadRebasePlan(repoPath, onto.trim());
+              return sendJson(res, 200, { ok: true, onto: plan.onto, items: plan.items });
+            }
+            if (route === '/rebase-execute' && req.method === 'POST') {
+              if (!INTERACTIVE_REBASE_ENABLED) {
+                return sendJson(res, 404, { error: 'Interactive rebase disabled' });
+              }
+              const { onto, items } = JSON.parse(await readBody(req)) as {
+                onto?: string;
+                items?: RebaseTodoItem[];
+              };
+              if (!onto?.trim()) return sendJson(res, 400, { error: 'Missing branch' });
+              if (!Array.isArray(items) || items.length === 0) {
+                return sendJson(res, 400, { error: 'Empty rebase todo' });
+              }
+              const dirty = await dirtyGuard(repoPath, 'rebasing');
+              if (dirty) return sendJson(res, 409, { error: dirty });
+              const out = await executeRebase(repoPath, onto.trim(), items);
               return sendJson(res, 200, { ok: true, output: out });
+            }
+            if (route === '/cherry-pick' && req.method === 'POST') {
+              const { ref, mainline, record } = JSON.parse(await readBody(req)) as {
+                ref?: string;
+                mainline?: number;
+                record?: boolean;
+              };
+              if (!ref?.trim()) return sendJson(res, 400, { error: 'Missing ref' });
+              if (mainline !== undefined && (!Number.isInteger(mainline) || mainline < 1)) {
+                return sendJson(res, 400, { error: 'mainline must be a positive integer' });
+              }
+              const dirty = await dirtyGuard(repoPath, 'cherry-picking');
+              if (dirty) return sendJson(res, 409, { error: dirty });
+              const out = await cherryPick(repoPath, ref.trim(), { mainline, record });
+              return sendJson(res, 200, { ok: true, output: out });
+            }
+            if (route === '/commit-diff' && req.method === 'POST') {
+              const { hash } = JSON.parse(await readBody(req)) as { hash?: string };
+              if (!hash?.trim()) return sendJson(res, 400, { error: 'Missing hash' });
+              const stat = await commitDiffStat(repoPath, hash.trim());
+              return sendJson(res, 200, { ok: true, stat });
             }
             if (route === '/checkout' && req.method === 'POST') {
               const { branch } = JSON.parse(await readBody(req)) as { branch?: string };
