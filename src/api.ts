@@ -185,16 +185,33 @@ async function loadRepoState(repoPath: string): Promise<RepoState> {
 }
 
 async function loadStatus(repoPath: string): Promise<RepoStatus> {
-  const out = await gitRun(repoPath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const out = await gitRun(repoPath, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+  const tokens = out.split('\0');
   const entries: StatusEntry[] = [];
-  for (const line of out.split('\n')) {
+  for (let i = 0; i < tokens.length; i++) {
+    const line = tokens[i];
     if (!line) continue;
     const xy = line.slice(0, 2);
     const p = line.slice(3);
     if (!p) continue;
     entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path: p });
+    // In -z mode rename/copy entries are `XY <to>\0<from>\0`; the extra
+    // `<from>` token is not a status line, so skip it.
+    if ((xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') && i + 1 < tokens.length) {
+      i++;
+    }
   }
   return { entries };
+}
+
+/** True when HEAD resolves (false on an unborn branch, e.g. after `git init`). */
+async function headExists(repoPath: string): Promise<boolean> {
+  try {
+    await gitRun(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Number of uncommitted (staged or unstaged) entries in the working tree. */
@@ -210,8 +227,28 @@ async function dirtyGuard(repoPath: string, op: string): Promise<string | null> 
   return `${n} uncommitted ${changes} — commit or stash before ${op}`;
 }
 
-async function createCommit(repoPath: string, message: string, stageAll: boolean): Promise<string> {
-  if (stageAll) await gitRun(repoPath, ['add', '-A']);
+/**
+ * Commit an explicit set of paths. `files` is intersected with the live status,
+ * so callers can't stage paths outside the working tree. Checked files are
+ * staged (`add -A`), and files already staged but not selected are unstaged, so
+ * the commit contains exactly the selected set.
+ */
+async function createCommit(repoPath: string, message: string, files: string[]): Promise<string> {
+  const status = await loadStatus(repoPath);
+  const selected = new Set(files);
+  const toStage = status.entries.filter((e) => selected.has(e.path)).map((e) => e.path);
+  const toUnstage = status.entries
+    .filter((e) => !selected.has(e.path) && e.stagedX !== ' ' && e.stagedX !== '?')
+    .map((e) => e.path);
+  if (toUnstage.length > 0) {
+    if (await headExists(repoPath)) {
+      await gitRun(repoPath, ['reset', '-q', '--', ...toUnstage]);
+    } else {
+      // No HEAD yet: `reset` has nothing to reset against, so drop the index entries.
+      await gitRun(repoPath, ['rm', '--cached', '-r', '--', ...toUnstage]);
+    }
+  }
+  if (toStage.length > 0) await gitRun(repoPath, ['add', '-A', '--', ...toStage]);
   await gitRun(repoPath, ['commit', '-m', message]);
   return (await gitRun(repoPath, ['rev-parse', 'HEAD'])).trim();
 }
@@ -509,12 +546,15 @@ export function createApi(defaultRepo: string | null): Api {
       if (!repoPath) return { status: 400, body: { error: 'No repository open' } };
 
       if (route === '/commit' && method === 'POST') {
-        const { message, stageAll } = JSON.parse(rawBody) as {
+        const { message, files } = JSON.parse(rawBody) as {
           message?: string;
-          stageAll?: boolean;
+          files?: unknown;
         };
         if (!message?.trim()) return { status: 400, body: { error: 'Empty commit message' } };
-        const hash = await createCommit(repoPath, message.trim(), stageAll !== false);
+        if (!Array.isArray(files)) return { status: 400, body: { error: 'files must be an array' } };
+        const wanted = files.filter((f): f is string => typeof f === 'string');
+        if (wanted.length === 0) return { status: 400, body: { error: 'No files selected' } };
+        const hash = await createCommit(repoPath, message.trim(), wanted);
         return { status: 200, body: { ok: true, hash } };
       }
       if (route === '/rebase' && method === 'POST') {

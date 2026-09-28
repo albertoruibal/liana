@@ -199,16 +199,33 @@ export async function loadRepoState(repoPath: string): Promise<RepoState> {
 }
 
 export async function loadStatus(repoPath: string): Promise<RepoStatus> {
-  const out = await git(repoPath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const out = await git(repoPath, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+  const tokens = out.split('\0');
   const entries: StatusEntry[] = [];
-  for (const line of out.split('\n')) {
+  for (let i = 0; i < tokens.length; i++) {
+    const line = tokens[i];
     if (!line) continue;
     const xy = line.slice(0, 2);
     const path = line.slice(3);
     if (!path) continue;
     entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path });
+    // In -z mode rename/copy entries are `XY <to>\0<from>\0`; the extra
+    // `<from>` token is not a status line, so skip it.
+    if ((xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') && i + 1 < tokens.length) {
+      i++;
+    }
   }
   return { entries };
+}
+
+/** True when HEAD resolves (false on an unborn branch, e.g. after `git init`). */
+export async function headExists(repoPath: string): Promise<boolean> {
+  try {
+    await git(repoPath, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Number of uncommitted entries in the working tree (staged or unstaged). */
@@ -225,15 +242,30 @@ export async function dirtyGuard(repoPath: string, op: string): Promise<string |
 }
 
 /**
- * Create a commit. When `stageAll` is true, stage every change first (`add -A`);
- * otherwise commit only what is already staged. Returns the new commit hash.
+ * Commit an explicit set of paths. `files` is intersected with the live status,
+ * so callers can't stage paths outside the working tree. Checked files are
+ * staged (`add -A`), and files already staged but not selected are unstaged, so
+ * the commit contains exactly the selected set.
  */
 export async function createCommit(
   repoPath: string,
   message: string,
-  stageAll: boolean,
+  files: string[],
 ): Promise<string> {
-  if (stageAll) await git(repoPath, ['add', '-A']);
+  const status = await loadStatus(repoPath);
+  const selected = new Set(files);
+  const toStage = status.entries.filter((e) => selected.has(e.path)).map((e) => e.path);
+  const toUnstage = status.entries
+    .filter((e) => !selected.has(e.path) && e.stagedX !== ' ' && e.stagedX !== '?')
+    .map((e) => e.path);
+  if (toUnstage.length > 0) {
+    if (await headExists(repoPath)) {
+      await git(repoPath, ['reset', '-q', '--', ...toUnstage]);
+    } else {
+      await git(repoPath, ['rm', '--cached', '-r', '--', ...toUnstage]);
+    }
+  }
+  if (toStage.length > 0) await git(repoPath, ['add', '-A', '--', ...toStage]);
   const out = await git(repoPath, ['commit', '-m', message]);
   const hash = await git(repoPath, ['rev-parse', 'HEAD']);
   if (!out.includes('created') && !hash) throw new GitError('commit produced no hash', out);

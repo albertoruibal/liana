@@ -47,7 +47,7 @@ or new lane. This is what produces the parallel vertical lanes.
 |---|---|---|---|
 | `/api/state` | GET | — | Repo state, commits (date-order, first 500), status |
 | `/api/open` | POST | `{path}` | Point the server at another local repo |
-| `/api/commit` | POST | `{message, stageAll?}` | `git commit -m`; stages everything first unless `stageAll` is false |
+| `/api/commit` | POST | `{message, files[]}` | `git commit` of the listed paths; stages selected files and unstages already-staged files that aren't listed |
 | `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
 | `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
 | `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |

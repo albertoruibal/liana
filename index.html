@@ -173,10 +173,16 @@
           Commit message
           <textarea id="commit-message" rows="4" placeholder="What changed?"></textarea>
         </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="commit-stage-all" checked />
-          Stage everything (otherwise commit only staged changes)
-        </label>
+        <div class="commit-files">
+          <div class="commit-files-head">
+            <label class="checkbox-label">
+              <input type="checkbox" id="commit-select-all" checked />
+              Select all
+            </label>
+            <span id="commit-file-count" class="muted"></span>
+          </div>
+          <ul id="commit-file-list"></ul>
+        </div>
         <div id="commit-status" class="dialog-status"></div>
         <menu>
           <button class="btn" value="cancel">Cancel</button>

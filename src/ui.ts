@@ -5,7 +5,7 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } 
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus, ResetMode } from './types';
+import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -64,7 +64,7 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
 // --- Rendering ---
 
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 /** Initials avatar markup (shared with the graph's SVG avatars). */
@@ -225,6 +225,38 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
   pane.querySelectorAll<HTMLLIElement>('li[data-branch]').forEach((li) => {
     li.addEventListener('click', () => void checkout(li.dataset.branch ?? ''));
   });
+}
+
+/** Render the per-file checkbox list inside the commit dialog. */
+function renderCommitFiles(entries: StatusEntry[]): void {
+  const list = $<HTMLUListElement>('#commit-file-list');
+  if (entries.length === 0) {
+    list.innerHTML = '<li class="commit-empty muted">Working tree clean — nothing to commit</li>';
+  } else {
+    list.innerHTML = entries
+      .map((e) => {
+        const code = e.stagedX === '?' ? '??' : e.stagedX !== ' ' ? e.stagedX : e.unstagedY;
+        return `<li><label class="checkbox-label file-row">
+          <input type="checkbox" class="commit-file" data-path="${esc(e.path)}" checked />
+          <span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : code)}">${esc(code)}</span>
+          <span class="status-path" title="${esc(e.path)}">${esc(e.path)}</span>
+        </label></li>`;
+      })
+      .join('');
+  }
+  updateCommitSelection();
+}
+
+/** Sync the master checkbox, the count label, and the Commit button with the file list. */
+function updateCommitSelection(): void {
+  const boxes = [...document.querySelectorAll<HTMLInputElement>('.commit-file')];
+  const selected = boxes.filter((b) => b.checked).length;
+  const master = $<HTMLInputElement>('#commit-select-all');
+  master.checked = boxes.length > 0 && selected === boxes.length;
+  master.indeterminate = selected > 0 && selected < boxes.length;
+  $('#commit-file-count').textContent =
+    boxes.length === 0 ? '' : `${selected} of ${boxes.length} selected`;
+  $<HTMLButtonElement>('#commit-submit').disabled = selected === 0;
 }
 
 async function loadDiffStat(hash: string): Promise<void> {
@@ -478,10 +510,26 @@ $('#stash-submit').addEventListener('click', (ev) => {
 });
 
 $('#btn-commit').addEventListener('click', () => {
-  const dlg = $<HTMLDialogElement>('#commit-dialog');
-  $('#commit-status').textContent = '';
-  dlg.showModal();
+  void (async () => {
+    const dlg = $<HTMLDialogElement>('#commit-dialog');
+    $('#commit-status').textContent = '';
+    try {
+      const resp = await api<StateResponse>('/state');
+      renderCommitFiles(resp.status?.entries ?? []);
+    } catch {
+      renderCommitFiles([]);
+    }
+    dlg.showModal();
+  })();
 });
+
+$('#commit-select-all').addEventListener('change', (ev) => {
+  const checked = (ev.target as HTMLInputElement).checked;
+  document.querySelectorAll<HTMLInputElement>('.commit-file').forEach((b) => (b.checked = checked));
+  updateCommitSelection();
+});
+
+$('#commit-file-list').addEventListener('change', () => updateCommitSelection());
 
 $('#commit-submit').addEventListener('click', (ev) => {
   // Keep the dialog open until the commit succeeds so errors stay visible.
@@ -491,10 +539,16 @@ $('#commit-submit').addEventListener('click', (ev) => {
     $('#commit-status').textContent = 'Message required';
     return;
   }
-  const stageAll = $<HTMLInputElement>('#commit-stage-all').checked;
+  const files = [...document.querySelectorAll<HTMLInputElement>('.commit-file:checked')].map(
+    (b) => b.dataset.path ?? '',
+  );
+  if (files.length === 0) {
+    $('#commit-status').textContent = 'Select at least one file';
+    return;
+  }
   void (async () => {
     try {
-      await api('/commit', { message: msg, stageAll });
+      await api('/commit', { message: msg, files });
       $<HTMLTextAreaElement>('#commit-message').value = '';
       $<HTMLDialogElement>('#commit-dialog').close();
       await refresh();
