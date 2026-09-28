@@ -7,8 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
+import { parseCommitFiles } from './commit-files';
 import type {
   BranchInfo,
+  CommitFile,
   GitCommit,
   RebaseAction,
   RebaseTodoItem,
@@ -299,9 +301,39 @@ export async function cherryPick(
   return out.trim();
 }
 
-/** `git show --stat` for a single commit, as text. */
-export async function commitDiffStat(repoPath: string, hash: string): Promise<string> {
-  return (await git(repoPath, ['show', '--stat', '--format=%h %s (%an)', hash])).trim();
+/**
+ * Files changed by a commit, with per-file line counts. Uses `--first-parent` so a
+ * merge commit reports the changes it introduces relative to its mainline parent,
+ * matching `git show`.
+ */
+export async function commitFiles(repoPath: string, hash: string): Promise<CommitFile[]> {
+  const [nameStatusOut, numstatOut] = await Promise.all([
+    git(repoPath, ['show', '--name-status', '-z', '--format=', '--find-renames', '--first-parent', hash]),
+    git(repoPath, ['show', '--numstat', '-z', '--format=', '--find-renames', '--first-parent', hash]),
+  ]);
+  return parseCommitFiles(nameStatusOut, numstatOut);
+}
+
+/** Unified diff for one file of a commit; `oldPath` included so renames diff as renames. */
+export async function commitPatch(
+  repoPath: string,
+  hash: string,
+  filePath: string,
+  oldPath: string | null,
+): Promise<string> {
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath];
+  return (
+    await git(repoPath, [
+      'show',
+      '--format=',
+      '--no-color',
+      '--find-renames',
+      '--first-parent',
+      hash,
+      '--',
+      ...paths,
+    ])
+  ).trim();
 }
 
 // --- Interactive rebase (mirrors dev.ts) ---

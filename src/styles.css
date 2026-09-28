@@ -849,25 +849,91 @@ ul.branch-list li:hover {
   white-space: nowrap;
 }
 
-/* Diff stat card */
-.diff-stat {
+/* Changed-file list in the commit detail pane */
+.diff-files {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   margin: 10px 0;
-  padding: 12px;
+}
+
+button.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+button.file-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+}
+
+button.file-row.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+button.file-row .file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+button.file-row .file-old {
+  color: var(--fg-faint);
+}
+
+button.file-row .file-stats {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.file-stat.add { color: var(--add); }
+.file-stat.del { color: var(--del); }
+.file-stat.binary { color: var(--fg-faint); }
+
+/* Unified diff viewer (diff dialog) */
+#diff-dialog {
+  width: min(900px, 90vw);
+  max-width: 90vw;
+}
+
+.diff-patch {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
   background: var(--bg-elev-2);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
-  white-space: pre-wrap;
   font-family: var(--mono);
   font-size: 11.5px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--fg-dim);
-  overflow-x: auto;
+  overflow: auto;
+  white-space: pre;
+  max-height: 60vh;
 }
 
-.diff-stat .dl-add { color: var(--add); }
-.diff-stat .dl-del { color: var(--del); }
-.diff-stat .dl-file { color: var(--fg); }
-.diff-stat .dl-meta { color: var(--fg-faint); }
+.diff-patch .dph-add { color: var(--add); }
+.diff-patch .dph-del { color: var(--del); }
+.diff-patch .dph-meta { color: var(--fg-faint); }
+.diff-patch .dph-ctx { color: var(--fg-dim); }
 
 /* Reference pills in detail pane */
 .ref-pill {

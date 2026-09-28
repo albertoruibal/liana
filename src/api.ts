@@ -8,8 +8,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
+import { parseCommitFiles } from './commit-files';
 import type {
   BranchInfo,
+  CommitFile,
   GitCommit,
   GitRef,
   RebaseAction,
@@ -274,9 +276,39 @@ async function cherryPick(
   return out.trim();
 }
 
-/** `git show --stat` for a single commit, as text. */
-async function commitDiffStat(repoPath: string, hash: string): Promise<string> {
-  return (await gitRun(repoPath, ['show', '--stat', '--format=%h %s (%an)', hash])).trim();
+/**
+ * Files changed by a commit, with per-file line counts. Uses `--first-parent` so a
+ * merge commit reports the changes it introduces relative to its mainline parent,
+ * matching `git show`.
+ */
+async function commitFiles(repoPath: string, hash: string): Promise<CommitFile[]> {
+  const [nameStatusOut, numstatOut] = await Promise.all([
+    gitRun(repoPath, ['show', '--name-status', '-z', '--format=', '--find-renames', '--first-parent', hash]),
+    gitRun(repoPath, ['show', '--numstat', '-z', '--format=', '--find-renames', '--first-parent', hash]),
+  ]);
+  return parseCommitFiles(nameStatusOut, numstatOut);
+}
+
+/** Unified diff for one file of a commit; `oldPath` included so renames diff as renames. */
+async function commitPatch(
+  repoPath: string,
+  hash: string,
+  filePath: string,
+  oldPath: string | null,
+): Promise<string> {
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath];
+  return (
+    await gitRun(repoPath, [
+      'show',
+      '--format=',
+      '--no-color',
+      '--find-renames',
+      '--first-parent',
+      hash,
+      '--',
+      ...paths,
+    ])
+  ).trim();
 }
 
 // --- Interactive rebase (Phase 5) ---
@@ -795,8 +827,24 @@ export function createApi(defaultRepo: string | null): Api {
       if (route === '/commit-diff' && method === 'POST') {
         const { hash } = JSON.parse(rawBody) as { hash?: string };
         if (!hash?.trim()) return { status: 400, body: { error: 'Missing hash' } };
-        const stat = await commitDiffStat(repoPath, hash.trim());
-        return { status: 200, body: { ok: true, stat } };
+        const files = await commitFiles(repoPath, hash.trim());
+        return { status: 200, body: { ok: true, files } };
+      }
+      if (route === '/commit-file-diff' && method === 'POST') {
+        const { hash, path: filePath, oldPath } = JSON.parse(rawBody) as {
+          hash?: string;
+          path?: string;
+          oldPath?: string | null;
+        };
+        if (!hash?.trim()) return { status: 400, body: { error: 'Missing hash' } };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const patch = await commitPatch(
+          repoPath,
+          hash.trim(),
+          filePath.trim(),
+          typeof oldPath === 'string' && oldPath ? oldPath : null,
+        );
+        return { status: 200, body: { ok: true, patch } };
       }
       if (route === '/checkout' && method === 'POST') {
         const { branch } = JSON.parse(rawBody) as { branch?: string };

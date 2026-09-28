@@ -5,7 +5,7 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } 
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
+import type { CommitFile, GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -144,19 +144,30 @@ function statusClass(ch: string): string {
   }
 }
 
-/** Colourise a `git show --stat` block without trusting its content as HTML. */
-function formatDiffStat(stat: string): string {
-  return esc(stat)
+/** Colourise a unified diff without trusting its content as HTML. */
+function formatPatch(patch: string): string {
+  return patch
     .split('\n')
     .map((line) => {
-      if (/^\s*\|/.test(line) || /\d+ [+-]/.test(line)) {
-        const withAdd = line.replace(/(\+{1,})/g, '<span class="dl-add">$1</span>');
-        return withAdd.replace(/(?<!<[^>]*)(-{1,})(?!>)/g, '<span class="dl-del">$1</span>');
+      if (/^(diff --git |index |--- |\+\+\+ |@@ |new file|deleted file|similarity index|rename from|rename to|copy from|copy to|old mode|new mode|Binary files|GIT binary patch|literal |delta )/.test(line)) {
+        return `<span class="dph-meta">${esc(line)}</span>`;
       }
-      if (/^\s*\d+ files? changed/.test(line)) return `<span class="dl-meta">${line}</span>`;
-      return `<span class="dl-file">${line}</span>`;
+      if (line.startsWith('+')) return `<span class="dph-add">${esc(line)}</span>`;
+      if (line.startsWith('-')) return `<span class="dph-del">${esc(line)}</span>`;
+      return `<span class="dph-ctx">${esc(line)}</span>`;
     })
     .join('\n');
+}
+
+/** `+N − M` line counts for a changed file, or a binary marker. */
+function fileStatHtml(file: CommitFile): string {
+  if (file.binary) return '<span class="file-stat binary">bin</span>';
+  const add = file.additions ?? 0;
+  const del = file.deletions ?? 0;
+  let out = '';
+  if (add > 0) out += `<span class="file-stat add">+${add}</span>`;
+  if (del > 0) out += `<span class="file-stat del">−${del}</span>`;
+  return out;
 }
 
 /** One-line upstream sync summary shown on the repo overview. */
@@ -282,16 +293,18 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       }
     }
     html += '</div>';
-    html += '<div id="commit-diff" class="diff-stat">Loading diff stats…</div>';
-    html += '<div class="detail-empty"><span class="hint">Operations run on the checked-out branch; the graph reloads after.</span></div>';
+    html += '<h4>Files changed</h4>';
+    html += '<div id="commit-diff" class="diff-files">Loading…</div>';
+    html += '<div class="detail-empty"><span class="hint">Click a file to view its diff. Operations run on the checked-out branch; the graph reloads after.</span></div>';
   }
   pane.innerHTML = html;
-  if (commit) void loadDiffStat(commit.hash);
+  if (commit) void loadCommitFiles(commit.hash);
 
   // wire action buttons
   pane.querySelectorAll<HTMLButtonElement>('button.act').forEach((btn) => {
     btn.addEventListener('click', () => void runAction(btn));
   });
+
   // wire branch checkout
   pane.querySelectorAll<HTMLLIElement>('li[data-branch]').forEach((li) => {
     li.addEventListener('click', () => void checkout(li.dataset.branch ?? ''));
@@ -330,17 +343,59 @@ function updateCommitSelection(): void {
   $<HTMLButtonElement>('#commit-submit').disabled = selected === 0;
 }
 
-async function loadDiffStat(hash: string): Promise<void> {
+/** Load the changed-file list for a commit into the detail pane. */
+async function loadCommitFiles(hash: string): Promise<void> {
+  const el = document.querySelector('#commit-diff');
   try {
-    const { stat } = await api<{ stat: string }>('/commit-diff', { hash });
-    const el = document.querySelector('#commit-diff');
-    if (el && selectedHash === hash) {
-      el.innerHTML = stat ? formatDiffStat(stat) : '<span class="dl-meta">(no changes)</span>';
+    const { files } = await api<{ files: CommitFile[] }>('/commit-diff', { hash });
+    if (!el || selectedHash !== hash) return;
+    if (files.length === 0) {
+      el.innerHTML = '<span class="muted hint">No changes.</span>';
+      return;
     }
+    el.innerHTML = files
+      .map((file) => {
+        const rename =
+          file.oldPath && file.oldPath !== file.path
+            ? `<span class="file-old" title="${esc(file.oldPath)}">${esc(file.oldPath)} →</span> `
+            : '';
+        return `<button type="button" class="file-row" data-path="${esc(file.path)}" data-old-path="${esc(file.oldPath ?? '')}">
+          <span class="status-badge ${statusClass(file.status)}">${esc(file.status)}</span>
+          <span class="file-path" title="${esc(file.path)}">${rename}${esc(file.path)}</span>
+          <span class="file-stats">${fileStatHtml(file)}</span>
+        </button>`;
+      })
+      .join('');
   } catch {
-    const el = document.querySelector('#commit-diff');
     if (el && selectedHash === hash) el.textContent = '';
   }
+}
+
+/** Open the modal diff viewer for a file in the selected commit. */
+function openDiffDialog(path: string, oldPath: string): void {
+  const commit = (lastResponse?.commits ?? []).find((c) => c.hash === selectedHash);
+  if (!commit) return;
+  const dlg = $<HTMLDialogElement>('#diff-dialog');
+  const body = $<HTMLPreElement>('#diff-body');
+  $('#diff-title').textContent = path;
+  const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
+  $('#diff-subtitle').textContent = `${renamed}${path} · commit ${commit.hash.slice(0, 7)}`;
+  $('#diff-status').textContent = '';
+  body.textContent = 'Loading diff…';
+  dlg.showModal();
+  void (async () => {
+    try {
+      const { patch } = await api<{ patch: string }>('/commit-file-diff', {
+        hash: commit.hash,
+        path,
+        oldPath: oldPath || null,
+      });
+      body.innerHTML = patch ? formatPatch(patch) : '<span class="dph-meta">No textual diff.</span>';
+    } catch (err) {
+      body.textContent = '';
+      $('#diff-status').textContent = String(err);
+    }
+  })();
 }
 
 /** Lay out the sticky column header to match the SVG's computed column offsets. */
@@ -744,6 +799,11 @@ $('#btn-about').addEventListener('click', () => {
 $('#about-close').addEventListener('click', (ev) => {
   ev.preventDefault();
   $<HTMLDialogElement>('#about-dialog').close();
+});
+
+$('#diff-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#diff-dialog').close();
 });
 
 // --- Wire up static UI ---
@@ -1166,6 +1226,14 @@ $svg('#graph-svg').addEventListener('contextmenu', (ev) => {
   showContextMenu(targetFromSvg(ev.target as Element), ev.clientX, ev.clientY);
 });
 
+// Delegated: the changed-file list is rendered after the pane's innerHTML is set,
+// so bind on the pane rather than on each row as it appears.
+$('#detail-pane').addEventListener('click', (ev) => {
+  const btn = (ev.target as Element).closest('button.file-row');
+  if (!(btn instanceof HTMLButtonElement)) return;
+  openDiffDialog(btn.dataset.path ?? '', btn.dataset.oldPath ?? '');
+});
+
 $('#detail-pane').addEventListener('contextmenu', (ev) => {
   const li = (ev.target as Element).closest('li[data-branch]');
   if (!li) return;
@@ -1334,6 +1402,11 @@ document.addEventListener('keydown', (ev) => {
   const stashDlg = $<HTMLDialogElement>('#stash-dialog');
   const loginDlg = $<HTMLDialogElement>('#login-dialog');
   const aboutDlg = $<HTMLDialogElement>('#about-dialog');
+  const diffDlg = $<HTMLDialogElement>('#diff-dialog');
+  if (diffDlg.open) {
+    diffDlg.close();
+    return;
+  }
   if (aboutDlg.open) {
     aboutDlg.close();
     return;

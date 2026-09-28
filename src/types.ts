@@ -96,6 +96,22 @@ export interface RepoStatus {
   entries: StatusEntry[];
 }
 
+/** One file changed by a commit, as reported by `git show --numstat/--name-status`. */
+export interface CommitFile {
+  /** Current path; rename/copy destination when applicable. */
+  path: string;
+  /** Source path for renames/copies, else null. */
+  oldPath: string | null;
+  /** Single-letter status: A, M, D, R, C, T, or '?' when unknown. */
+  status: string;
+  /** Added lines, or null for binary files. */
+  additions: number | null;
+  /** Deleted lines, or null for binary files. */
+  deletions: number | null;
+  /** True when git reports the change as binary (line counts are unavailable). */
+  binary: boolean;
+}
+
 /** A configured remote with its fetch/push URL. */
 export interface RemoteInfo {
   name: string;
