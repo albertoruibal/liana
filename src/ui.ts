@@ -581,7 +581,7 @@ async function addRepo(path: string, activate: boolean): Promise<void> {
   }
 }
 
-/** Switch the active tab, restoring its cached view before refreshing. */
+/** Switch the active tab: paint the cached view, then refresh so its dirty dot stays accurate. */
 async function activateRepo(id: string): Promise<void> {
   if (id === activeId) return;
   const tab = tabs.find((t) => t.id === id);
@@ -589,7 +589,7 @@ async function activateRepo(id: string): Promise<void> {
   saveActive();
   loadTab(tab);
   if (tab.lastResponse) renderAll(tab.lastResponse);
-  else await refresh();
+  await refresh();
 }
 
 /** Close a tab; adjacent tab becomes active when the closed one was active. */
