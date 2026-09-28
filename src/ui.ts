@@ -582,6 +582,9 @@ function closeContextMenu(): void {
 function menuTitle(target: ContextTarget): string {
   if (target.kind === 'empty') return 'Repository';
   if (target.kind === 'stash') return `Stash ${target.name ?? ''}`;
+  if (target.hash && (lastResponse?.commits ?? []).some((c) => c.hash === target.hash && c.isStash)) {
+    return `Stash ${target.hash.slice(0, 7)}`;
+  }
   if (target.kind === 'commit' || target.hash === null) return `Commit ${target.hash?.slice(0, 7) ?? ''}`;
   return `${target.kind} ${target.name ?? ''}`;
 }

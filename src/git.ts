@@ -52,7 +52,9 @@ export function git(
     child.on('error', (err) => reject(new GitError(`git failed to start: ${err.message}`, stderr)));
     child.on('close', (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new GitError(`git ${args[0]} failed (exit ${code})`, stderr.trim()));
+      // Some commands (e.g. `git stash apply`) report conflicts on stdout, so fall
+      // back to it when stderr is empty rather than hiding git's explanation.
+      else reject(new GitError(`git ${args[0]} failed (exit ${code})`, stderr.trim() || stdout.trim()));
     });
   });
 }
