@@ -728,6 +728,15 @@ $('#btn-theme').addEventListener('click', () => {
   applyTheme(next);
 });
 
+$('#btn-about').addEventListener('click', () => {
+  const tab = activeTab();
+  $('#about-version').textContent = __APP_VERSION__;
+  const repo = $('#about-repo');
+  repo.textContent = tab ? tab.path : 'No repository open';
+  repo.title = tab ? tab.path : '';
+  $<HTMLDialogElement>('#about-dialog').showModal();
+});
+
 // --- Wire up static UI ---
 
 $('#btn-refresh').addEventListener('click', () => void refresh());
@@ -1315,6 +1324,11 @@ document.addEventListener('keydown', (ev) => {
   const resetDlg = $<HTMLDialogElement>('#reset-dialog');
   const stashDlg = $<HTMLDialogElement>('#stash-dialog');
   const loginDlg = $<HTMLDialogElement>('#login-dialog');
+  const aboutDlg = $<HTMLDialogElement>('#about-dialog');
+  if (aboutDlg.open) {
+    aboutDlg.close();
+    return;
+  }
   if (loginDlg.open) {
     loginDlg.close();
     return;

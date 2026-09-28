@@ -3,9 +3,11 @@
 
 import { defineConfig } from 'vite';
 import { apiPlugin } from './dev';
+import pkg from './package.json';
 
 export default defineConfig({
   plugins: [apiPlugin(process.env.LIANA_REPO ?? null)],
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   server: { host: true, port: 5173 },
   build: { target: 'es2022', sourcemap: true },
 });

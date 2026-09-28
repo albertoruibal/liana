@@ -79,6 +79,10 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" fill="currentColor"/></svg>
           <span>Theme</span>
         </button>
+        <button class="btn btn-icon" id="btn-about" title="About liana" aria-label="About liana">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor"/></svg>
+          <span>About</span>
+        </button>
       </div>
     </header>
 
@@ -230,6 +234,29 @@
       <div id="remote-list" class="remote-list"></div>
       <menu>
         <button class="btn" id="remote-cancel" value="cancel">Cancel</button>
+      </menu>
+    </dialog>
+
+    <dialog id="about-dialog">
+      <div class="dialog-head">
+        <h3>About liana</h3>
+        <p class="muted hint">Minimal git GUI: commit graph with commit / rebase / cherry-pick, push / pull / login.</p>
+      </div>
+      <dl class="about-meta">
+        <div>
+          <dt>Version</dt>
+          <dd id="about-version"></dd>
+        </div>
+        <div>
+          <dt>Repository</dt>
+          <dd id="about-repo" class="muted"></dd>
+        </div>
+      </dl>
+      <p class="muted hint about-note">
+        Runs entirely locally against the <code>git</code> CLI. No account, no telemetry.
+      </p>
+      <menu>
+        <button class="btn btn-primary" id="about-close" value="cancel">Close</button>
       </menu>
     </dialog>
 
