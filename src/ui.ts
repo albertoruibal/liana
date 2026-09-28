@@ -458,12 +458,15 @@ function renderTabs(): void {
 /** Render the empty state shown when no repository is open. */
 function renderNoRepo(): void {
   renderGraphHeader(EMPTY_METRICS);
-  $('#detail-pane').innerHTML =
+  const pane = $('#detail-pane');
+  pane.innerHTML =
     `<div class="detail-empty">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm11 13.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM4.5 5v6.75c0 .4.1.6.35.85l3.3 3.3c.5.5 1.35.5 1.85 0l.6-.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
       <strong>liana</strong>
       <span class="hint">Open a local git repository to see its commit graph.</span>
+      <button class="btn btn-primary" id="empty-open-repo">Open repository…</button>
     </div>`;
+  pane.querySelector('#empty-open-repo')?.addEventListener('click', () => void openRepo());
   updateSyncButtons();
 }
 

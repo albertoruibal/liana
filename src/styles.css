@@ -634,6 +634,10 @@ main {
   font-weight: 600;
 }
 
+.detail-empty .btn {
+  margin-top: 10px;
+}
+
 .meta-row {
   display: flex;
   flex-wrap: wrap;
