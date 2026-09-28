@@ -1,6 +1,15 @@
 // Shared types for the git graph model and rendering.
 // These mirror the JSON shapes returned by the local server (dev.ts / git.ts).
 
+/** What a ref points at, so the UI can label local vs remote vs tag. */
+export type RefKind = 'head' | 'local' | 'remote' | 'tag';
+
+export interface GitRef {
+  /** Display name: "main", "origin/main", "v1.0", "HEAD" */
+  name: string;
+  kind: RefKind;
+}
+
 export interface GitCommit {
   /** Full 40-char SHA */
   hash: string;
@@ -10,8 +19,8 @@ export interface GitCommit {
   /** Author date, unix seconds */
   timestamp: number;
   subject: string;
-  /** Display names of refs pointing here: "main", "origin/main", "v1.0", "HEAD" */
-  refs: string[];
+  /** Refs pointing here, kind distinguishes local branch / remote branch / tag / HEAD */
+  refs: GitRef[];
 }
 
 /** A commit placed in the graph grid */

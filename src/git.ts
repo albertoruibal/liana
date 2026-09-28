@@ -66,22 +66,25 @@ export async function isGitRepo(repoPath: string): Promise<boolean> {
   }
 }
 
-/** Parse %D decoration string into display ref names (HEAD handled separately). */
+/** Parse %D decoration string into typed ref names (HEAD handled separately). */
 function parseDecorations(decorated: string, commit: GitCommit): void {
   if (!decorated.trim()) return;
   for (const item of decorated.split(', ').map((s) => s.trim())) {
     if (item === 'HEAD') {
-      commit.refs.push('HEAD');
+      commit.refs.push({ name: 'HEAD', kind: 'head' });
     } else if (item.startsWith('HEAD -> ')) {
-      commit.refs.push('HEAD');
+      commit.refs.push({ name: 'HEAD', kind: 'head' });
       const branch = item.slice('HEAD -> '.length).replace(/^refs\/heads\//, '');
-      commit.refs.push(branch);
+      commit.refs.push({ name: branch, kind: 'local' });
     } else if (item.startsWith('tag: ')) {
-      commit.refs.push(item.slice('tag: '.length).replace(/^refs\/tags\//, ''));
+      commit.refs.push({ name: item.slice('tag: '.length).replace(/^refs\/tags\//, ''), kind: 'tag' });
+    } else if (item.startsWith('refs/remotes/')) {
+      commit.refs.push({ name: item.slice('refs/remotes/'.length), kind: 'remote' });
+    } else if (item.startsWith('refs/heads/')) {
+      commit.refs.push({ name: item.slice('refs/heads/'.length), kind: 'local' });
     } else {
-      commit.refs.push(
-        item.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\//, 'origin/'),
-      );
+      // Short %D falls back to the default remote as "origin/...".
+      commit.refs.push({ name: item, kind: item.startsWith('origin/') ? 'remote' : 'local' });
     }
   }
 }
@@ -92,6 +95,7 @@ export async function loadLog(repoPath: string, limit = 500): Promise<GitCommit[
     'log',
     '--all',
     '--date-order',
+    '--decorate=full',
     `--pretty=format:${fmt}`,
     `--max-count=${limit}`,
   ]);
@@ -132,7 +136,7 @@ export async function loadRepoState(repoPath: string): Promise<RepoState> {
     const [refname = '', hash = ''] = line.split('\x00');
     if (!refname.startsWith('refs/heads/') && !refname.startsWith('refs/remotes/')) continue;
     branches.push({
-      name: refname.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\//, 'origin/'),
+      name: refname.replace(/^refs\/heads\//, '').replace(/^refs\/remotes\//, ''),
       hash,
       isHead: !detachedHead && refname === `refs/heads/${headBranch}`,
       isRemote: refname.startsWith('refs/remotes/'),

@@ -1,6 +1,7 @@
-// SVG rendering of the commit graph (GitKraken-like left pane).
+// SVG rendering of the commit graph (left pane).
 
 import type { GraphLayout, RepoState } from './types';
+import { refLabel } from './refs';
 
 const ROW_H = 40;
 const COL_W = 28;
@@ -19,7 +20,7 @@ const AUTHOR_GAP = 24;
 // Padding to the right of the author column.
 const AUTHOR_PAD = 24;
 
-// GitKraken-ish palette for lanes
+// Palette for lanes
 const COLORS = [
   '#4fc3f7', // light blue
   '#f06292', // pink
@@ -71,16 +72,18 @@ export function renderGraph(
   for (const n of layout.nodes) {
     if (n.commit.refs.length === 0) continue;
     const cy = y(n.row);
-    const sorted = [...n.commit.refs].sort((a, b) => (a === 'HEAD' ? -1 : b === 'HEAD' ? 1 : 0));
+    const sorted = [...n.commit.refs].sort((a, b) =>
+      a.kind === 'head' ? -1 : b.kind === 'head' ? 1 : 0,
+    );
     const chips: Chip[] = [];
     let rowW = 0;
     for (const ref of sorted) {
-      const isHead = ref === 'HEAD';
+      const isHead = ref.kind === 'head';
       const text = document.createElementNS(ns, 'text');
       text.setAttribute('y', String(cy + 4));
       text.setAttribute('text-anchor', 'middle');
-      text.setAttribute('class', isHead ? 'ref-chip ref-head' : 'ref-chip');
-      text.textContent = ref;
+      text.setAttribute('class', isHead ? 'ref-chip ref-head' : `ref-chip ref-${ref.kind}`);
+      text.textContent = refLabel(ref);
       svg.appendChild(text);
       const width = measureText(text) + 16;
       chips.push({ text, isHead, width });
@@ -179,7 +182,7 @@ export function renderGraph(
     if (e.fromColumn === e.toColumn) {
       d = `M ${x1} ${y1} L ${x2} ${y2}`;
     } else {
-      // Curve into the target lane (S-curve, GitKraken style)
+      // Curve into the target lane (S-curve)
       const midY = (y1 + y2) / 2;
       d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
     }

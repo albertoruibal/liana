@@ -2,6 +2,7 @@
 
 import { layoutGraph } from './layout';
 import { renderGraph } from './graph';
+import { refLabel } from './refs';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus } from './types';
 
@@ -85,8 +86,10 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
         html += '<h4>Branches</h4><ul class="branch-list">';
         for (const b of state.branches) {
           const head = b.isHead ? ' <span class="ref-head">HEAD</span>' : '';
-          const remote = b.isRemote ? ' (remote)' : '';
-          html += `<li data-branch="${esc(b.name)}">${esc(b.name)}${remote}${head}</li>`;
+          const kind = b.isRemote
+            ? '<span class="ref-kind ref-remote">remote</span>'
+            : '<span class="ref-kind ref-local">local</span>';
+          html += `<li data-branch="${esc(b.name)}">${kind}${esc(b.name)}${head}</li>`;
         }
         html += '</ul>';
         html += '<p class="muted hint">Click a branch to checkout</p>';
@@ -118,9 +121,14 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     html += `<h3>${esc(commit.subject)}</h3>`;
     html += `<p class="muted">${esc(commit.author)} · ${fmtDate(commit.timestamp)} · <code>${short}</code></p>`;
     if (commit.refs.length > 0) {
-      html += '<p>' + commit.refs.map((r) => `<span class="ref-chip">${esc(r)}</span>`).join(' ') + '</p>';
+      html +=
+        '<p>' +
+        commit.refs
+          .map((r) => `<span class="ref-chip ref-${r.kind}">${esc(refLabel(r))}</span>`)
+          .join(' ') +
+        '</p>';
     }
-    const isHead = commit.refs.includes('HEAD');
+    const isHead = commit.refs.some((r) => r.kind === 'head');
     // Tip of the currently checked-out branch
     const headTip = (state?.branches ?? []).find((b) => b.isHead);
     const atBranchTip = headTip !== undefined && headTip.hash === commit.hash;

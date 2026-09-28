@@ -1,4 +1,4 @@
-/* gitkraken-lite — dark GitKraken-ish theme */
+/* liana — dark graph theme */
 
 :root {
   --bg: #1e2229;
@@ -128,12 +128,41 @@ main {
 
 .ref-chip {
   fill: var(--fg-dim);
+  color: var(--fg-dim);
   font-size: 11px;
 }
 
 .ref-chip.ref-head {
   fill: #1e2229;
+  color: #1e2229;
   font-weight: 700;
+}
+
+/* Kind colours: local branch / remote branch / tag. */
+.ref-chip.ref-local,
+.ref-kind.ref-local {
+  fill: var(--fg);
+  color: var(--fg);
+}
+
+.ref-chip.ref-remote,
+.ref-kind.ref-remote {
+  fill: #ba68c8;
+  color: #ba68c8;
+}
+
+.ref-chip.ref-tag,
+.ref-kind.ref-tag {
+  fill: #ffb74d;
+  color: #ffb74d;
+}
+
+.ref-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+  font-weight: 600;
 }
 
 #detail-pane {
