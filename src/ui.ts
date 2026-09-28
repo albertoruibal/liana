@@ -1412,22 +1412,28 @@ window.addEventListener('resize', () => {
   }, 120);
 });
 
-/** Build initial tabs from saved paths plus any server-side default (LIANA_REPO). */
+/**
+ * Build initial tabs. Once the client has persisted tab state, that state is
+ * authoritative — a closed repository must stay closed across reloads even though
+ * the server still has it registered. Only a truly fresh client (no saved key at
+ * all) seeds from the server's default repo (LIANA_REPO / Electron launch).
+ */
 async function bootstrap(): Promise<void> {
+  const initialized = localStorage.getItem(REPOS_KEY) !== null;
   const saved = readSavedRepos();
-  // Read before registering tabs: addRepo() persists and would clear a stale key.
+  // Read before registering tabs: addRepo() persists and would overwrite this.
   const savedActive = localStorage.getItem(ACTIVE_KEY);
-  let serverRepos: RepoEntry[] = [];
-  try {
-    serverRepos = (await api<{ repos: RepoEntry[] }>('/repos', undefined, { scoped: false })).repos;
-  } catch {
-    // Server may still be starting (dev-server restart); fall back to saved paths.
+
+  let paths = saved;
+  if (!initialized) {
+    try {
+      const { repos } = await api<{ repos: RepoEntry[] }>('/repos', undefined, { scoped: false });
+      paths = repos.map((r) => r.path);
+    } catch {
+      // Server may still be starting (dev-server restart); start with no tabs.
+    }
   }
-  const ordered: string[] = [];
-  for (const p of [...serverRepos.map((r) => r.path), ...saved]) {
-    if (!ordered.includes(p)) ordered.push(p);
-  }
-  for (const path of ordered) {
+  for (const path of paths) {
     try {
       await addRepo(path, false);
     } catch {
