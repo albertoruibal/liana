@@ -7,6 +7,7 @@ export const REF_KIND_LABEL: Record<RefKind, string> = {
   local: 'local',
   remote: 'remote',
   tag: 'tag',
+  stash: 'stash',
 };
 
 /** Human label for a ref, e.g. "local main", "remote origin/main", "tag v1.0". */

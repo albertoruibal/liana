@@ -1,13 +1,30 @@
 // Shared types for the git graph model and rendering.
 // These mirror the JSON shapes returned by the local server (dev.ts / git.ts).
 
-/** What a ref points at, so the UI can label local vs remote vs tag. */
-export type RefKind = 'head' | 'local' | 'remote' | 'tag';
+/** What a ref points at, so the UI can label local vs remote vs tag vs stash. */
+export type RefKind = 'head' | 'local' | 'remote' | 'tag' | 'stash';
 
 export interface GitRef {
-  /** Display name: "main", "origin/main", "v1.0", "HEAD" */
+  /** Display name: "main", "origin/main", "v1.0", "HEAD", "stash@{0}" */
   name: string;
   kind: RefKind;
+}
+
+/** Stash-specific metadata, present only on synthetic stash nodes. */
+export interface StashInfo {
+  /** Reflog selector, e.g. "stash@{0}" */
+  selector: string;
+  /** WIP commit hash (the `refs/stash` reflog entry) */
+  hash: string;
+  /** Message after "On <branch>: " */
+  message: string;
+  /** Branch the stash was created on, or null when unclear */
+  branch: string | null;
+  /** WIP commit parents: [base, index, (untracked)] */
+  parents: string[];
+  author: string;
+  /** WIP commit timestamp, unix seconds */
+  timestamp: number;
 }
 
 export interface GitCommit {
@@ -19,8 +36,12 @@ export interface GitCommit {
   /** Author date, unix seconds */
   timestamp: number;
   subject: string;
-  /** Refs pointing here, kind distinguishes local branch / remote branch / tag / HEAD */
+  /** Refs pointing here, kind distinguishes local branch / remote branch / tag / HEAD / stash */
   refs: GitRef[];
+  /** True for synthetic stash nodes (the stash commit is not a normal history commit) */
+  isStash?: boolean;
+  /** Present on stash nodes in place of refs-based labeling */
+  stash?: StashInfo;
 }
 
 /** A commit placed in the graph grid */

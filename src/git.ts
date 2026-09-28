@@ -15,6 +15,7 @@ import type {
   RepoState,
   RepoStatus,
   ResetMode,
+  StashInfo,
   StatusEntry,
 } from './types';
 
@@ -90,33 +91,80 @@ function parseDecorations(decorated: string, commit: GitCommit): void {
   }
 }
 
-export async function loadLog(repoPath: string, limit = 500): Promise<GitCommit[]> {
+export async function loadLog(
+  repoPath: string,
+  limit = 500,
+  stashes?: Map<string, StashInfo>,
+): Promise<GitCommit[]> {
   const fmt = ['%H', '%P', '%an', '%at', '%s', '%D'].join(UNIT);
-  const out = await git(repoPath, [
+  const args = [
     'log',
     '--all',
     '--date-order',
     '--decorate=full',
     `--pretty=format:${fmt}`,
     `--max-count=${limit}`,
-  ]);
+    ...(stashes ? [...stashes.keys()] : []),
+  ];
+  const out = await git(repoPath, args);
   const commits: GitCommit[] = [];
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
     const [hash = '', parents = '', author = '', ts = '', subject = '', decorated = ''] =
       line.split(UNIT);
+    const stash = stashes?.get(hash);
     const commit: GitCommit = {
       hash,
-      parents: parents ? parents.split(' ') : [],
+      // Stash WIP commits expose [base, index, (untracked)]; only the base is a
+      // real history commit, so drop the synthetic parents to avoid fake merges.
+      parents: stash ? [...stash.parents] : parents ? parents.split(' ') : [],
       author,
       timestamp: Number(ts) || 0,
-      subject,
+      subject: stash ? stash.message : subject,
       refs: [],
     };
-    parseDecorations(decorated, commit);
+    if (stash) {
+      commit.isStash = true;
+      commit.stash = stash;
+      commit.refs.push({ name: stash.selector, kind: 'stash' });
+    } else {
+      parseDecorations(decorated, commit);
+    }
     commits.push(commit);
   }
   return commits;
+}
+
+/**
+ * Read `git stash list`. Returns stash metadata keyed by WIP commit hash plus the
+ * set of synthetic index/untracked commits that must be hidden from the graph.
+ */
+export async function loadStashes(
+  repoPath: string,
+): Promise<{ stashes: Map<string, StashInfo>; hidden: Set<string> }> {
+  const fmt = ['%H', '%gd', '%gs', '%ct', '%an', '%P'].join(UNIT);
+  const out = await git(repoPath, ['stash', 'list', `--format=${fmt}`]);
+  const stashes = new Map<string, StashInfo>();
+  const hidden = new Set<string>();
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const [hash = '', selector = '', subject = '', ts = '', author = '', parentList = ''] =
+      line.split(UNIT);
+    if (!hash) continue;
+    const parents = parentList ? parentList.split(' ') : [];
+    for (const parent of parents.slice(1)) hidden.add(parent);
+    const m = /^On ([^:]+): (.*)$/.exec(subject);
+    stashes.set(hash, {
+      selector,
+      hash,
+      message: m?.[2] ?? subject,
+      branch: m?.[1] ?? null,
+      parents: parents.slice(0, 1),
+      author,
+      timestamp: Number(ts) || 0,
+    });
+  }
+  return { stashes, hidden };
 }
 
 export async function loadRepoState(repoPath: string): Promise<RepoState> {
@@ -385,4 +433,41 @@ export async function deleteTag(repoPath: string, name: string): Promise<void> {
 /** Move HEAD (and the checked-out branch) to `ref`, discarding changes for hard. */
 export async function resetBranch(repoPath: string, mode: ResetMode, ref: string): Promise<void> {
   await git(repoPath, ['reset', `--${mode}`, ref]);
+}
+
+// --- Stash (mirrors src/api.ts) ---
+
+/** Resolve a stash WIP commit hash to its current reflog selector. */
+export async function resolveStash(repoPath: string, hash: string): Promise<string> {
+  const { stashes } = await loadStashes(repoPath);
+  const info = stashes.get(hash);
+  if (!info) throw new GitError(`Unknown stash ${hash}`, 'No such stash');
+  return info.selector;
+}
+
+/** `git stash push`; `includeUntracked` maps to `-u`. Returns the WIP hash, or '' when clean. */
+export async function createStash(
+  repoPath: string,
+  message: string,
+  includeUntracked: boolean,
+): Promise<string> {
+  const m = message.trim();
+  const args = ['stash', 'push'];
+  if (m) args.push('-m', m);
+  if (includeUntracked) args.push('-u');
+  const out = await git(repoPath, args);
+  if (/No local changes to save/i.test(out)) return '';
+  const { stashes } = await loadStashes(repoPath);
+  const first = stashes.values().next().value as StashInfo | undefined;
+  return first?.hash ?? '';
+}
+
+/** `git stash apply` a selector; keeps the stash in place. */
+export async function applyStash(repoPath: string, selector: string): Promise<string> {
+  return (await git(repoPath, ['stash', 'apply', selector])).trim();
+}
+
+/** `git stash drop` a selector; removes one stash entry. */
+export async function dropStash(repoPath: string, selector: string): Promise<string> {
+  return (await git(repoPath, ['stash', 'drop', selector])).trim();
 }

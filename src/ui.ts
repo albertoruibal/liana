@@ -190,21 +190,29 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     const atBranchTip = headTip !== undefined && headTip.hash === commit.hash;
 
     html += '<div class="actions">';
-    if (!isHead) {
-      if (commit.parents.length >= 2) {
-        html += `<p class="muted hint">Merge commit — pick a parent to cherry-pick against:</p>`;
-        commit.parents.forEach((p, i) => {
-          html += `<button class="btn act" data-act="cherry-pick" data-mainline="${i + 1}">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')} (-m ${i + 1}) <code>${esc(p.slice(0, 7))}</code></button>`;
-        });
-      } else {
-        html += `<button class="btn act" data-act="cherry-pick">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')}</button>`;
+    if (commit.isStash) {
+      const branch = commit.stash?.branch ? ` (from ${esc(commit.stash.branch)})` : '';
+      html += `<p class="muted hint">Stash entry${branch}. Applying restores the saved changes on the checked-out branch.</p>`;
+      html += `<button class="btn act" data-act="stash-apply">Apply stash — keep the entry</button>`;
+      html += `<button class="btn act" data-act="stash-pop">Apply stash &amp; drop it</button>`;
+      html += `<button class="btn act btn-danger" data-act="stash-drop">Drop stash</button>`;
+    } else {
+      if (!isHead) {
+        if (commit.parents.length >= 2) {
+          html += `<p class="muted hint">Merge commit — pick a parent to cherry-pick against:</p>`;
+          commit.parents.forEach((p, i) => {
+            html += `<button class="btn act" data-act="cherry-pick" data-mainline="${i + 1}">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')} (-m ${i + 1}) <code>${esc(p.slice(0, 7))}</code></button>`;
+          });
+        } else {
+          html += `<button class="btn act" data-act="cherry-pick">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')}</button>`;
+        }
+        html += `<label class="checkbox-label"><input type="checkbox" id="cherry-record" /> Record source hash in message (-x)</label>`;
       }
-      html += `<label class="checkbox-label"><input type="checkbox" id="cherry-record" /> Record source hash in message (-x)</label>`;
-    }
-    if (!atBranchTip) {
-      html += `<button class="btn act" data-act="rebase-here">Rebase ${esc(state?.headBranch ?? 'branch')} onto this commit</button>`;
-      if (INTERACTIVE_REBASE_ENABLED) {
-        html += `<button class="btn act" data-act="rebase-interactive">Interactive rebase onto this commit…</button>`;
+      if (!atBranchTip) {
+        html += `<button class="btn act" data-act="rebase-here">Rebase ${esc(state?.headBranch ?? 'branch')} onto this commit</button>`;
+        if (INTERACTIVE_REBASE_ENABLED) {
+          html += `<button class="btn act" data-act="rebase-interactive">Interactive rebase onto this commit…</button>`;
+        }
       }
     }
     html += '</div>';
@@ -314,6 +322,16 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
     } else if (act === 'rebase-interactive') {
       await openRebaseDialog();
       return;
+    } else if (act === 'stash-apply') {
+      await api('/stash-apply', { hash: selectedHash });
+    } else if (act === 'stash-pop') {
+      await api('/stash-apply', { hash: selectedHash });
+      await api('/stash-drop', { hash: selectedHash });
+      selectedHash = null;
+    } else if (act === 'stash-drop') {
+      if (!confirm('Drop this stash entry? The saved changes are discarded.')) return;
+      await api('/stash-drop', { hash: selectedHash });
+      selectedHash = null;
     }
     await refresh();
   } catch (err) {
@@ -437,6 +455,33 @@ $('#btn-theme').addEventListener('click', () => {
 
 $('#btn-refresh').addEventListener('click', () => void refresh());
 
+$('#btn-stash').addEventListener('click', () => {
+  const dlg = $<HTMLDialogElement>('#stash-dialog');
+  $('#stash-status').textContent = '';
+  $<HTMLInputElement>('#stash-message').value = '';
+  $<HTMLInputElement>('#stash-untracked').checked = false;
+  dlg.showModal();
+});
+
+$('#stash-submit').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const message = $<HTMLInputElement>('#stash-message').value.trim();
+  const includeUntracked = $<HTMLInputElement>('#stash-untracked').checked;
+  void (async () => {
+    try {
+      const res = await api<{ stashed: boolean }>('/stash', { message, includeUntracked });
+      $<HTMLDialogElement>('#stash-dialog').close();
+      if (!res.stashed) {
+        alert('No local changes to stash.');
+        return;
+      }
+      await refresh();
+    } catch (err) {
+      $('#stash-status').textContent = String(err);
+    }
+  })();
+});
+
 $('#btn-commit').addEventListener('click', () => {
   const dlg = $<HTMLDialogElement>('#commit-dialog');
   $('#commit-status').textContent = '';
@@ -527,7 +572,7 @@ graphScroll.addEventListener(
 // --- Right-click context menu: create branch/tag, delete branch/tag ---
 
 interface ContextTarget {
-  kind: 'commit' | 'local' | 'remote' | 'tag' | 'empty';
+  kind: 'commit' | 'local' | 'remote' | 'tag' | 'stash' | 'empty';
   hash: string | null;
   name?: string;
   isHead?: boolean;
@@ -541,6 +586,7 @@ function closeContextMenu(): void {
 
 function menuTitle(target: ContextTarget): string {
   if (target.kind === 'empty') return 'Repository';
+  if (target.kind === 'stash') return `Stash ${target.name ?? ''}`;
   if (target.kind === 'commit' || target.hash === null) return `Commit ${target.hash?.slice(0, 7) ?? ''}`;
   return `${target.kind} ${target.name ?? ''}`;
 }
@@ -556,6 +602,15 @@ interface MenuItem {
 function buildMenu(target: ContextTarget): MenuItem[] {
   const items: MenuItem[] = [];
   const hash = target.hash;
+  const isStash =
+    target.kind === 'stash' ||
+    (hash !== null && (lastResponse?.commits ?? []).some((c) => c.hash === hash && c.isStash));
+  if (isStash && hash) {
+    items.push({ label: 'Apply stash — keep the entry', action: () => void applyStash(hash) });
+    items.push({ label: 'Apply stash & drop it', action: () => void popStash(hash) });
+    items.push({ label: 'Drop stash', danger: true, action: () => void dropStash(hash) });
+    return items;
+  }
   if (hash) {
     items.push({ label: 'Create branch here…', action: () => openNameDialog('branch', hash) });
     items.push({ label: 'Create tag here…', action: () => openNameDialog('tag', hash) });
@@ -625,7 +680,7 @@ function targetFromSvg(el: Element | null): ContextTarget {
   const hash = node?.dataset.hash ?? null;
   const name = node?.dataset.name;
   if (kind && kind !== 'head' && name) {
-    return { kind: kind as 'local' | 'remote' | 'tag', hash, name };
+    return { kind: kind as 'local' | 'remote' | 'tag' | 'stash', hash, name };
   }
   if (hash) return { kind: 'commit', hash };
   return { kind: 'empty', hash: null };
@@ -673,6 +728,37 @@ async function deleteTag(name: string): Promise<void> {
     await refresh();
   } catch (err) {
     alert(`Delete failed:\n${String(err)}`);
+  }
+}
+
+async function applyStash(hash: string): Promise<void> {
+  try {
+    await api('/stash-apply', { hash });
+    await refresh();
+  } catch (err) {
+    alert(`Apply failed:\n${String(err)}`);
+  }
+}
+
+async function popStash(hash: string): Promise<void> {
+  try {
+    await api('/stash-apply', { hash });
+    await api('/stash-drop', { hash });
+    selectedHash = null;
+    await refresh();
+  } catch (err) {
+    alert(`Pop failed:\n${String(err)}`);
+  }
+}
+
+async function dropStash(hash: string): Promise<void> {
+  if (!confirm('Drop this stash entry? The saved changes are discarded.')) return;
+  try {
+    await api('/stash-drop', { hash });
+    selectedHash = null;
+    await refresh();
+  } catch (err) {
+    alert(`Drop failed:\n${String(err)}`);
   }
 }
 
@@ -770,8 +856,13 @@ document.addEventListener('keydown', (ev) => {
   const rebaseDlg = $<HTMLDialogElement>('#rebase-dialog');
   const nameDlg = $<HTMLDialogElement>('#name-dialog');
   const resetDlg = $<HTMLDialogElement>('#reset-dialog');
+  const stashDlg = $<HTMLDialogElement>('#stash-dialog');
   if (resetDlg.open) {
     resetDlg.close();
+    return;
+  }
+  if (stashDlg.open) {
+    stashDlg.close();
     return;
   }
   if (nameDlg.open) {

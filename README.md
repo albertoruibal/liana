@@ -59,6 +59,9 @@ or new lane. This is what produces the parallel vertical lanes.
 | `/api/tag-create` | POST | `{name, ref}` | Create a lightweight tag at `ref` |
 | `/api/tag-delete` | POST | `{name}` | Delete a tag (`git tag -d`) |
 | `/api/reset` | POST | `{mode, ref}` | `git reset --soft\|--mixed\|--hard <ref>` on the checked-out branch |
+| `/api/stash` | POST | `{message?, includeUntracked?}` | `git stash push` (`-u` when `includeUntracked`); `{stashed:false}` when clean |
+| `/api/stash-apply` | POST | `{hash}` | `git stash apply` the stash identified by its WIP commit hash (keeps the entry) |
+| `/api/stash-drop` | POST | `{hash}` | `git stash drop` the stash identified by its WIP commit hash |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
 `/api/cherry-pick`) return HTTP **409** with a human message instead of raw stderr;
@@ -103,6 +106,13 @@ so it can find `git`.
 
 ## Scope: intentionally NOT here
 
-clone / fetch / push / pull / remotes / stashes / submodules / conflict resolution UI.
+clone / fetch / push / pull / remotes / submodules / conflict resolution UI.
 Operations that would open an editor or conflict mid-rebase return git's error text
 in the API response and the UI shows it.
+
+Stash entries appear as synthetic nodes in the graph (one per `git stash list`
+entry, hanging off the commit they were created on) labeled `stash@{n}`. The
+toolbar's **Stash** button saves the current changes (`-u` optional), and a
+selected stash can be applied, applied-and-dropped (pop), or dropped from the
+detail pane or its right-click menu. `git stash apply` keeps the entry; it is
+only removed on an explicit pop/drop.

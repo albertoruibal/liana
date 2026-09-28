@@ -46,8 +46,13 @@ c hotfix.js "critical fix on hotfix branch"
 git checkout -q main
 c app.js "polish UI"
 
+# leave a stash entry so the graph demo shows a stash node
+echo "unfinished" >> app.js
+git stash push -q -m "draft settings tweak"
+
 # leave HEAD on main with a clean tree
 git checkout -q main
 
 echo "fixture repo ready: $DIR"
 git log --oneline --graph --all | head -20
+git stash list
