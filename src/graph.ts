@@ -1,13 +1,18 @@
 // SVG rendering of the commit graph (left pane).
 
-import type { GraphLayout, RepoState } from './types';
-import { refLabel } from './refs';
+import type { GraphLayout, RefKind, RepoState } from './types';
+import { REF_ICON_PATHS } from './refs';
+import { isoDate, isoDateTime } from './dates';
 
 const ROW_H = 42;
 const COL_W = 30;
 const DOT_R = 7;
 const LABEL_FS = 12.5; // px, keep in sync with .graph-row-label in styles.css
 const CHIP_H = 21;
+// Ref chip internals: leading kind icon + a little breathing room.
+const ICON = 13;
+const ICON_GAP = 5;
+const CHIP_PAD = 8;
 // Gap between the lane (graph) area and the commit-text column on the right.
 const COLUMN_GAP = 36;
 // Gap between the ref/tag column on the left and the graph lanes.
@@ -110,6 +115,7 @@ export function renderGraph(
   // positioned after we know how wide the column must be.
   interface Chip {
     text: SVGTextElement;
+    icon: SVGGElement | null;
     isHead: boolean;
     kind: string;
     name: string;
@@ -132,17 +138,24 @@ export function renderGraph(
     let rowW = 0;
     for (const ref of sorted) {
       const isHead = ref.kind === 'head';
+      const icon = createRefIcon(ns, ref.kind);
+      if (icon) {
+        icon.dataset.name = ref.name;
+        icon.dataset.hash = n.commit.hash;
+        svg.appendChild(icon);
+      }
       const text = document.createElementNS(ns, 'text');
       text.setAttribute('y', String(cy + 4));
-      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('text-anchor', 'start');
       text.setAttribute('class', isHead ? 'ref-chip ref-head' : `ref-chip ref-${ref.kind}`);
       text.dataset.kind = ref.kind;
       text.dataset.name = ref.name;
       text.dataset.hash = n.commit.hash;
-      text.textContent = refLabel(ref);
+      text.textContent = ref.name;
       svg.appendChild(text);
-      const width = measureText(text) + 16;
-      chips.push({ text, isHead, kind: ref.kind, name: ref.name, width });
+      const iconW = icon ? ICON + ICON_GAP : 0;
+      const width = measureText(text) + CHIP_PAD * 2 + iconW;
+      chips.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
       rowW += width + 6;
     }
     refRows.push({ cy, chips });
@@ -233,9 +246,17 @@ export function renderGraph(
       rect.dataset.name = chip.name;
       rect.dataset.hash = chip.text.dataset.hash ?? '';
       applyChipStyle(rect, chip.kind, chip.isHead);
-      // Insert the pill underneath its text.
-      svg.insertBefore(rect, chip.text);
-      chip.text.setAttribute('x', String(chipX + chip.width / 2));
+      // Insert the pill underneath its icon and text.
+      svg.insertBefore(rect, chip.icon ?? chip.text);
+      const iconX = chipX + CHIP_PAD;
+      const textX = iconX + (chip.icon ? ICON + ICON_GAP : 0);
+      if (chip.icon) {
+        chip.icon.setAttribute(
+          'transform',
+          `translate(${iconX} ${row.cy - ICON / 2})`,
+        );
+      }
+      chip.text.setAttribute('x', String(textX));
       chipX += chip.width + 6;
     }
   }
@@ -283,8 +304,6 @@ export function renderGraph(
   }
 
   // --- Nodes + labels ---
-  const dateFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-  const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
   for (const n of layout.nodes) {
     const cx = x(n.column);
@@ -374,14 +393,16 @@ export function renderGraph(
     svg.appendChild(rowText);
     rowText.textContent = fitText(rowText, n.commit.subject, subjectW - 12);
 
-    // Date column.
-    const d = new Date(n.commit.timestamp * 1000);
+    // Date column (ISO calendar day in local time; full stamp in the title).
     const dateText = document.createElementNS(ns, 'text');
     dateText.setAttribute('x', String(dateX));
     dateText.setAttribute('y', String(cy + 4));
     dateText.setAttribute('class', 'graph-meta-label');
-    dateText.textContent = `${dateFmt.format(d)} · ${timeFmt.format(d)}`;
+    dateText.textContent = isoDate(n.commit.timestamp);
     dateText.dataset.hash = n.commit.hash;
+    const title = document.createElementNS(ns, 'title');
+    title.textContent = isoDateTime(n.commit.timestamp);
+    dateText.appendChild(title);
     svg.appendChild(dateText);
 
     // Short hash column.
@@ -432,6 +453,21 @@ export function renderGraph(
   return { refX, lanesX: laneLeft, authorX, subjectX, dateX, hashX, totalW: width };
 }
 
+/** Build the small kind icon that sits at the left of a ref chip. */
+function createRefIcon(ns: string, kind: RefKind): SVGGElement | null {
+  const paths = REF_ICON_PATHS[kind];
+  if (paths.length === 0) return null;
+  const group = document.createElementNS(ns, 'g') as SVGGElement;
+  group.setAttribute('class', `ref-chip-icon ref-chip-icon-${kind}`);
+  group.setAttribute('pointer-events', 'none');
+  for (const d of paths) {
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    group.appendChild(path);
+  }
+  return group;
+}
+
 /** Apply the kind-specific chip fill/stroke. */
 function applyChipStyle(rect: SVGElement, kind: string, isHead: boolean): void {
   if (isHead) {
@@ -443,6 +479,7 @@ function applyChipStyle(rect: SVGElement, kind: string, isHead: boolean): void {
     local: '167, 139, 250',
     remote: '34, 211, 238',
     tag: '251, 191, 36',
+    stash: '244, 114, 182',
   };
   const rgb = tones[kind] ?? '164, 157, 192';
   rect.setAttribute('fill', `rgba(${rgb}, 0.12)`);

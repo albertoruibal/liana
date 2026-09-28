@@ -2,7 +2,8 @@
 
 import { layoutGraph } from './layout';
 import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } from './graph';
-import { refLabel } from './refs';
+import { refIconHtml, refLabel } from './refs';
+import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus, ResetMode } from './types';
 
@@ -61,12 +62,6 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
 }
 
 // --- Rendering ---
-
-function fmtDate(unixSeconds: number): string {
-  const d = new Date(unixSeconds * 1000);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
-    ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -129,10 +124,10 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       if (state.branches.length > 0) {
         html += '<h4>Branches</h4><ul class="branch-list">';
         for (const b of state.branches) {
-          const color = avatarColor(b.name);
+          const kind = b.isRemote ? 'remote' : 'local';
           const badge = b.isHead ? '<span class="head-badge">HEAD</span>' : '';
-          html += `<li data-branch="${esc(b.name)}" title="Checkout ${esc(b.name)}">
-            <span class="branch-dot" style="background:${color}"></span>
+          html += `<li class="branch-${kind}" data-branch="${esc(b.name)}" title="Checkout ${esc(b.name)}">
+            ${refIconHtml(kind)}
             <span class="branch-name">${esc(b.name)}</span>
             ${badge}
           </li>`;
@@ -172,14 +167,14 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     html += `<div class="detail-head"><h3>${esc(commit.subject)}</h3>`;
     html += `<div class="meta-row">
       <span class="meta-chip">${avatarHtml(commit.author, true)}${esc(commit.author)}</span>
-      <span class="meta-chip">${fmtDate(commit.timestamp)}</span>
+      <span class="meta-chip" title="${esc(isoDateTime(commit.timestamp))}">${isoDate(commit.timestamp)}</span>
       <span class="meta-chip"><code>${short}</code></span>
     </div>`;
     if (commit.refs.length > 0) {
       html +=
         '<p class="meta-row">' +
         commit.refs
-          .map((r) => `<span class="ref-pill ref-${r.kind}">${esc(refLabel(r))}</span>`)
+          .map((r) => `<span class="ref-pill ref-${r.kind}" title="${esc(refLabel(r))}">${refIconHtml(r.kind)}${esc(r.name)}</span>`)
           .join(' ') +
         '</p>';
     }
