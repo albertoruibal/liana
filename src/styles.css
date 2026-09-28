@@ -189,43 +189,6 @@ body::before {
   color: transparent;
 }
 
-.repo-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: 320px;
-  padding: 5px 11px 5px 9px;
-  background: var(--bg-elev-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
-}
-
-.repo-pill:hover {
-  border-color: var(--border-strong);
-}
-
-.repo-glyph {
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-  flex: 0 0 auto;
-}
-
-.repo-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-name.is-empty {
-  color: var(--fg-faint);
-  font-weight: 500;
-}
-
 .dirty-dot {
   width: 7px;
   height: 7px;

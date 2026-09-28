@@ -69,8 +69,6 @@ function loadTab(tab: RepoTab): void {
   zoom = tab.zoom;
   repoName = tab.name;
   currentLayout = null;
-  setRepoName(tab.name);
-  setRepoDirty(tab.lastResponse?.status?.entries.length ?? 0);
   applyTransform();
   renderTabs();
   persistTabs();
@@ -369,20 +367,7 @@ function renderAll(resp: StateResponse): void {
   const metrics = renderGraph($svg('#graph-svg'), { name: repoName, ...resp.state } as RepoState, layout, selectedHash);
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
-  setRepoDirty(resp.status?.entries.length ?? 0);
   updateSyncButtons();
-}
-
-function setRepoDirty(count: number): void {
-  const dot = $('#repo-dirty-dot');
-  dot.hidden = count === 0;
-  dot.title = `${count} uncommitted ${count === 1 ? 'change' : 'changes'}`;
-}
-
-function setRepoName(name: string): void {
-  const el = $('#repo-name');
-  el.textContent = name;
-  el.classList.toggle('is-empty', name.length === 0);
 }
 
 // --- Repository tabs ---
@@ -472,7 +457,6 @@ function renderTabs(): void {
 
 /** Render the empty state shown when no repository is open. */
 function renderNoRepo(): void {
-  setRepoName('no repo open');
   renderGraphHeader(EMPTY_METRICS);
   $('#detail-pane').innerHTML =
     `<div class="detail-empty">
@@ -588,7 +572,6 @@ async function refresh(): Promise<void> {
     tab.name = repoName;
     tab.lastResponse = resp;
     tab.remoteStatus = remote;
-    setRepoName(repoName);
     lastResponse = resp;
     remoteStatus = remote;
     renderAll(resp);
@@ -849,7 +832,9 @@ function updateSyncButtons(): void {
     return;
   }
   const branch = rs.currentBranch ?? 'detached HEAD';
-  push.title = rs.upstream ? `Push ${branch} to ${rs.upstream}` : `Push ${branch} and set upstream`;
+  push.title = rs.upstream
+    ? `Push ${branch} to ${rs.upstream} (shift-click to force-push with lease)`
+    : `Push ${branch} and set upstream`;
   pull.title = rs.upstream ? `Pull ${rs.upstream} into ${branch}` : 'Push first to set an upstream';
 }
 
@@ -863,24 +848,37 @@ async function runSync(route: '/push' | '/pull', body: unknown): Promise<void> {
   }
 }
 
-/** Push, prompting for a remote when several exist and none is the upstream. */
-async function doPush(): Promise<void> {
+/**
+ * Push, prompting for a remote when several exist and none is the upstream.
+ * `force` adds `--force-with-lease` (shift-click, or accepting the offer after a
+ * rejected non-fast-forward push).
+ */
+async function doPush(force = false): Promise<void> {
   const rs = remoteStatus;
   if (!rs) return;
   if (rs.remotes.length === 0) {
     alert('No remote configured. Add one with `git remote add <name> <url>`.');
     return;
   }
-  if (rs.upstream) {
-    await runSync('/push', {});
-    return;
+  let remote: string | undefined;
+  if (!rs.upstream && rs.remotes.length > 1) {
+    remote = (await pickRemote('Push to which remote?')) ?? undefined;
+    if (!remote) return;
   }
-  if (rs.remotes.length === 1) {
-    await runSync('/push', {});
-    return;
+  try {
+    await api('/push', { remote, force });
+    await refresh();
+  } catch (err) {
+    const message = String(err);
+    if (!force && /non-fast-forward|\[rejected\]|fetch first/i.test(message)) {
+      const branch = rs.currentBranch ?? 'this branch';
+      if (confirm(`Push rejected: the remote has commits you don't have.\n\nForce-push ${branch} with --force-with-lease?`)) {
+        await doPush(true);
+      }
+      return;
+    }
+    alert(`Push failed:\n${message}`);
   }
-  const remote = await pickRemote('Push to which remote?');
-  if (remote) await runSync('/push', { remote });
 }
 
 async function doPull(): Promise<void> {
@@ -953,7 +951,7 @@ function renderLoginDialog(): void {
     : 'none — git will use the SSH agent or prompt-free helpers only';
 }
 
-$('#btn-push').addEventListener('click', () => void doPush());
+$('#btn-push').addEventListener('click', (ev) => void doPush(ev.shiftKey));
 $('#btn-pull').addEventListener('click', () => void doPull());
 
 $('#btn-login').addEventListener('click', () => {

@@ -73,7 +73,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/stash-apply` | POST | `{hash}` | `git stash apply` the stash identified by its WIP commit hash (keeps the entry) |
 | `/api/stash-drop` | POST | `{hash}` | `git stash drop` the stash identified by its WIP commit hash |
 | `/api/remote-status` | GET | — | Current branch, remotes, upstream, ahead/behind counts, credential helper |
-| `/api/push` | POST | `{remote?, branch?}` | Push the current branch; sets upstream with `-u` when it has none. 400 without a remote |
+| `/api/push` | POST | `{remote?, branch?, force?}` | Push the current branch; sets upstream with `-u` when it has none. `force` adds `--force-with-lease`. 400 without a remote |
 | `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); 409 if dirty |
 | `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
 
@@ -83,9 +83,11 @@ raw stderr; failed operations keep the graph intact. Interactive rebase ships be
 `INTERACTIVE_REBASE_ENABLED` in `src/config.ts`.
 
 The toolbar's **Pull** and **Push** buttons sync the checked-out branch: push sets
-the upstream (`git push -u`) the first time, pull merges with `git pull`. **Login**
-opens a dialog showing the configured remotes and credential helper; it can test a
-remote with `git ls-remote`. Credentials are never stored by Liana — they come from
+the upstream (`git push -u`) the first time, pull merges with `git pull`. If a push
+is rejected as non-fast-forward the UI offers a `--force-with-lease` retry, and
+shift-clicking **Push** forces directly. **Login** opens a dialog showing the
+configured remotes and credential helper; it can test a remote with `git ls-remote`.
+Credentials are never stored by Liana — they come from
 git's own credential helper or SSH agent, and git runs with `GIT_TERMINAL_PROMPT=0`
 so a missing credential fails fast with git's error instead of hanging.
 

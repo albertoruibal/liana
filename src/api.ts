@@ -503,12 +503,19 @@ async function loadRemoteStatus(repoPath: string): Promise<RemoteStatus> {
 /**
  * Push the checked-out branch. With an explicit `remote`/`branch` it pushes that
  * pair; otherwise the branch's upstream is used, or a single configured remote is
- * adopted with `-u` when there is no upstream yet.
+ * adopted with `-u` when there is no upstream yet. `force` uses
+ * `--force-with-lease`, so an unexpected remote update still rejects the push.
  */
-async function pushBranch(repoPath: string, remote?: string, branch?: string): Promise<string> {
+async function pushBranch(
+  repoPath: string,
+  remote?: string,
+  branch?: string,
+  force = false,
+): Promise<string> {
   const branchName = branch?.trim() || (await currentBranch(repoPath));
   if (!branchName) throw new GitError('Cannot push: detached HEAD', 'Check out a branch first', 400);
 
+  const lease = force ? ['--force-with-lease'] : [];
   const remotes = await loadRemotes(repoPath);
   const target = remote?.trim() || '';
   if (target) {
@@ -516,13 +523,13 @@ async function pushBranch(repoPath: string, remote?: string, branch?: string): P
       throw new GitError(`Unknown remote: ${target}`, 'Pick a configured remote', 400);
     const upstream = await upstreamRef(repoPath);
     if (branch || !upstream) {
-      return (await gitRun(repoPath, ['push', '-u', target, branchName], NET_ENV)).trim();
+      return (await gitRun(repoPath, ['push', ...lease, '-u', target, branchName], NET_ENV)).trim();
     }
-    return (await gitRun(repoPath, ['push', target], NET_ENV)).trim();
+    return (await gitRun(repoPath, ['push', ...lease, target], NET_ENV)).trim();
   }
 
   if (await upstreamRef(repoPath)) {
-    return (await gitRun(repoPath, ['push'], NET_ENV)).trim();
+    return (await gitRun(repoPath, ['push', ...lease], NET_ENV)).trim();
   }
   if (remotes.length === 0) {
     throw new GitError('No remote configured', 'Add a remote with `git remote add` first', 400);
@@ -531,7 +538,7 @@ async function pushBranch(repoPath: string, remote?: string, branch?: string): P
     throw new GitError('Multiple remotes configured', 'Pick a remote to push to', 400);
   }
   const only = remotes[0]!;
-  return (await gitRun(repoPath, ['push', '-u', only.name, branchName], NET_ENV)).trim();
+  return (await gitRun(repoPath, ['push', ...lease, '-u', only.name, branchName], NET_ENV)).trim();
 }
 
 /** Pull the checked-out branch (merge); callers guard the tree first. */
@@ -861,8 +868,12 @@ export function createApi(defaultRepo: string | null): Api {
         return { status: 200, body: status };
       }
       if (route === '/push' && method === 'POST') {
-        const { remote, branch } = JSON.parse(rawBody) as { remote?: string; branch?: string };
-        const out = await pushBranch(repoPath, remote, branch);
+        const { remote, branch, force } = JSON.parse(rawBody) as {
+          remote?: string;
+          branch?: string;
+          force?: boolean;
+        };
+        const out = await pushBranch(repoPath, remote, branch, force === true);
         return { status: 200, body: { ok: true, output: out } };
       }
       if (route === '/pull' && method === 'POST') {
