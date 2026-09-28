@@ -54,11 +54,22 @@ or new lane. This is what produces the parallel vertical lanes.
 | `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
 | `/api/commit-diff` | POST | `{hash}` | `git show --stat` text for the commit detail pane |
 | `/api/checkout` | POST | `{branch}` | Checkout a local branch |
+| `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
+| `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |
+| `/api/tag-create` | POST | `{name, ref}` | Create a lightweight tag at `ref` |
+| `/api/tag-delete` | POST | `{name}` | Delete a tag (`git tag -d`) |
+| `/api/reset` | POST | `{mode, ref}` | `git reset --soft\|--mixed\|--hard <ref>` on the checked-out branch |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
 `/api/cherry-pick`) return HTTP **409** with a human message instead of raw stderr;
 failed operations keep the graph intact. Interactive rebase ships behind
 `INTERACTIVE_REBASE_ENABLED` in `src/config.ts`.
+
+Right-click a commit to create a branch/tag there or reset the checked-out branch
+to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
+chip (in the graph or the detail pane) to check it out, or delete it. Deleting a
+remote branch runs `git push <remote> --delete`, so it *is* a network operation
+even though the rest of the app stays local.
 
 ## Run
 

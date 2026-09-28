@@ -1,7 +1,7 @@
 # Liana — implementation plan for OpenCode
 
 You are implementing features in **Liana** (`/home/agent/workspace/liana`), a minimal
-GitKraken-style local git GUI. Read `AGENTS.md` FIRST and obey it — especially:
+local git GUI. Read `AGENTS.md` FIRST and obey it — especially:
 no new dependencies, strict TS must stay clean (`npx tsc --noEmit`), mirror git
 wrapper changes in both `dev.ts` and `src/git.ts`, keep operations local-only.
 

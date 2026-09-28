@@ -1,10 +1,10 @@
 // UI entry: wires the graph pane, detail pane, toolbar actions, and dialogs.
 
 import { layoutGraph } from './layout';
-import { renderGraph } from './graph';
+import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } from './graph';
 import { refLabel } from './refs';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus } from './types';
+import type { GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RepoState, RepoStatus, ResetMode } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -17,6 +17,7 @@ interface StateResponse {
 let currentLayout: GraphLayout | null = null;
 let selectedHash: string | null = null;
 let repoName = '';
+let lastResponse: StateResponse | null = null;
 
 // Graph viewport transform: pan offset (px) and zoom scale.
 let panX = 0;
@@ -71,6 +72,43 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Initials avatar markup (shared with the graph's SVG avatars). */
+function avatarHtml(name: string, small = false): string {
+  return `<span class="avatar${small ? ' avatar-sm' : ''}" style="background:${avatarColor(name)}">${esc(initials(name))}</span>`;
+}
+
+/** Map a porcelain status char to a badge class. */
+function statusClass(ch: string): string {
+  switch (ch) {
+    case 'A':
+      return 's-add';
+    case 'D':
+      return 's-del';
+    case 'R':
+    case 'C':
+      return 's-ren';
+    case '?':
+      return 's-unt';
+    default:
+      return 's-mod';
+  }
+}
+
+/** Colourise a `git show --stat` block without trusting its content as HTML. */
+function formatDiffStat(stat: string): string {
+  return esc(stat)
+    .split('\n')
+    .map((line) => {
+      if (/^\s*\|/.test(line) || /\d+ [+-]/.test(line)) {
+        const withAdd = line.replace(/(\+{1,})/g, '<span class="dl-add">$1</span>');
+        return withAdd.replace(/(?<!<[^>]*)(-{1,})(?!>)/g, '<span class="dl-del">$1</span>');
+      }
+      if (/^\s*\d+ files? changed/.test(line)) return `<span class="dl-meta">${line}</span>`;
+      return `<span class="dl-file">${line}</span>`;
+    })
+    .join('\n');
+}
+
 function renderDetail(commits: GitCommit[], state: RepoState | undefined, status: RepoStatus | undefined): void {
   const pane = $('#detail-pane');
   const commit = commits.find((c) => c.hash === selectedHash);
@@ -79,7 +117,10 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
   const dirty = status?.entries.length ?? 0;
   if (dirty > 0) {
     const noun = dirty === 1 ? 'change' : 'changes';
-    html += `<div class="dirty-banner">${dirty} uncommitted ${noun} — commit or stash before rebasing</div>`;
+    html += `<div class="dirty-banner">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span>${dirty} uncommitted ${noun} — commit or stash before rebasing</span>
+    </div>`;
   }
   if (!commit) {
     html += '<h3>Repository</h3>';
@@ -88,11 +129,13 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       if (state.branches.length > 0) {
         html += '<h4>Branches</h4><ul class="branch-list">';
         for (const b of state.branches) {
-          const head = b.isHead ? ' <span class="ref-head">HEAD</span>' : '';
-          const kind = b.isRemote
-            ? '<span class="ref-kind ref-remote">remote</span>'
-            : '<span class="ref-kind ref-local">local</span>';
-          html += `<li data-branch="${esc(b.name)}">${kind}${esc(b.name)}${head}</li>`;
+          const color = avatarColor(b.name);
+          const badge = b.isHead ? '<span class="head-badge">HEAD</span>' : '';
+          html += `<li data-branch="${esc(b.name)}" title="Checkout ${esc(b.name)}">
+            <span class="branch-dot" style="background:${color}"></span>
+            <span class="branch-name">${esc(b.name)}</span>
+            ${badge}
+          </li>`;
         }
         html += '</ul>';
         html += '<p class="muted hint">Click a branch to checkout</p>';
@@ -104,7 +147,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       if (staged.length > 0) {
         html += '<h4>Staged</h4><ul class="status-list">';
         for (const e of staged) {
-          html += `<li><span class="status-code">${esc(e.stagedX)}</span> ${esc(e.path)}</li>`;
+          html += `<li><span class="status-badge ${statusClass(e.stagedX)}">${esc(e.stagedX)}</span><span class="status-path">${esc(e.path)}</span></li>`;
         }
         html += '</ul>';
       }
@@ -112,25 +155,35 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
         html += '<h4>Unstaged</h4><ul class="status-list">';
         for (const e of unstaged) {
           const code = e.stagedX === '?' ? '??' : e.unstagedY;
-          html += `<li><span class="status-code">${esc(code)}</span> ${esc(e.path)}</li>`;
+          html += `<li><span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : e.unstagedY)}">${esc(code)}</span><span class="status-path">${esc(e.path)}</span></li>`;
         }
         html += '</ul>';
       }
     } else {
       html += '<p class="muted">Working tree clean</p>';
     }
+    html += `<div class="detail-empty">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <strong>No commit selected</strong>
+      <span class="hint">Pick a commit in the graph to see details and actions.</span>
+    </div>`;
   } else {
     const short = commit.hash.slice(0, 7);
-    html += `<h3>${esc(commit.subject)}</h3>`;
-    html += `<p class="muted">${esc(commit.author)} · ${fmtDate(commit.timestamp)} · <code>${short}</code></p>`;
+    html += `<div class="detail-head"><h3>${esc(commit.subject)}</h3>`;
+    html += `<div class="meta-row">
+      <span class="meta-chip">${avatarHtml(commit.author, true)}${esc(commit.author)}</span>
+      <span class="meta-chip">${fmtDate(commit.timestamp)}</span>
+      <span class="meta-chip"><code>${short}</code></span>
+    </div>`;
     if (commit.refs.length > 0) {
       html +=
-        '<p>' +
+        '<p class="meta-row">' +
         commit.refs
-          .map((r) => `<span class="ref-chip ref-${r.kind}">${esc(refLabel(r))}</span>`)
+          .map((r) => `<span class="ref-pill ref-${r.kind}">${esc(refLabel(r))}</span>`)
           .join(' ') +
         '</p>';
     }
+    html += '</div>';
     const isHead = commit.refs.some((r) => r.kind === 'head');
     // Tip of the currently checked-out branch
     const headTip = (state?.branches ?? []).find((b) => b.isHead);
@@ -141,22 +194,22 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       if (commit.parents.length >= 2) {
         html += `<p class="muted hint">Merge commit — pick a parent to cherry-pick against:</p>`;
         commit.parents.forEach((p, i) => {
-          html += `<button class="act" data-act="cherry-pick" data-mainline="${i + 1}">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')} (-m ${i + 1}) <code>${esc(p.slice(0, 7))}</code></button>`;
+          html += `<button class="btn act" data-act="cherry-pick" data-mainline="${i + 1}">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')} (-m ${i + 1}) <code>${esc(p.slice(0, 7))}</code></button>`;
         });
       } else {
-        html += `<button class="act" data-act="cherry-pick">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')}</button>`;
+        html += `<button class="btn act" data-act="cherry-pick">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')}</button>`;
       }
       html += `<label class="checkbox-label"><input type="checkbox" id="cherry-record" /> Record source hash in message (-x)</label>`;
     }
     if (!atBranchTip) {
-      html += `<button class="act" data-act="rebase-here">Rebase ${esc(state?.headBranch ?? 'branch')} onto this commit</button>`;
+      html += `<button class="btn act" data-act="rebase-here">Rebase ${esc(state?.headBranch ?? 'branch')} onto this commit</button>`;
       if (INTERACTIVE_REBASE_ENABLED) {
-        html += `<button class="act" data-act="rebase-interactive">Interactive rebase onto this commit…</button>`;
+        html += `<button class="btn act" data-act="rebase-interactive">Interactive rebase onto this commit…</button>`;
       }
     }
     html += '</div>';
     html += '<div id="commit-diff" class="diff-stat">Loading diff stats…</div>';
-    html += '<p class="muted hint">Operations run on the checked-out branch; the graph reloads after.</p>';
+    html += '<div class="detail-empty"><span class="hint">Operations run on the checked-out branch; the graph reloads after.</span></div>';
   }
   pane.innerHTML = html;
   if (commit) void loadDiffStat(commit.hash);
@@ -175,19 +228,52 @@ async function loadDiffStat(hash: string): Promise<void> {
   try {
     const { stat } = await api<{ stat: string }>('/commit-diff', { hash });
     const el = document.querySelector('#commit-diff');
-    if (el && selectedHash === hash) el.textContent = stat || '(no changes)';
+    if (el && selectedHash === hash) {
+      el.innerHTML = stat ? formatDiffStat(stat) : '<span class="dl-meta">(no changes)</span>';
+    }
   } catch {
     const el = document.querySelector('#commit-diff');
     if (el && selectedHash === hash) el.textContent = '';
   }
 }
 
+/** Lay out the sticky column header to match the SVG's computed column offsets. */
+function renderGraphHeader(m: GraphMetrics): void {
+  const header = $('#graph-header');
+  header.style.width = `${m.totalW}px`;
+  const labels: Array<[number, string]> = [
+    [m.refX, 'Refs'],
+    [m.lanesX - 4, 'Graph'],
+    [m.authorX, 'Author'],
+    [m.subjectX, 'Commit'],
+    [m.dateX, 'Date'],
+    [m.hashX, 'Hash'],
+  ];
+  header.innerHTML = labels
+    .map(([x, label]) => `<span style="left:${Math.max(0, Math.round(x))}px">${label}</span>`)
+    .join('');
+}
+
 function renderAll(resp: StateResponse): void {
   const commits = resp.commits ?? [];
   const layout = layoutGraph(commits);
   currentLayout = layout;
-  renderGraph($svg('#graph-svg'), { name: repoName, ...resp.state } as RepoState, layout, selectedHash);
+  const metrics = renderGraph($svg('#graph-svg'), { name: repoName, ...resp.state } as RepoState, layout, selectedHash);
+  renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
+  setRepoDirty(resp.status?.entries.length ?? 0);
+}
+
+function setRepoDirty(count: number): void {
+  const dot = $('#repo-dirty-dot');
+  dot.hidden = count === 0;
+  dot.title = `${count} uncommitted ${count === 1 ? 'change' : 'changes'}`;
+}
+
+function setRepoName(name: string): void {
+  const el = $('#repo-name');
+  el.textContent = name;
+  el.classList.toggle('is-empty', name.length === 0);
 }
 
 // --- Actions ---
@@ -196,13 +282,19 @@ async function refresh(): Promise<void> {
   try {
     const resp = await api<StateResponse>('/state');
     if (!resp.configured) {
-      $('#repo-name').textContent = 'no repo open — use "Open repo…"';
+      setRepoName('no repo open');
+      renderGraphHeader(EMPTY_METRICS);
       $('#detail-pane').innerHTML =
-        '<h3>liana</h3><p class="muted">Click "Open repo…" and pick a git repository folder.</p>';
+        `<div class="detail-empty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm11 13.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM4.5 5v6.75c0 .4.1.6.35.85l3.3 3.3c.5.5 1.35.5 1.85 0l.6-.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          <strong>liana</strong>
+          <span class="hint">Open a local git repository to see its commit graph.</span>
+        </div>`;
       return;
     }
     repoName = resp.state?.name ?? '';
-    $('#repo-name').textContent = repoName;
+    setRepoName(repoName);
+    lastResponse = resp;
     renderAll(resp);
   } catch (err) {
     $('#detail-pane').innerHTML = `<p class="error">Failed to load repo: ${esc(String(err))}</p>`;
@@ -246,7 +338,7 @@ function renderRebaseTodo(
   ol.innerHTML = items
     .map(
       (c) =>
-        `<li data-hash="${esc(c.hash)}">
+        `<li data-hash="${esc(c.hash)}" data-action="pick">
           <select class="rebase-action">
             <option value="pick">pick</option>
             <option value="reword">reword</option>
@@ -267,6 +359,7 @@ function renderRebaseTodo(
     const sync = () => {
       const needsMsg = select.value === 'reword' || select.value === 'squash';
       msg.classList.toggle('visible', needsMsg);
+      li.dataset.action = select.value;
     };
     select.addEventListener('change', sync);
     sync();
@@ -431,11 +524,260 @@ graphScroll.addEventListener(
   { passive: false },
 );
 
+// --- Right-click context menu: create branch/tag, delete branch/tag ---
+
+interface ContextTarget {
+  kind: 'commit' | 'local' | 'remote' | 'tag' | 'empty';
+  hash: string | null;
+  name?: string;
+  isHead?: boolean;
+}
+
+const contextMenu = $('#context-menu');
+
+function closeContextMenu(): void {
+  contextMenu.hidden = true;
+}
+
+function menuTitle(target: ContextTarget): string {
+  if (target.kind === 'empty') return 'Repository';
+  if (target.kind === 'commit' || target.hash === null) return `Commit ${target.hash?.slice(0, 7) ?? ''}`;
+  return `${target.kind} ${target.name ?? ''}`;
+}
+
+interface MenuItem {
+  label?: string;
+  action?: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  separator?: boolean;
+}
+
+function buildMenu(target: ContextTarget): MenuItem[] {
+  const items: MenuItem[] = [];
+  const hash = target.hash;
+  if (hash) {
+    items.push({ label: 'Create branch here…', action: () => openNameDialog('branch', hash) });
+    items.push({ label: 'Create tag here…', action: () => openNameDialog('tag', hash) });
+  }
+  const name = target.name ?? '';
+  const currentBranch = lastResponse?.state?.headBranch ?? '';
+  if (target.kind === 'local' && name && name !== currentBranch && !target.isHead) {
+    items.push({ separator: true });
+    items.push({ label: `Checkout ${name}`, action: () => void checkout(name) });
+    items.push({ label: `Delete branch ${name}`, danger: true, action: () => void deleteBranch(name, false) });
+  } else if (target.kind === 'remote' && name) {
+    items.push({ separator: true });
+    items.push({ label: `Delete remote branch ${name}`, danger: true, action: () => void deleteBranch(name, true) });
+  } else if (target.kind === 'tag' && name) {
+    items.push({ separator: true });
+    items.push({ label: `Delete tag ${name}`, danger: true, action: () => void deleteTag(name) });
+  }
+  if (hash && target.kind !== 'remote') {
+    items.push({ separator: true });
+    items.push({ label: 'Reset current branch to here', disabled: true });
+    items.push({ label: 'Soft — keep changes staged', action: () => void resetTo(hash, 'soft') });
+    items.push({ label: 'Mixed — keep changes unstaged', action: () => void resetTo(hash, 'mixed') });
+    items.push({ label: 'Hard — discard all changes', danger: true, action: () => void resetTo(hash, 'hard') });
+  }
+  return items;
+}
+
+function showContextMenu(target: ContextTarget, x: number, y: number): void {
+  const items = buildMenu(target);
+  if (items.length === 0) return;
+  contextMenu.replaceChildren();
+  const head = document.createElement('div');
+  head.className = 'ctx-head';
+  head.textContent = menuTitle(target);
+  contextMenu.appendChild(head);
+  for (const item of items) {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-sep';
+      contextMenu.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = item.label ?? '';
+    if (item.danger) btn.classList.add('danger');
+    if (item.disabled || !item.action) btn.disabled = true;
+    if (item.action) {
+      btn.addEventListener('click', () => {
+        closeContextMenu();
+        item.action?.();
+      });
+    }
+    contextMenu.appendChild(btn);
+  }
+  contextMenu.hidden = false;
+  const rect = contextMenu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - rect.height - 8));
+  contextMenu.style.left = `${left}px`;
+  contextMenu.style.top = `${top}px`;
+}
+
+function targetFromSvg(el: Element | null): ContextTarget {
+  const node = el?.closest('[data-kind], [data-hash]') as SVGElement | null;
+  const kind = node?.dataset.kind;
+  const hash = node?.dataset.hash ?? null;
+  const name = node?.dataset.name;
+  if (kind && kind !== 'head' && name) {
+    return { kind: kind as 'local' | 'remote' | 'tag', hash, name };
+  }
+  if (hash) return { kind: 'commit', hash };
+  return { kind: 'empty', hash: null };
+}
+
+$svg('#graph-svg').addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  showContextMenu(targetFromSvg(ev.target as Element), ev.clientX, ev.clientY);
+});
+
+$('#detail-pane').addEventListener('contextmenu', (ev) => {
+  const li = (ev.target as Element).closest('li[data-branch]');
+  if (!li) return;
+  ev.preventDefault();
+  const name = li.getAttribute('data-branch') ?? '';
+  const info = (lastResponse?.state?.branches ?? []).find((b) => b.name === name);
+  showContextMenu(
+    { kind: info?.isRemote ? 'remote' : 'local', hash: info?.hash ?? null, name, isHead: info?.isHead },
+    ev.clientX,
+    ev.clientY,
+  );
+});
+
+document.addEventListener('pointerdown', (ev) => {
+  if (!contextMenu.hidden && !contextMenu.contains(ev.target as Node)) closeContextMenu();
+});
+window.addEventListener('resize', closeContextMenu);
+graphScroll.addEventListener('scroll', closeContextMenu);
+
+async function deleteBranch(name: string, remote: boolean): Promise<void> {
+  const noun = remote ? `remote branch "${name}"` : `branch "${name}"`;
+  if (!confirm(`Delete ${noun}?`)) return;
+  try {
+    await api('/branch-delete', { name, remote });
+    await refresh();
+  } catch (err) {
+    alert(`Delete failed:\n${String(err)}`);
+  }
+}
+
+async function deleteTag(name: string): Promise<void> {
+  if (!confirm(`Delete tag "${name}"?`)) return;
+  try {
+    await api('/tag-delete', { name });
+    await refresh();
+  } catch (err) {
+    alert(`Delete failed:\n${String(err)}`);
+  }
+}
+
+/** Custom confirm dialog that names the reset mode and target commit. */
+function confirmReset(mode: ResetMode, hash: string): Promise<boolean> {
+  const dlg = $<HTMLDialogElement>('#reset-dialog');
+  $('#reset-summary').innerHTML =
+    `Reset the checked-out branch to <code>${esc(hash.slice(0, 7))}</code> with <b>--${mode}</b>.`;
+  const hardWarn = mode === 'hard';
+  $('#reset-warning').hidden = !hardWarn;
+  $<HTMLButtonElement>('#reset-confirm').textContent = `Reset --${mode}`;
+  $<HTMLButtonElement>('#reset-confirm').classList.toggle('btn-danger', hardWarn);
+  return new Promise((resolve) => {
+    const confirmBtn = $<HTMLButtonElement>('#reset-confirm');
+    const cancelBtn = $<HTMLButtonElement>('#reset-cancel');
+    const onConfirm = (): void => {
+      cleanup();
+      dlg.close();
+      resolve(true);
+    };
+    const onCancel = (): void => {
+      cleanup();
+      dlg.close();
+      resolve(false);
+    };
+    const cleanup = (): void => {
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onCancel);
+    dlg.showModal();
+  });
+}
+
+async function resetTo(hash: string, mode: ResetMode): Promise<void> {
+  if (!(await confirmReset(mode, hash))) return;
+  try {
+    await api('/reset', { mode, ref: hash });
+    selectedHash = null;
+    await refresh();
+  } catch (err) {
+    alert(`Reset failed:\n${String(err)}`);
+  }
+}
+
+// --- Create branch / tag dialog ---
+
+type NameMode = 'branch' | 'tag';
+let nameMode: NameMode = 'branch';
+let nameRef = '';
+
+function openNameDialog(mode: NameMode, ref: string): void {
+  nameMode = mode;
+  nameRef = ref;
+  $('#name-title').textContent = mode === 'branch' ? 'Create branch' : 'Create tag';
+  $('#name-subtitle').textContent = `At commit ${ref.slice(0, 7)}`;
+  $('#name-error').textContent = '';
+  const input = $<HTMLInputElement>('#name-input');
+  input.value = '';
+  $<HTMLButtonElement>('#name-submit').textContent = mode === 'branch' ? 'Create & checkout' : 'Create tag';
+  $<HTMLDialogElement>('#name-dialog').showModal();
+  input.focus();
+}
+
+$('#name-submit').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const name = $<HTMLInputElement>('#name-input').value.trim();
+  if (!name) {
+    $('#name-error').textContent = 'Name required';
+    return;
+  }
+  void (async () => {
+    try {
+      if (nameMode === 'branch') await api('/branch-create', { name, ref: nameRef });
+      else await api('/tag-create', { name, ref: nameRef });
+      $<HTMLDialogElement>('#name-dialog').close();
+      await refresh();
+    } catch (err) {
+      $('#name-error').textContent = String(err);
+    }
+  })();
+});
+
 // Escape closes an open dialog, otherwise clears the selection.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
+  if (!contextMenu.hidden) {
+    closeContextMenu();
+    return;
+  }
   const commitDlg = $<HTMLDialogElement>('#commit-dialog');
   const rebaseDlg = $<HTMLDialogElement>('#rebase-dialog');
+  const nameDlg = $<HTMLDialogElement>('#name-dialog');
+  const resetDlg = $<HTMLDialogElement>('#reset-dialog');
+  if (resetDlg.open) {
+    resetDlg.close();
+    return;
+  }
+  if (nameDlg.open) {
+    nameDlg.close();
+    return;
+  }
   if (rebaseDlg.open) {
     rebaseDlg.close();
     return;
@@ -492,4 +834,15 @@ function initDetailResizer(): void {
 initTheme();
 initDetailResizer();
 void currentLayout;
+
+// Re-layout the graph when the viewport changes so the responsive subject
+// column (and the sticky header) stay aligned with the date/hash columns.
+let resizeTimer: number | undefined;
+window.addEventListener('resize', () => {
+  window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    if (lastResponse) renderAll(lastResponse);
+  }, 120);
+});
+
 void refresh();

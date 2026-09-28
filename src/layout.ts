@@ -1,4 +1,4 @@
-// Lane assignment for the commit graph, in the GitKraken style.
+// Lane assignment for the commit graph.
 //
 // Rules:
 // - Commits arrive in --date-order (parents never earlier in the list than children).
@@ -8,7 +8,7 @@
 //   the child's lane stays occupied until it reaches the parent's row. Without this
 //   a freed lane is immediately reused by the next sibling tip, collapsing several
 //   parallel branches into one tangled column. Keeping it busy gives each branch a
-//   lane of its own, exactly like GitKraken.
+//   lane of its own.
 // - First parent: continues straight down in the child's own lane when the parent
 //   has no reservation yet (the classic mainline look).
 // - Second+ parents: reserved lane if one exists, otherwise a new lane; drawn curved.

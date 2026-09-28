@@ -16,6 +16,7 @@ import type {
   RebaseTodoItem,
   RepoState,
   RepoStatus,
+  ResetMode,
   StatusEntry,
 } from './types';
 
@@ -106,10 +107,12 @@ async function loadLog(repoPath: string, limit: number): Promise<GitCommit[]> {
 }
 
 async function loadRepoState(repoPath: string): Promise<RepoState> {
-  const headOut = await gitRun(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD', '--symbolic-full-name', 'HEAD']);
-  const branchOut = await gitRun(repoPath, ['for-each-ref', '--format=%(refname)%00%(objectname)']);
+  const [branchOut, symbolicOut] = await Promise.all([
+    gitRun(repoPath, ['for-each-ref', '--format=%(refname)%00%(objectname)']),
+    gitRun(repoPath, ['rev-parse', '--symbolic-full-name', 'HEAD']).catch(() => ''),
+  ]);
   // "refs/heads/main" when on a branch, "HEAD" when detached
-  const symbolic = headOut.trim().split('\n')[1] ?? '';
+  const symbolic = symbolicOut.trim();
   const detachedHead = !symbolic.startsWith('refs/heads/');
   const headBranch = detachedHead ? null : symbolic.replace(/^refs\/heads\//, '');
 
@@ -297,6 +300,58 @@ async function executeRebase(repoPath: string, onto: string, items: RebaseTodoIt
   }
 }
 
+// --- Branches and tags ---
+
+const REF_NAME_RE = /^[^\s~^:?*[\\]+$/;
+
+/** Reject names git would misinterpret as an option, a range, or a path. */
+function validRefName(name: string): boolean {
+  return (
+    !!name &&
+    !name.startsWith('-') &&
+    !name.startsWith('.') &&
+    !name.endsWith('.') &&
+    !name.includes('..') &&
+    !name.includes('//') &&
+    !name.includes('@{') &&
+    !name.endsWith('.lock') &&
+    REF_NAME_RE.test(name)
+  );
+}
+
+/** `git branch -b` plus checkout; fails if the branch already exists. */
+async function createBranch(repoPath: string, name: string, ref: string): Promise<void> {
+  await gitRun(repoPath, ['checkout', '-b', name, ref]);
+}
+
+async function deleteBranch(repoPath: string, name: string): Promise<void> {
+  await gitRun(repoPath, ['branch', '-D', name]);
+}
+
+/** Delete the branch on the remote and its tracking ref (`git push --delete`). */
+async function deleteRemoteBranchPush(repoPath: string, name: string): Promise<void> {
+  const m = /^([^/]+)\/(.+)$/.exec(name);
+  if (!m || !m[1] || !m[2]) throw new GitError(`Not a remote branch: ${name}`, '');
+  await gitRun(repoPath, ['push', m[1], '--delete', m[2]]);
+}
+
+async function createTag(repoPath: string, name: string, ref: string): Promise<void> {
+  await gitRun(repoPath, ['tag', name, ref]);
+}
+
+async function deleteTag(repoPath: string, name: string): Promise<void> {
+  await gitRun(repoPath, ['tag', '-d', name]);
+}
+
+// --- Reset ---
+
+const RESET_MODES: readonly ResetMode[] = ['soft', 'mixed', 'hard'];
+
+/** Move HEAD (and the checked-out branch) to `ref`, discarding changes for hard. */
+async function resetBranch(repoPath: string, mode: ResetMode, ref: string): Promise<void> {
+  await gitRun(repoPath, ['reset', `--${mode}`, ref]);
+}
+
 async function resolveOpenRepo(raw: string): Promise<string | null> {
   if (!raw.trim()) return null;
   const expanded = raw.startsWith('~') ? path.join(process.env.HOME ?? '', raw.slice(1)) : raw;
@@ -432,6 +487,45 @@ export function createApi(defaultRepo: string | null): Api {
         const { branch } = JSON.parse(rawBody) as { branch?: string };
         if (!branch?.trim()) return { status: 400, body: { error: 'Missing branch' } };
         await gitRun(repoPath, ['checkout', branch.trim()]);
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/branch-create' && method === 'POST') {
+        const { name, ref } = JSON.parse(rawBody) as { name?: string; ref?: string };
+        const branch = name?.trim() ?? '';
+        if (!validRefName(branch)) return { status: 400, body: { error: 'Invalid branch name' } };
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing start point' } };
+        await createBranch(repoPath, branch, ref.trim());
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/branch-delete' && method === 'POST') {
+        const { name, remote } = JSON.parse(rawBody) as { name?: string; remote?: boolean };
+        const branch = name?.trim() ?? '';
+        if (!branch) return { status: 400, body: { error: 'Missing branch' } };
+        if (remote) await deleteRemoteBranchPush(repoPath, branch);
+        else await deleteBranch(repoPath, branch);
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/tag-create' && method === 'POST') {
+        const { name, ref } = JSON.parse(rawBody) as { name?: string; ref?: string };
+        const tag = name?.trim() ?? '';
+        if (!validRefName(tag)) return { status: 400, body: { error: 'Invalid tag name' } };
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing start point' } };
+        await createTag(repoPath, tag, ref.trim());
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/tag-delete' && method === 'POST') {
+        const { name } = JSON.parse(rawBody) as { name?: string };
+        if (!name?.trim()) return { status: 400, body: { error: 'Missing tag' } };
+        await deleteTag(repoPath, name.trim());
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/reset' && method === 'POST') {
+        const { mode, ref } = JSON.parse(rawBody) as { mode?: ResetMode; ref?: string };
+        if (!mode || !RESET_MODES.includes(mode)) {
+          return { status: 400, body: { error: 'Invalid reset mode' } };
+        }
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing ref' } };
+        await resetBranch(repoPath, mode, ref.trim());
         return { status: 200, body: { ok: true } };
       }
       return { status: 404, body: { error: 'Unknown route' } };

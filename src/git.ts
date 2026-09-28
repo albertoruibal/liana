@@ -14,6 +14,7 @@ import type {
   RebaseTodoItem,
   RepoState,
   RepoStatus,
+  ResetMode,
   StatusEntry,
 } from './types';
 
@@ -119,14 +120,14 @@ export async function loadLog(repoPath: string, limit = 500): Promise<GitCommit[
 }
 
 export async function loadRepoState(repoPath: string): Promise<RepoState> {
-  const [headOut, branchOut, nameOut] = await Promise.all([
-    git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD', '--symbolic-full-name', 'HEAD']),
+  const [symbolicOut, branchOut, nameOut] = await Promise.all([
+    git(repoPath, ['rev-parse', '--symbolic-full-name', 'HEAD']).catch(() => ''),
     git(repoPath, ['for-each-ref', '--format=%(refname)%00%(objectname)']),
     git(repoPath, ['basename', '--', repoPath]).catch(() => repoPath),
   ]);
 
   // "refs/heads/main" when on a branch, "HEAD" when detached
-  const symbolic = headOut.trim().split('\n')[1] ?? '';
+  const symbolic = symbolicOut.trim();
   const detachedHead = !symbolic.startsWith('refs/heads/');
   const headBranch = detachedHead ? null : symbolic.replace(/^refs\/heads\//, '');
 
@@ -331,4 +332,57 @@ export async function executeRebase(
 /** List local branches with head marker, for the checkout menu. */
 export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
   await git(repoPath, ['checkout', name]);
+}
+
+// --- Branches and tags (mirrors src/api.ts) ---
+
+const REF_NAME_RE = /^[^\s~^:?*[\\]+$/;
+
+/** Reject names git would misinterpret as an option, a range, or a path. */
+export function validRefName(name: string): boolean {
+  return (
+    !!name &&
+    !name.startsWith('-') &&
+    !name.startsWith('.') &&
+    !name.endsWith('.') &&
+    !name.includes('..') &&
+    !name.includes('//') &&
+    !name.includes('@{') &&
+    !name.endsWith('.lock') &&
+    REF_NAME_RE.test(name)
+  );
+}
+
+/** Create a branch and check it out (`git checkout -b`); fails if it exists. */
+export async function createBranch(repoPath: string, name: string, ref: string): Promise<void> {
+  await git(repoPath, ['checkout', '-b', name, ref]);
+}
+
+/** Force-delete a local branch (`git branch -D`). */
+export async function deleteBranch(repoPath: string, name: string): Promise<void> {
+  await git(repoPath, ['branch', '-D', name]);
+}
+
+/** Delete the branch on the remote and its tracking ref (`git push --delete`). */
+export async function deleteRemoteBranchPush(repoPath: string, name: string): Promise<void> {
+  const m = /^([^/]+)\/(.+)$/.exec(name);
+  if (!m || !m[1] || !m[2]) throw new GitError(`Not a remote branch: ${name}`, '');
+  await git(repoPath, ['push', m[1], '--delete', m[2]]);
+}
+
+/** Create a lightweight tag at `ref` (`git tag`). */
+export async function createTag(repoPath: string, name: string, ref: string): Promise<void> {
+  await git(repoPath, ['tag', name, ref]);
+}
+
+/** Delete a tag (`git tag -d`). */
+export async function deleteTag(repoPath: string, name: string): Promise<void> {
+  await git(repoPath, ['tag', '-d', name]);
+}
+
+// --- Reset (mirrors src/api.ts) ---
+
+/** Move HEAD (and the checked-out branch) to `ref`, discarding changes for hard. */
+export async function resetBranch(repoPath: string, mode: ResetMode, ref: string): Promise<void> {
+  await git(repoPath, ['reset', `--${mode}`, ref]);
 }

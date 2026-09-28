@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create a demo repo with a GitKraken-like history: main + feature branch,
+# Create a demo repo with a branched history: main + feature branch,
 # merge, cherry-pick-able commit on a side branch. Usage: ./scripts/make-fixture-repo.sh [dir]
 set -euo pipefail
 

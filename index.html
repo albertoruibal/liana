@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,38 +8,140 @@
   </head>
   <body>
     <header id="toolbar">
-      <span id="repo-name" class="repo-name">liana</span>
+      <div class="brand" aria-label="liana">
+        <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="liana-rope" x1="7" y1="3" x2="25" y2="29" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#a78bfa" />
+              <stop offset="1" stop-color="#22d3ee" />
+            </linearGradient>
+          </defs>
+          <!-- Rope loop with a tail -->
+          <g stroke="url(#liana-rope)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+            <circle cx="16" cy="12.5" r="8.5" />
+            <path d="M16 21v8.5" />
+          </g>
+          <!-- Diagonal wraps = twisted strands -->
+          <g stroke="rgba(15,10,35,.5)" stroke-width="2.8" stroke-linecap="round">
+            <path d="M6.8 8.4 9.9 10.1" />
+            <path d="M25.2 8.4 22.1 10.1" />
+            <path d="M6.8 16.6 9.9 14.9" />
+            <path d="M25.2 16.6 22.1 14.9" />
+            <path d="M14.6 23.6 17.4 25.4" />
+          </g>
+          <g stroke="rgba(255,255,255,.6)" stroke-width="1.2" stroke-linecap="round">
+            <path d="M6.9 7.6 10 9.3" />
+            <path d="M25.1 7.6 22 9.3" />
+            <path d="M14.6 22.8 17.4 24.6" />
+          </g>
+        </svg>
+        <span class="brand-name">liana</span>
+      </div>
+
+      <div id="repo-pill" class="repo-pill" title="Current repository">
+        <svg class="repo-glyph" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm7 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM5.5 5v2.75c0 .4.1.6.35.85l3.3 3.3c.5.5 1.35.5 1.85 0l.6-.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+        </svg>
+        <span id="repo-name" class="repo-name">no repo open</span>
+        <span id="repo-dirty-dot" class="dirty-dot" title="Uncommitted changes" hidden></span>
+      </div>
+
       <div class="spacer"></div>
-      <button id="btn-refresh" title="Reload commit graph">Refresh</button>
-      <button id="btn-commit" title="Create a commit">
-        Commit…
-      </button>
-      <button id="btn-theme" title="Toggle light/dark theme">Theme</button>
-      <button id="btn-open-repo" title="Open a different repository folder">
-        Open repo…
-      </button>
+
+      <div class="toolbar-group">
+        <button class="btn btn-icon" id="btn-refresh" title="Reload commit graph" aria-label="Refresh">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.6 2.4v2.5h-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Refresh</span>
+        </button>
+        <button class="btn btn-primary" id="btn-commit" title="Create a commit">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span>Commit</span>
+        </button>
+      </div>
+
+      <div class="toolbar-sep" role="separator"></div>
+
+      <div class="toolbar-group">
+        <button class="btn btn-icon" id="btn-theme" title="Toggle light/dark theme" aria-label="Toggle theme">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" fill="currentColor"/></svg>
+          <span>Theme</span>
+        </button>
+        <button class="btn btn-icon" id="btn-open-repo" title="Open a different repository folder">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.3c.4 0 .8.16 1.06.44L8 4.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          <span>Open repo</span>
+        </button>
+      </div>
     </header>
+
     <main>
-      <div id="graph-scroll">
-        <div id="graph-pane">
-          <svg id="graph-svg"></svg>
+      <div id="graph-wrap">
+        <div id="graph-scroll">
+          <div id="graph-sticky">
+            <div id="graph-header" class="graph-header" aria-hidden="true"></div>
+          </div>
+          <div id="graph-pane">
+            <svg id="graph-svg"></svg>
+          </div>
         </div>
       </div>
-      <div id="detail-resizer" title="Drag to resize"></div>
-      <div id="detail-pane"></div>
+      <div id="detail-resizer" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
+      <aside id="detail-pane"></aside>
     </main>
+
     <dialog id="rebase-dialog">
-      <h3>Interactive rebase</h3>
-      <p class="muted hint" id="rebase-summary"></p>
+      <div class="dialog-head">
+        <h3>Interactive rebase</h3>
+        <p class="muted hint" id="rebase-summary"></p>
+      </div>
       <ol id="rebase-todo"></ol>
-      <div id="rebase-status"></div>
+      <div id="rebase-status" class="dialog-status"></div>
       <menu>
-        <button id="rebase-cancel" value="cancel">Cancel</button>
-        <button id="rebase-submit" value="ok">Rebase</button>
+        <button class="btn" id="rebase-cancel" value="cancel">Cancel</button>
+        <button class="btn btn-primary" id="rebase-submit" value="ok">Rebase</button>
       </menu>
     </dialog>
+
+    <nav id="context-menu" class="context-menu" hidden aria-label="Context menu"></nav>
+
+    <dialog id="name-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <h3 id="name-title">Create branch</h3>
+          <p class="muted hint" id="name-subtitle"></p>
+        </div>
+        <label>
+          Name
+          <input type="text" id="name-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <div id="name-error" class="dialog-status"></div>
+        <menu>
+          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn btn-primary" id="name-submit" value="ok">Create</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="reset-dialog">
+      <div class="dialog-head">
+        <h3 id="reset-title">Reset branch</h3>
+        <p class="muted hint" id="reset-summary"></p>
+      </div>
+      <div id="reset-warning" class="dirty-banner" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span>Hard reset permanently discards all uncommitted and unpushed changes.</span>
+      </div>
+      <menu>
+        <button class="btn" id="reset-cancel" value="cancel">Cancel</button>
+        <button class="btn btn-primary" id="reset-confirm" value="ok">Reset</button>
+      </menu>
+    </dialog>
+
     <dialog id="commit-dialog">
       <form method="dialog">
+        <div class="dialog-head">
+          <h3>Create commit</h3>
+          <p class="muted hint">Changes are committed on the checked-out branch.</p>
+        </div>
         <label>
           Commit message
           <textarea id="commit-message" rows="4" placeholder="What changed?"></textarea>
@@ -48,13 +150,14 @@
           <input type="checkbox" id="commit-stage-all" checked />
           Stage everything (otherwise commit only staged changes)
         </label>
-        <div id="commit-status"></div>
+        <div id="commit-status" class="dialog-status"></div>
         <menu>
-          <button value="cancel">Cancel</button>
-          <button id="commit-submit" value="ok">Commit</button>
+          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn btn-primary" id="commit-submit" value="ok">Commit</button>
         </menu>
       </form>
     </dialog>
+
     <script type="module" src="/src/ui.ts"></script>
   </body>
 </html>

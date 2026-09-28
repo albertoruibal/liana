@@ -75,6 +75,9 @@ export interface RepoStatus {
   entries: StatusEntry[];
 }
 
+/** Reset mode for `git reset --<mode>`, controlling index/worktree handling. */
+export type ResetMode = 'soft' | 'mixed' | 'hard';
+
 /** Per-commit action in an interactive-rebase todo list. */
 export type RebaseAction = 'pick' | 'drop' | 'reword' | 'squash';
 
