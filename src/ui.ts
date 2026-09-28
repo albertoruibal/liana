@@ -458,6 +458,10 @@ function renderTabs(): void {
 /** Render the empty state shown when no repository is open. */
 function renderNoRepo(): void {
   renderGraphHeader(EMPTY_METRICS);
+  const svg = $svg('#graph-svg');
+  svg.replaceChildren();
+  svg.setAttribute('width', '0');
+  svg.setAttribute('height', '0');
   const pane = $('#detail-pane');
   pane.innerHTML =
     `<div class="detail-empty">
