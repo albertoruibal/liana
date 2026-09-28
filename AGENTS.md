@@ -54,3 +54,9 @@ server (`electron/server.ts`) in the packaged app.
 - **`HEAD` ref detection**: a commit is the branch tip iff its refs include
   `HEAD`; use `state.branches[].isHead` for the checked-out branch. The UI hides
   cherry-pick/rebase buttons when they'd be no-ops (tip of current branch).
+- **Multiple repositories are addressed by id.** `createApi` keeps a per-process
+  registry of validated repo paths; every repo-scoped `/api` route requires an
+  `x-liana-repo: <id>` header (unknown/missing → 400). Only `/api/repos` and
+  `/api/open` are unscoped. When adding a route, default it to scoped — resolve the
+  path from the registry, never from a global. Both adapters (`dev.ts`,
+  `electron/server.ts`) pass the header through to `handle`.

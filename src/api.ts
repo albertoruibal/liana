@@ -504,31 +504,54 @@ export interface ApiResponse {
   body: unknown;
 }
 
+/** A repository the server can serve, addressed by opaque `id` on each request. */
+export interface RepoEntry {
+  id: string;
+  path: string;
+  name: string;
+}
+
 export interface Api {
-  /** Current repository path, or '' when none is open. */
-  readonly repoPath: string;
-  /** Set the repository directly (Electron launch with a known repo path). */
-  setRepo(repoPath: string): void;
-  handle(route: string, method: string, rawBody: string): Promise<ApiResponse>;
+  handle(route: string, method: string, rawBody: string, repoId?: string): Promise<ApiResponse>;
 }
 
 export function createApi(defaultRepo: string | null): Api {
-  let repoPath = defaultRepo ?? '';
+  // Validated repositories, keyed by a per-process opaque id. The client owns the
+  // tab list; the server only maps ids → absolute paths for the life of the process.
+  const repos = new Map<string, { path: string; name: string }>();
+  let nextId = 1;
 
-  async function handle(route: string, method: string, rawBody: string): Promise<ApiResponse> {
+  function register(abs: string): RepoEntry {
+    for (const [id, entry] of repos) {
+      if (entry.path === abs) return { id, path: entry.path, name: entry.name };
+    }
+    const id = `r${nextId++}`;
+    const name = path.basename(abs);
+    repos.set(id, { path: abs, name });
+    return { id, path: abs, name };
+  }
+
+  // `defaultRepo` (LIANA_REPO / Electron launch) is validated lazily on first list.
+  let seeded = false;
+  async function ensureDefault(): Promise<void> {
+    if (seeded) return;
+    seeded = true;
+    if (!defaultRepo) return;
+    const abs = await resolveOpenRepo(defaultRepo);
+    if (abs) register(abs);
+  }
+
+  async function handle(
+    route: string,
+    method: string,
+    rawBody: string,
+    repoId?: string,
+  ): Promise<ApiResponse> {
     try {
-      if (route === '/state' && method === 'GET') {
-        if (!repoPath) return { status: 200, body: { configured: false } };
-        const [{ stashes, hidden }, state, status] = await Promise.all([
-          loadStashes(repoPath),
-          loadRepoState(repoPath),
-          loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
-        ]);
-        const log = (await loadLog(repoPath, 500, stashes)).filter((c) => !hidden.has(c.hash));
-        return {
-          status: 200,
-          body: { configured: true, repoPath, state, commits: log, status },
-        };
+      if (route === '/repos' && method === 'GET') {
+        await ensureDefault();
+        const entries: RepoEntry[] = [...repos].map(([id, e]) => ({ id, path: e.path, name: e.name }));
+        return { status: 200, body: { repos: entries } };
       }
       if (route === '/open' && method === 'POST') {
         let raw = '';
@@ -540,10 +563,25 @@ export function createApi(defaultRepo: string | null): Api {
         }
         const abs = await resolveOpenRepo(raw);
         if (!abs) return { status: 400, body: { error: 'Not a git repository' } };
-        repoPath = abs;
-        return { status: 200, body: { ok: true, repoPath } };
+        const entry = register(abs);
+        return { status: 200, body: { ok: true, id: entry.id, path: entry.path, name: entry.name } };
       }
-      if (!repoPath) return { status: 400, body: { error: 'No repository open' } };
+      // Every repo-scoped route must name a registered repository.
+      const entry = repoId !== undefined ? repos.get(repoId) : undefined;
+      if (!entry) return { status: 400, body: { error: 'Unknown repository' } };
+      const repoPath = entry.path;
+      if (route === '/state' && method === 'GET') {
+        const [{ stashes, hidden }, state, status] = await Promise.all([
+          loadStashes(repoPath),
+          loadRepoState(repoPath),
+          loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
+        ]);
+        const log = (await loadLog(repoPath, 500, stashes)).filter((c) => !hidden.has(c.hash));
+        return {
+          status: 200,
+          body: { configured: true, repoPath, state, commits: log, status },
+        };
+      }
 
       if (route === '/commit' && method === 'POST') {
         const { message, files } = JSON.parse(rawBody) as {
@@ -690,12 +728,6 @@ export function createApi(defaultRepo: string | null): Api {
   }
 
   return {
-    get repoPath() {
-      return repoPath;
-    },
-    setRepo(next: string) {
-      repoPath = next;
-    },
     handle,
   };
 }

@@ -23,7 +23,8 @@ git wrapper and `/api` route behind `createApi(...).handle(route, method, body)`
 Two thin adapters serve it — the Vite plugin for browser dev, and a loopback HTTP
 server for the packaged Electron app. The renderer only ever speaks `fetch('/api/*')`.
 
-- `src/api.ts` — Node-only backend: JSON route dispatch + git CLI wrappers.
+- `src/api.ts` — Node-only backend: JSON route dispatch + git CLI wrappers. Holds a
+  registry of validated repositories addressed by opaque `x-liana-repo` ids.
 - `dev.ts` — Vite plugin adapter; runs only under `vite dev`.
 - `electron/main.ts` — main process: window, native folder dialog, git-on-PATH.
 - `electron/server.ts` — packaged mode: loopback server (UI static files + `/api`).
@@ -32,7 +33,7 @@ server for the packaged Electron app. The renderer only ever speaks `fetch('/api
 - `src/layout.ts` — lane assignment (see below). Pure function, no DOM.
 - `src/graph.ts` — SVG renderer: lanes as bezier curves, merge commits as rings,
   branch chips as rounded rects.
-- `src/ui.ts` — toolbar, detail pane, dialogs, API calls.
+- `src/ui.ts` — toolbar, repository tabs, detail pane, dialogs, API calls.
 
 ### Lane algorithm (src/layout.ts)
 
@@ -43,10 +44,17 @@ or new lane. This is what produces the parallel vertical lanes.
 
 ## API
 
+Multiple repositories can be open at once, one per UI tab. Every repo-scoped route
+requires an `x-liana-repo: <id>` header naming a repository from `GET /api/repos` or
+`POST /api/open`; a missing or unknown id returns `400 {error:"Unknown repository"}`.
+The client sends the active tab's id on every request. Routes without the header are
+`/api/repos` and `/api/open` (repo management).
+
 | Route | Method | Body | Effect |
 |---|---|---|---|
+| `/api/repos` | GET | — | Repositories known to the server: `[{id, path, name}]` |
+| `/api/open` | POST | `{path}` | Validate a local repo and register it (idempotent); returns `{id, path, name}` |
 | `/api/state` | GET | — | Repo state, commits (date-order, first 500), status |
-| `/api/open` | POST | `{path}` | Point the server at another local repo |
 | `/api/commit` | POST | `{message, files[]}` | `git commit` of the listed paths; stages selected files and unstages already-staged files that aren't listed |
 | `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
 | `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
@@ -81,6 +89,11 @@ npm install
 LIANA_REPO=/path/to/repo npm run dev     # open with a repo pre-loaded
 # or just `npm run dev` and use "Open repo…" in the UI
 ```
+
+Open several repositories at once with the **+** tab or **Open repo**; each repo gets
+its own tab and keeps its own graph view/selection. Open tabs are remembered in
+`localStorage` and restored on the next launch (alongside the `LIANA_REPO` default).
+Closing a tab never touches the working tree.
 
 Create a demo repo to play with:
 

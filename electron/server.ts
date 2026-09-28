@@ -91,9 +91,15 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       }
       const route = urlPath.slice('/api'.length) || '/';
       const method = req.method ?? 'GET';
+      const repoId = req.headers['x-liana-repo'];
       void (async (): Promise<void> => {
         const rawBody = method === 'GET' || method === 'HEAD' ? '' : await readBody(req);
-        const { status, body } = await api.handle(route, method, rawBody);
+        const { status, body } = await api.handle(
+          route,
+          method,
+          rawBody,
+          typeof repoId === 'string' ? repoId : undefined,
+        );
         sendJson(res, status, body);
       })();
       return;

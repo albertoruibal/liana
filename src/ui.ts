@@ -15,6 +15,21 @@ interface StateResponse {
   status?: RepoStatus;
 }
 
+/** A repository open in a tab. Holds per-tab view state so switching is instant. */
+interface RepoTab {
+  id: string;
+  path: string;
+  name: string;
+  selectedHash: string | null;
+  lastResponse: StateResponse | null;
+  panX: number;
+  panY: number;
+  zoom: number;
+}
+
+let tabs: RepoTab[] = [];
+let activeId: string | null = null;
+
 let currentLayout: GraphLayout | null = null;
 let selectedHash: string | null = null;
 let repoName = '';
@@ -24,6 +39,38 @@ let lastResponse: StateResponse | null = null;
 let panX = 0;
 let panY = 0;
 let zoom = 1;
+
+function activeTab(): RepoTab | undefined {
+  return tabs.find((t) => t.id === activeId);
+}
+
+/** Copy the live active-tab globals back into the tab record. */
+function saveActive(): void {
+  const t = activeTab();
+  if (!t) return;
+  t.selectedHash = selectedHash;
+  t.lastResponse = lastResponse;
+  t.panX = panX;
+  t.panY = panY;
+  t.zoom = zoom;
+}
+
+/** Make `tab` active and restore its view state into the globals. */
+function loadTab(tab: RepoTab): void {
+  activeId = tab.id;
+  selectedHash = tab.selectedHash;
+  lastResponse = tab.lastResponse;
+  panX = tab.panX;
+  panY = tab.panY;
+  zoom = tab.zoom;
+  repoName = tab.name;
+  currentLayout = null;
+  setRepoName(tab.name);
+  setRepoDirty(tab.lastResponse?.status?.entries.length ?? 0);
+  applyTransform();
+  renderTabs();
+  persistTabs();
+}
 
 function applyTransform(): void {
   const svg = document.querySelector('#graph-svg');
@@ -47,10 +94,16 @@ function $svg(sel: string): SVGSVGElement {
 
 // --- API helpers ---
 
-async function api<T>(route: string, body?: unknown): Promise<T> {
+interface ApiOpts {
+  /** Send the active tab's repository id. Set false for repo-management routes. */
+  scoped?: boolean;
+}
+
+async function api<T>(route: string, body?: unknown, opts: ApiOpts = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = window.liana?.token;
   if (token) headers['x-liana-token'] = token;
+  if (opts.scoped !== false && activeId) headers['x-liana-repo'] = activeId;
   const res = await fetch(`/api${route}`, {
     method: body !== undefined ? 'POST' : 'GET',
     headers,
@@ -311,27 +364,209 @@ function setRepoName(name: string): void {
   el.classList.toggle('is-empty', name.length === 0);
 }
 
+// --- Repository tabs ---
+
+interface RepoEntry {
+  id: string;
+  path: string;
+  name: string;
+}
+
+const REPOS_KEY = 'liana-repos';
+const ACTIVE_KEY = 'liana-active-repo';
+
+/** Persist the open tab paths and the active tab, in order. */
+function persistTabs(): void {
+  try {
+    localStorage.setItem(REPOS_KEY, JSON.stringify(tabs.map((t) => t.path)));
+    const active = activeTab();
+    if (active) localStorage.setItem(ACTIVE_KEY, active.path);
+    else localStorage.removeItem(ACTIVE_KEY);
+  } catch {
+    // localStorage may be unavailable (private mode); tabs still work in-session.
+  }
+}
+
+function readSavedRepos(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REPOS_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Render the tab strip from `tabs`/`activeId`. */
+function renderTabs(): void {
+  const strip = $('#repo-tabs');
+  strip.hidden = tabs.length === 0;
+  strip.replaceChildren();
+  if (tabs.length === 0) return;
+  for (const tab of tabs) {
+    const dirty = tab.lastResponse?.status?.entries.length ?? 0;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `repo-tab${tab.id === activeId ? ' is-active' : ''}`;
+    btn.title = tab.path;
+    btn.dataset.repo = tab.id;
+
+    const name = document.createElement('span');
+    name.className = 'repo-tab-name';
+    name.textContent = tab.name;
+    btn.appendChild(name);
+
+    if (dirty > 0) {
+      const dot = document.createElement('span');
+      dot.className = 'dirty-dot';
+      dot.title = `${dirty} uncommitted ${dirty === 1 ? 'change' : 'changes'}`;
+      btn.appendChild(dot);
+    }
+
+    const close = document.createElement('span');
+    close.className = 'repo-tab-close';
+    close.textContent = '\u00d7';
+    close.title = `Close ${tab.name}`;
+    close.setAttribute('role', 'button');
+    close.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeTab(tab.id);
+    });
+    btn.appendChild(close);
+
+    btn.addEventListener('click', () => void activateRepo(tab.id));
+    strip.appendChild(btn);
+  }
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'repo-tab-new';
+  add.textContent = '+';
+  add.title = 'Open another repository';
+  add.setAttribute('aria-label', 'Open another repository');
+  add.addEventListener('click', () => void openRepo());
+  strip.appendChild(add);
+}
+
 // --- Actions ---
 
+/** Render the empty state shown when no repository is open. */
+function renderNoRepo(): void {
+  setRepoName('no repo open');
+  renderGraphHeader(EMPTY_METRICS);
+  $('#detail-pane').innerHTML =
+    `<div class="detail-empty">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm11 13.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM4.5 5v6.75c0 .4.1.6.35.85l3.3 3.3c.5.5 1.35.5 1.85 0l.6-.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      <strong>liana</strong>
+      <span class="hint">Open a local git repository to see its commit graph.</span>
+    </div>`;
+}
+
+/** Open a folder picker and add the chosen repository as a tab. */
+async function openRepo(): Promise<void> {
+  // Electron has no window.prompt — use the native folder picker when available.
+  const p = window.liana
+    ? await window.liana.openRepoDialog()
+    : prompt('Path to git repository:', '~/workspace/my-repo');
+  if (!p) return;
+  try {
+    await addRepo(p, true);
+  } catch (err) {
+    alert(String(err));
+  }
+}
+
+/** Register `path` with the server and add (or focus) its tab. */
+async function addRepo(path: string, activate: boolean): Promise<void> {
+  const res = await api<RepoEntry>('/open', { path }, { scoped: false });
+  const existing = tabs.find((t) => t.path === res.path);
+  if (existing) {
+    const wasActive = existing.id === activeId;
+    existing.id = res.id;
+    if (wasActive) {
+      // The server re-issued this tab's id (e.g. dev-server restart): rebind it.
+      activeId = res.id;
+      await refresh();
+    } else if (activate) {
+      await activateRepo(res.id);
+    } else {
+      renderTabs();
+      persistTabs();
+    }
+    return;
+  }
+  const tab: RepoTab = {
+    id: res.id,
+    path: res.path,
+    name: res.name,
+    selectedHash: null,
+    lastResponse: null,
+    panX: 0,
+    panY: 0,
+    zoom: 1,
+  };
+  tabs.push(tab);
+  if (activate) await activateRepo(tab.id);
+  else {
+    renderTabs();
+    persistTabs();
+  }
+}
+
+/** Switch the active tab, restoring its cached view before refreshing. */
+async function activateRepo(id: string): Promise<void> {
+  if (id === activeId) return;
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab) return;
+  saveActive();
+  loadTab(tab);
+  if (tab.lastResponse) renderAll(tab.lastResponse);
+  else await refresh();
+}
+
+/** Close a tab; adjacent tab becomes active when the closed one was active. */
+function closeTab(id: string): void {
+  const idx = tabs.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const wasActive = id === activeId;
+  tabs.splice(idx, 1);
+  if (wasActive) {
+    const next = tabs[idx] ?? tabs[idx - 1] ?? tabs[tabs.length - 1];
+    if (next) {
+      loadTab(next);
+      void refresh();
+    } else {
+      activeId = null;
+      selectedHash = null;
+      lastResponse = null;
+      repoName = '';
+      renderNoRepo();
+    }
+  }
+  renderTabs();
+  persistTabs();
+}
+
 async function refresh(): Promise<void> {
+  const reqId = activeId;
+  const tab = activeTab();
+  if (!tab) {
+    renderNoRepo();
+    return;
+  }
   try {
     const resp = await api<StateResponse>('/state');
-    if (!resp.configured) {
-      setRepoName('no repo open');
-      renderGraphHeader(EMPTY_METRICS);
-      $('#detail-pane').innerHTML =
-        `<div class="detail-empty">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm11 13.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM4.5 5v6.75c0 .4.1.6.35.85l3.3 3.3c.5.5 1.35.5 1.85 0l.6-.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-          <strong>liana</strong>
-          <span class="hint">Open a local git repository to see its commit graph.</span>
-        </div>`;
-      return;
-    }
-    repoName = resp.state?.name ?? '';
+    // A tab switch landed while this was in flight — drop the stale response.
+    if (activeId !== reqId) return;
+    repoName = resp.state?.name ?? tab.name;
+    tab.name = repoName;
+    tab.lastResponse = resp;
     setRepoName(repoName);
     lastResponse = resp;
     renderAll(resp);
+    renderTabs();
+    persistTabs();
   } catch (err) {
+    if (activeId !== reqId) return;
     $('#detail-pane').innerHTML = `<p class="error">Failed to load repo: ${esc(String(err))}</p>`;
   }
 }
@@ -568,22 +803,7 @@ $('#rebase-cancel').addEventListener('click', (ev) => {
   $<HTMLDialogElement>('#rebase-dialog').close();
 });
 
-$('#btn-open-repo').addEventListener('click', () => {
-  void (async () => {
-    // Electron has no window.prompt — use the native folder picker when available.
-    const p = window.liana
-      ? await window.liana.openRepoDialog()
-      : prompt('Path to git repository:', repoName ? '' : '~/workspace/my-repo');
-    if (!p) return;
-    try {
-      await api('/open', { path: p });
-      selectedHash = null;
-      await refresh();
-    } catch (err) {
-      alert(String(err));
-    }
-  })();
-});
+$('#btn-open-repo').addEventListener('click', () => void openRepo());
 
 // Selection: click a dot/label — any SVG element tagged with data-hash.
 // Clicking empty SVG space clears the selection.
@@ -988,4 +1208,35 @@ window.addEventListener('resize', () => {
   }, 120);
 });
 
-void refresh();
+/** Build initial tabs from saved paths plus any server-side default (LIANA_REPO). */
+async function bootstrap(): Promise<void> {
+  const saved = readSavedRepos();
+  // Read before registering tabs: addRepo() persists and would clear a stale key.
+  const savedActive = localStorage.getItem(ACTIVE_KEY);
+  let serverRepos: RepoEntry[] = [];
+  try {
+    serverRepos = (await api<{ repos: RepoEntry[] }>('/repos', undefined, { scoped: false })).repos;
+  } catch {
+    // Server may still be starting (dev-server restart); fall back to saved paths.
+  }
+  const ordered: string[] = [];
+  for (const p of [...serverRepos.map((r) => r.path), ...saved]) {
+    if (!ordered.includes(p)) ordered.push(p);
+  }
+  for (const path of ordered) {
+    try {
+      await addRepo(path, false);
+    } catch {
+      // Drop paths that no longer resolve to a repository.
+    }
+  }
+  const target = tabs.find((t) => t.path === savedActive) ?? tabs[0];
+  if (target) {
+    await activateRepo(target.id);
+  } else {
+    renderTabs();
+    renderNoRepo();
+  }
+}
+
+void bootstrap();

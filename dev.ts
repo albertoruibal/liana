@@ -27,9 +27,15 @@ export function apiPlugin(defaultRepo: string | null): Plugin {
       server.middlewares.use('/api', (req, res) => {
         const route = (req.url ?? '').split('?')[0]!;
         const method = req.method ?? 'GET';
+        const repoId = req.headers['x-liana-repo'];
         void (async (): Promise<void> => {
           const rawBody = method === 'GET' ? '' : await readBody(req);
-          const { status, body } = await api.handle(route, method, rawBody);
+          const { status, body } = await api.handle(
+            route,
+            method,
+            rawBody,
+            typeof repoId === 'string' ? repoId : undefined,
+          );
           sendJson(res, status, body);
         })();
       });
