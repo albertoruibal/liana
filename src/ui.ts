@@ -2,11 +2,11 @@
 
 import { layoutGraph } from './layout';
 import { parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow } from './diff';
-import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } from './graph';
+import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight, type GraphMetrics } from './graph';
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { CommitFile, GitCommit, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
+import type { CommitFile, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -37,6 +37,11 @@ let selectedHash: string | null = null;
 let repoName = '';
 let lastResponse: StateResponse | null = null;
 let remoteStatus: RemoteStatus | null = null;
+
+// Search state, shared across tabs; results are recomputed per repo on every render.
+let searchQuery = '';
+let searchCurrent: string | null = null;
+let searchMatches: SearchMatch[] = [];
 
 // Graph viewport transform: pan offset (px) and zoom scale.
 let panX = 0;
@@ -493,11 +498,236 @@ function renderAll(resp: StateResponse): void {
   const commits = resp.commits ?? [];
   const layout = layoutGraph(commits);
   currentLayout = layout;
-  const metrics = renderGraph($svg('#graph-svg'), { name: repoName, ...resp.state } as RepoState, layout, selectedHash);
+  const matches = runSearch(commits);
+  // Resolve the focused match before drawing so its band highlights immediately.
+  renderSearchResults();
+  const highlight: GraphHighlight | null = searchQuery.trim()
+    ? { matches: new Set(matches.map((m) => m.commit.hash)), current: searchCurrent }
+    : null;
+  const metrics = renderGraph(
+    $svg('#graph-svg'),
+    { name: repoName, ...resp.state } as RepoState,
+    layout,
+    selectedHash,
+    highlight,
+  );
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
   updateSyncButtons();
 }
+
+// --- Search: commits, branches, and tags ---
+
+/** A commit that matched the active query, with the fields that matched. */
+interface SearchMatch {
+  commit: GitCommit;
+  /** Human labels for what matched: "subject", "author", "branch main", "tag v1.0", … */
+  fields: string[];
+}
+
+/** Human label for a ref: distinguishes branches from tags and stashes. */
+function refSearchLabel(ref: GitRef): string {
+  switch (ref.kind) {
+    case 'local':
+      return `branch ${ref.name}`;
+    case 'remote':
+      return `remote branch ${ref.name}`;
+    case 'tag':
+      return `tag ${ref.name}`;
+    case 'stash':
+      return `stash ${ref.name}`;
+    default:
+      return ref.name;
+  }
+}
+
+/** True when a ref name (branch/tag/stash) matches every query token. */
+function refMatches(ref: GitRef, tokens: string[]): boolean {
+  const name = ref.name.toLowerCase();
+  return tokens.every((t) => name.includes(t));
+}
+
+/**
+ * Filter `commits` by the active query. Every whitespace-separated token must
+ * match somewhere (AND); matching is case-insensitive across subject, author,
+ * hash, and ref names — local branches, remote branches, tags, and stashes.
+ */
+function runSearch(commits: GitCommit[]): SearchMatch[] {
+  const q = searchQuery.trim().toLowerCase();
+  if (!q) {
+    searchMatches = [];
+    searchCurrent = null;
+    return searchMatches;
+  }
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const matches: SearchMatch[] = [];
+  for (const commit of commits) {
+    const fields: string[] = [];
+    if (tokens.every((t) => commit.subject.toLowerCase().includes(t))) fields.push('subject');
+    if (tokens.every((t) => commit.author.toLowerCase().includes(t))) fields.push('author');
+    if (tokens.every((t) => commit.hash.toLowerCase().includes(t))) fields.push('hash');
+    for (const ref of commit.refs) {
+      if (!refMatches(ref, tokens)) continue;
+      fields.push(refSearchLabel(ref));
+    }
+    if (commit.stash) {
+      const haystack = `${commit.stash.message} ${commit.stash.branch ?? ''}`.toLowerCase();
+      if (tokens.every((t) => haystack.includes(t))) fields.push('stash');
+    }
+    if (fields.length > 0) matches.push({ commit, fields: [...new Set(fields)] });
+  }
+  searchMatches = matches;
+  return matches;
+}
+
+/** Scroll the graph so the row for `hash` is centered in the viewport. */
+function scrollToHash(hash: string): void {
+  const scroller = document.querySelector('#graph-scroll');
+  if (!(scroller instanceof HTMLElement)) return;
+  const hit = document.querySelector(`#graph-svg rect.graph-row-hit[data-hash="${hash}"]`);
+  if (!(hit instanceof SVGRectElement)) return;
+  const scrollerRect = scroller.getBoundingClientRect();
+  const hitRect = hit.getBoundingClientRect();
+  if (hitRect.top >= scrollerRect.top && hitRect.bottom <= scrollerRect.bottom) return;
+  const delta = hitRect.top - scrollerRect.top - (scrollerRect.height - hitRect.height) / 2;
+  scroller.scrollBy({ top: delta, behavior: 'smooth' });
+}
+
+/** Select a search result, reload the view, and bring its row into sight. */
+async function focusMatch(hash: string): Promise<void> {
+  searchCurrent = hash;
+  selectedHash = hash;
+  await refresh();
+  scrollToHash(hash);
+}
+
+/** Move the focused match by `delta` (wrapping), then focus it. */
+function searchStep(delta: number): void {
+  if (searchMatches.length === 0) return;
+  const idx = searchMatches.findIndex((m) => m.commit.hash === searchCurrent);
+  const next =
+    idx === -1
+      ? delta > 0
+        ? 0
+        : searchMatches.length - 1
+      : (idx + delta + searchMatches.length) % searchMatches.length;
+  const match = searchMatches[next];
+  if (match) void focusMatch(match.commit.hash);
+}
+
+/** Render the results list and the "n/total" counter for the current query. */
+function renderSearchResults(): void {
+  const list = $('#search-results');
+  const count = $('#search-count');
+  if (!searchQuery.trim()) {
+    list.replaceChildren();
+    count.textContent = '';
+    return;
+  }
+  if (searchMatches.length === 0) {
+    list.innerHTML = '<li class="search-empty muted">No commits or tags match.</li>';
+    count.textContent = '0/0';
+    return;
+  }
+  if (!searchCurrent || !searchMatches.some((m) => m.commit.hash === searchCurrent)) {
+    searchCurrent = searchMatches[0]?.commit.hash ?? null;
+  }
+  const idx = searchMatches.findIndex((m) => m.commit.hash === searchCurrent);
+  count.textContent = `${idx + 1}/${searchMatches.length}`;
+  list.replaceChildren(
+    ...searchMatches.map((m, i) => {
+      const li = document.createElement('li');
+      li.className = `search-result${i === idx ? ' is-current' : ''}`;
+      li.dataset.hash = m.commit.hash;
+      li.innerHTML = `
+        <div class="search-result-main">
+          <span class="search-result-subject" title="${esc(m.commit.subject)}">${esc(m.commit.subject)}</span>
+          <code class="search-result-hash">${m.commit.hash.slice(0, 7)}</code>
+        </div>
+        <div class="search-result-meta muted">
+          <span class="search-result-author">${esc(m.commit.author)}</span>
+          <span>${isoDate(m.commit.timestamp)}</span>
+          <span class="search-result-refs" title="Matched: ${esc(m.fields.join(', '))}">${esc(m.fields.join(' · '))}</span>
+        </div>`;
+      li.addEventListener('click', () => void focusMatch(m.commit.hash));
+      return li;
+    }),
+  );
+}
+
+function openSearch(): void {
+  const panel = $('#search-panel');
+  panel.hidden = false;
+  $('#btn-search').setAttribute('aria-expanded', 'true');
+  // Anchor under the search button, clamped to the viewport.
+  const rect = $('#btn-search').getBoundingClientRect();
+  const width = panel.getBoundingClientRect().width;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  panel.style.left = `${left}px`;
+  panel.style.right = 'auto';
+  const input = $<HTMLInputElement>('#search-input');
+  input.focus();
+  input.select();
+}
+
+function closeSearch(): void {
+  const panel = $('#search-panel');
+  if (panel.hidden) return;
+  panel.hidden = true;
+  $('#btn-search').setAttribute('aria-expanded', 'false');
+  searchQuery = '';
+  searchCurrent = null;
+  searchMatches = [];
+  $<HTMLInputElement>('#search-input').value = '';
+  if (lastResponse) renderAll(lastResponse);
+}
+
+/** True when the event target is a text field, so shortcuts don't hijack typing. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
+
+$('#btn-search').addEventListener('click', () => {
+  if ($('#search-panel').hidden) openSearch();
+  else closeSearch();
+});
+
+$('#search-close').addEventListener('click', () => closeSearch());
+$('#search-next').addEventListener('click', () => searchStep(1));
+$('#search-prev').addEventListener('click', () => searchStep(-1));
+
+$('#search-input').addEventListener('input', (ev) => {
+  searchQuery = (ev.target as HTMLInputElement).value;
+  searchCurrent = null;
+  if (lastResponse) renderAll(lastResponse);
+});
+
+$('#search-input').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    searchStep(ev.shiftKey ? -1 : 1);
+  } else if (ev.key === 'Escape') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeSearch();
+  }
+});
+
+document.addEventListener('pointerdown', (ev) => {
+  const panel = $('#search-panel');
+  const btn = $('#btn-search');
+  if (!panel.hidden && !panel.contains(ev.target as Node) && !btn.contains(ev.target as Node)) {
+    closeSearch();
+  }
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== '/' || isTypingTarget(ev.target)) return;
+  if (document.querySelector('dialog[open]')) return;
+  ev.preventDefault();
+  openSearch();
+});
 
 // --- Repository tabs ---
 
@@ -1660,6 +1890,10 @@ $('#name-submit').addEventListener('click', (ev) => {
 // Escape closes an open dialog, otherwise clears the selection.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
+  if (!$('#search-panel').hidden) {
+    closeSearch();
+    return;
+  }
   if (!themeMenu.hidden) {
     closeThemeMenu();
     return;

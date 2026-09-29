@@ -98,6 +98,12 @@ to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
 chip (in the graph or the detail pane) to check it out, or delete it. Deleting a
 remote branch runs `git push <remote> --delete`.
 
+The toolbar's **Search** button (or `/`) opens a find panel that filters commits,
+branches, and tags case-insensitively. Every whitespace-separated token must match
+somewhere (AND) across subject, author, hash, and ref names (local/remote branch,
+tag, stash). Matching rows are tinted in the graph, the focused result gets a
+stronger highlight, and Enter / Shift+Enter (or the arrows) step through matches.
+
 Select a commit to list its changed files; click a file to open its diff in a
 dialog with line-number gutters and add/delete row shading. A **Unified / Split**
 toggle switches between a single-column and a side-by-side layout, and the choice

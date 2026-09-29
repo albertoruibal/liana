@@ -45,6 +45,12 @@ export interface GraphMetrics {
   totalW: number;
 }
 
+/** Commits matching the active search, with the currently focused result. */
+export interface GraphHighlight {
+  matches: Set<string>;
+  current: string | null;
+}
+
 const EMPTY_METRICS: GraphMetrics = {
   refX: 0,
   lanesX: 0,
@@ -107,6 +113,7 @@ export function renderGraph(
   _state: RepoState,
   layout: GraphLayout,
   selectedHash: string | null = null,
+  highlight: GraphHighlight | null = null,
 ): GraphMetrics {
   const ns = 'http://www.w3.org/2000/svg';
   const LEFT_PAD = 24;
@@ -268,6 +275,29 @@ export function renderGraph(
       selBand.setAttribute('class', 'graph-row-selected');
       selBand.setAttribute('pointer-events', 'none');
       svg.appendChild(selBand);
+    }
+  }
+
+  // Tint every search match, with a stronger marker for the focused result.
+  // Painted under the edges/nodes so the graph stays legible.
+  if (highlight && highlight.matches.size > 0) {
+    const addMatchBand = (hash: string, current: boolean): void => {
+      const node = layout.nodes.find((n) => n.commit.hash === hash);
+      if (!node) return;
+      const band = document.createElementNS(ns, 'rect');
+      band.setAttribute('x', '0');
+      band.setAttribute('y', String(y(node.row) - ROW_H / 2));
+      band.setAttribute('width', String(width));
+      band.setAttribute('height', String(ROW_H));
+      band.setAttribute('class', current ? 'graph-row-match is-current' : 'graph-row-match');
+      band.setAttribute('pointer-events', 'none');
+      svg.appendChild(band);
+    };
+    for (const hash of highlight.matches) {
+      if (hash !== highlight.current) addMatchBand(hash, false);
+    }
+    if (highlight.current && highlight.matches.has(highlight.current)) {
+      addMatchBand(highlight.current, true);
     }
   }
 

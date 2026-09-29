@@ -34,6 +34,15 @@
       <div class="spacer"></div>
 
       <div class="toolbar-group">
+        <button class="btn btn-icon" id="btn-search" title="Search commits, branches, and tags (/)" aria-label="Search commits, branches, and tags" aria-haspopup="dialog" aria-expanded="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.2 10.2 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span>Search</span>
+        </button>
+      </div>
+
+      <div class="toolbar-sep" role="separator"></div>
+
+      <div class="toolbar-group">
         <button class="btn btn-icon" id="btn-refresh" title="Reload commit graph" aria-label="Refresh">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.6 2.4v2.5h-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Refresh</span>
@@ -86,6 +95,25 @@
     </nav>
 
     <nav id="theme-menu" class="context-menu theme-menu" hidden aria-label="Select theme"></nav>
+
+    <div id="search-panel" class="search-panel" hidden role="dialog" aria-label="Search commits, branches, and tags">
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.2 10.2 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input type="search" id="search-input" autocomplete="off" spellcheck="false"
+          placeholder="Search commits, branches, and tags…" aria-label="Search query" />
+        <span id="search-count" class="search-count"></span>
+        <button type="button" class="search-nav" id="search-prev" title="Previous match (Shift+Enter)" aria-label="Previous match">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 10 8 6.5 11.5 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="search-nav" id="search-next" title="Next match (Enter)" aria-label="Next match">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10 11.5 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="search-nav" id="search-close" title="Close search (Esc)" aria-label="Close search">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <ul id="search-results" class="search-results"></ul>
+    </div>
 
     <main>
       <div id="graph-wrap">
