@@ -4,7 +4,7 @@ import type { GraphLayout, RefKind, RepoState } from './types';
 import { REF_ICON_PATHS } from './refs';
 import { isoDate, isoDateTime } from './dates';
 
-const ROW_H = 42;
+const ROW_H = 34;
 const TOP_PAD = 24;
 const COL_W = 30;
 const DOT_R = 7;
