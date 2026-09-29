@@ -1324,6 +1324,13 @@ dialog input[type='text'] {
   background: var(--bg-hover);
 }
 
+.app-menu button svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+}
+
 .context-menu button.danger {
   color: var(--danger);
 }

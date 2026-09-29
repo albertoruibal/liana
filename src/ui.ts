@@ -775,6 +775,7 @@ const THEME_KEY = 'liana-theme';
 
 function applyTheme(theme: string): void {
   document.documentElement.dataset.theme = theme;
+  $('#menu-theme-label').textContent = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
 }
 
 function initTheme(): void {
@@ -785,6 +786,7 @@ $('#btn-theme').addEventListener('click', () => {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
+  closeMoreMenu();
 });
 
 $('#btn-about').addEventListener('click', () => {
@@ -793,6 +795,7 @@ $('#btn-about').addEventListener('click', () => {
   const repo = $('#about-repo');
   repo.textContent = tab ? tab.path : 'No repository open';
   repo.title = tab ? tab.path : '';
+  closeMoreMenu();
   $<HTMLDialogElement>('#about-dialog').showModal();
 });
 
@@ -805,6 +808,36 @@ $('#diff-close').addEventListener('click', (ev) => {
   ev.preventDefault();
   $<HTMLDialogElement>('#diff-dialog').close();
 });
+
+// --- Toolbar "three dots" menu ---
+
+const moreMenu = $('#more-menu');
+const moreButton = $('#btn-more');
+
+function closeMoreMenu(): void {
+  moreMenu.hidden = true;
+  moreButton.setAttribute('aria-expanded', 'false');
+}
+
+$('#btn-more').addEventListener('click', () => {
+  if (!moreMenu.hidden) {
+    closeMoreMenu();
+    return;
+  }
+  moreMenu.hidden = false;
+  moreButton.setAttribute('aria-expanded', 'true');
+  const rect = moreButton.getBoundingClientRect();
+  moreMenu.style.top = `${rect.bottom + 6}px`;
+  moreMenu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+  moreMenu.style.left = 'auto';
+});
+
+document.addEventListener('pointerdown', (ev) => {
+  if (!moreMenu.hidden && !moreMenu.contains(ev.target as Node) && !moreButton.contains(ev.target as Node)) {
+    closeMoreMenu();
+  }
+});
+window.addEventListener('resize', closeMoreMenu);
 
 // --- Wire up static UI ---
 
@@ -1037,6 +1070,7 @@ $('#btn-pull').addEventListener('click', () => void doPull());
 
 $('#btn-login').addEventListener('click', () => {
   renderLoginDialog();
+  closeMoreMenu();
   $<HTMLDialogElement>('#login-dialog').showModal();
 });
 
@@ -1391,6 +1425,10 @@ $('#name-submit').addEventListener('click', (ev) => {
 // Escape closes an open dialog, otherwise clears the selection.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
+  if (!moreMenu.hidden) {
+    closeMoreMenu();
+    return;
+  }
   if (!contextMenu.hidden) {
     closeContextMenu();
     return;

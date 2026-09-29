@@ -68,25 +68,31 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.6V5.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.6 8.6 8 5.2l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.2 2.6h9.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           <span>Push</span>
         </button>
-        <button class="btn btn-icon" id="btn-login" title="Show remotes and credentials">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 8.2a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.4 13.2c.5-2.2 2.4-3.6 4.6-3.6s4.1 1.4 4.6 3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-          <span>Login</span>
-        </button>
       </div>
 
       <div class="toolbar-sep" role="separator"></div>
 
       <div class="toolbar-group">
-        <button class="btn btn-icon" id="btn-theme" title="Toggle light/dark theme" aria-label="Toggle theme">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" fill="currentColor"/></svg>
-          <span>Theme</span>
-        </button>
-        <button class="btn btn-icon" id="btn-about" title="About liana" aria-label="About liana">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor"/></svg>
-          <span>About</span>
+        <button class="btn btn-icon" id="btn-more" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3.3" r="1.35" fill="currentColor"/><circle cx="8" cy="8" r="1.35" fill="currentColor"/><circle cx="8" cy="12.7" r="1.35" fill="currentColor"/></svg>
         </button>
       </div>
     </header>
+
+    <nav id="more-menu" class="context-menu app-menu" hidden aria-label="More actions">
+      <button type="button" id="btn-login">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 8.2a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.4 13.2c.5-2.2 2.4-3.6 4.6-3.6s4.1 1.4 4.6 3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span>Remotes &amp; credentials</span>
+      </button>
+      <button type="button" id="btn-theme">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z" fill="currentColor"/></svg>
+        <span id="menu-theme-label">Switch theme</span>
+      </button>
+      <button type="button" id="btn-about">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor"/></svg>
+        <span>About liana</span>
+      </button>
+    </nav>
 
     <main>
       <div id="graph-wrap">
