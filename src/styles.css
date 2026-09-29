@@ -2149,6 +2149,23 @@ dialog input[type='text'] {
   font-size: 11px;
 }
 
+#status-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+#status-branch[hidden] {
+  display: none;
+}
+
 /* Popover listing the recent user-initiated git commands. */
 .status-history {
   max-width: min(640px, 92vw);

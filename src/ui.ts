@@ -146,9 +146,26 @@ function renderStatusBar(): void {
   if (!(bar instanceof HTMLElement)) return;
   const spinner = $('#status-spinner');
   const commandEl = $('#status-command');
+  const branchEl = $('#status-branch');
   const metaEl = $('#status-meta');
+  const tab = activeTab();
 
-  if (!activeTab()) {
+  // Current branch (or detached HEAD) of the active tab, shown right of the command.
+  const state = tab?.lastResponse?.state;
+  const branch = state
+    ? state.detachedHead
+      ? 'detached HEAD'
+      : state.headBranch ?? ''
+    : '';
+  branchEl.hidden = !tab || branch === '';
+  branchEl.textContent = branch;
+  branchEl.title = branch
+    ? state?.detachedHead
+      ? 'Detached HEAD'
+      : `On branch ${branch}`
+    : '';
+
+  if (!tab) {
     bar.classList.remove('is-running', 'is-error');
     spinner.hidden = true;
     commandEl.textContent = 'No repository open';
@@ -656,6 +673,7 @@ function renderAll(resp: StateResponse): void {
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
   updateSyncButtons();
+  renderStatusBar();
 }
 
 // --- Search: commits, branches, and tags ---
