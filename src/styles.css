@@ -1162,7 +1162,18 @@ button.file-row .file-stats {
 /* Diff viewer (diff dialog) */
 #diff-dialog {
   width: min(1000px, 92vw);
-  max-width: 92vw;
+  height: min(80vh, 720px);
+  min-width: 360px;
+  min-height: 200px;
+  max-width: 96vw;
+  max-height: 96vh;
+  resize: both;
+  overflow: hidden;
+}
+
+#diff-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 .diff-head {
@@ -1205,6 +1216,8 @@ button.file-row .file-stats {
 }
 
 .diff-body {
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 4px 0 12px;
   background: var(--bg-elev-2);
   border: 1px solid var(--border-soft);
@@ -1214,7 +1227,6 @@ button.file-row .file-stats {
   line-height: 1.55;
   color: var(--fg-dim);
   overflow: auto;
-  max-height: 62vh;
 }
 
 /* Unified rows */
