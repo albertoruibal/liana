@@ -7,7 +7,7 @@
 // A GUI launch does not inherit a login shell's PATH, so git is resolved through
 // an augmented PATH and a clear error is shown when it cannot be found.
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -19,6 +19,12 @@ const DEV_URL = process.env.LIANA_DEV_URL ?? 'http://localhost:5173';
 
 /** App/window icon, shipped in the asar root (build/icon.png). */
 const ICON_PATH = path.join(app.getAppPath(), 'build', 'icon.png');
+
+// The installers embed the full-resolution 1024px PNG, but Electron only
+// advertises _NET_WM_ICON to the window manager when the icon is smaller
+// (~<256px); at 1024px it silently drops the hint and the WM falls back to a
+// generic icon. Resize here, and keep the large original for the installers.
+const WINDOW_ICON_SIZE = 192;
 
 // Wayland resolves the dock/taskbar icon by matching the window's app_id to an
 // installed .desktop file. Must be called before the `ready` event.
@@ -38,12 +44,23 @@ function ensureGitOnPath(): void {
   gitAvailable = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
 }
 
+/**
+ * Load the window icon at a size Electron will actually hand to the window
+ * manager, falling back to the path if decoding fails. macOS ignores
+ * BrowserWindow.icon entirely; this only matters for X11.
+ */
+function windowIcon(): Electron.NativeImage | string {
+  const image = nativeImage.createFromPath(ICON_PATH);
+  if (image.isEmpty()) return ICON_PATH;
+  return image.resize({ width: WINDOW_ICON_SIZE, height: WINDOW_ICON_SIZE, quality: 'best' });
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
     backgroundColor: '#1e1e1e',
-    icon: ICON_PATH,
+    icon: windowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
