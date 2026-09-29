@@ -63,7 +63,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |
 | `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
 | `/api/commit-diff` | POST | `{hash}` | `git show --stat` text for the commit detail pane |
-| `/api/checkout` | POST | `{branch}` | Checkout a local branch |
+| `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
 | `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |
 | `/api/tag-create` | POST | `{name, ref}` | Create a lightweight tag at `ref` |
@@ -95,8 +95,9 @@ so a missing credential fails fast with git's error instead of hanging.
 
 Right-click a commit to create a branch/tag there or reset the checked-out branch
 to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
-chip (in the graph or the detail pane) to check it out, or delete it. Deleting a
-remote branch runs `git push <remote> --delete`.
+chip (in the graph or the detail pane) to check it out, or delete it. Checking out
+a remote-tracking ref creates or reuses the matching local branch tracking it — no
+fetch, purely local. Deleting a remote branch runs `git push <remote> --delete`.
 
 The toolbar's **Search** button (or `/`) opens a find panel that filters commits,
 branches, and tags case-insensitively. Every whitespace-separated token must match

@@ -262,7 +262,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
         for (const b of state.branches) {
           const kind = b.isRemote ? 'remote' : 'local';
           const badge = b.isHead ? '<span class="head-badge">HEAD</span>' : '';
-          html += `<li class="branch-${kind}" data-branch="${esc(b.name)}" title="Checkout ${esc(b.name)}">
+          html += `<li class="branch-${kind}" data-branch="${esc(b.name)}" data-remote="${b.isRemote ? 'true' : 'false'}" title="Checkout ${esc(b.name)}">
             ${refIconHtml(kind)}
             <span class="branch-name">${esc(b.name)}</span>
             ${badge}
@@ -361,7 +361,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
 
   // wire branch checkout
   pane.querySelectorAll<HTMLLIElement>('li[data-branch]').forEach((li) => {
-    li.addEventListener('click', () => void checkout(li.dataset.branch ?? ''));
+    li.addEventListener('click', () => void checkout(li.dataset.branch ?? '', li.dataset.remote === 'true'));
   });
 }
 
@@ -1066,11 +1066,18 @@ async function submitRebase(): Promise<void> {
   }
 }
 
-async function checkout(branch: string): Promise<void> {
+async function checkout(branch: string, remote = false): Promise<void> {
   if (!branch) return;
-  await api('/checkout', { branch });
+  await api('/checkout', remote ? { branch, remote: true } : { branch });
   selectedHash = null;
   await refresh();
+}
+
+/** Local branch name a remote-tracking ref (`origin/feature`) checks out as. */
+function remoteLocalName(name: string): string | null {
+  const m = /^[^/]+\/(.+)$/.exec(name);
+  const branch = m?.[1] ?? '';
+  return branch && branch !== 'HEAD' ? branch : null;
 }
 
 // --- Theme ---
@@ -1656,7 +1663,11 @@ function buildMenu(target: ContextTarget): MenuItem[] {
     items.push({ label: `Checkout ${name}`, action: () => void checkout(name) });
     items.push({ label: `Delete branch ${name}`, danger: true, action: () => void deleteBranch(name, false) });
   } else if (target.kind === 'remote' && name) {
+    const local = remoteLocalName(name);
     items.push({ separator: true });
+    if (local && local !== currentBranch) {
+      items.push({ label: `Checkout ${local} (tracking ${name})`, action: () => void checkout(name, true) });
+    }
     items.push({ label: `Delete remote branch ${name}`, danger: true, action: () => void deleteBranch(name, true) });
   } else if (target.kind === 'tag' && name) {
     items.push({ separator: true });

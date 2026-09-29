@@ -442,6 +442,37 @@ function validRefName(name: string): boolean {
   );
 }
 
+/**
+ * Check out a branch. Local names are checked out directly; for a remote-tracking
+ * ref like `origin/feature` this creates (or reuses) the local `feature` branch and
+ * tracks the remote — purely local, no fetch.
+ */
+async function checkoutBranch(repoPath: string, name: string, remote = false): Promise<void> {
+  if (!remote) {
+    await gitRun(repoPath, ['checkout', name]);
+    return;
+  }
+  const branchName = remoteBranchLocalName(name);
+  const exists = await gitRun(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`])
+    .then(() => true)
+    .catch(() => false);
+  if (exists) {
+    await gitRun(repoPath, ['checkout', branchName]);
+  } else {
+    await gitRun(repoPath, ['checkout', '-b', branchName, '--track', name]);
+  }
+}
+
+/** Local branch name a remote-tracking ref should check out as, or throw. */
+function remoteBranchLocalName(name: string): string {
+  const m = /^([^/]+)\/(.+)$/.exec(name);
+  const branch = m?.[2] ?? '';
+  if (!m || !m[1] || !branch || branch === 'HEAD' || !validRefName(branch)) {
+    throw new GitError(`Not a remote branch: ${name}`, '');
+  }
+  return branch;
+}
+
 /** `git branch -b` plus checkout; fails if the branch already exists. */
 async function createBranch(repoPath: string, name: string, ref: string): Promise<void> {
   await gitRun(repoPath, ['checkout', '-b', name, ref]);
@@ -847,9 +878,9 @@ export function createApi(defaultRepo: string | null): Api {
         return { status: 200, body: { ok: true, patch } };
       }
       if (route === '/checkout' && method === 'POST') {
-        const { branch } = JSON.parse(rawBody) as { branch?: string };
+        const { branch, remote } = JSON.parse(rawBody) as { branch?: string; remote?: boolean };
         if (!branch?.trim()) return { status: 400, body: { error: 'Missing branch' } };
-        await gitRun(repoPath, ['checkout', branch.trim()]);
+        await checkoutBranch(repoPath, branch.trim(), remote === true);
         return { status: 200, body: { ok: true } };
       }
       if (route === '/branch-create' && method === 'POST') {

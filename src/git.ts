@@ -446,11 +446,6 @@ export async function executeRebase(
   }
 }
 
-/** List local branches with head marker, for the checkout menu. */
-export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
-  await git(repoPath, ['checkout', name]);
-}
-
 // --- Branches and tags (mirrors src/api.ts) ---
 
 const REF_NAME_RE = /^[^\s~^:?*[\\]+$/;
@@ -468,6 +463,37 @@ export function validRefName(name: string): boolean {
     !name.endsWith('.lock') &&
     REF_NAME_RE.test(name)
   );
+}
+
+/** Local branch name a remote-tracking ref should check out as, or throw. */
+function remoteBranchLocalName(name: string): string {
+  const m = /^([^/]+)\/(.+)$/.exec(name);
+  const branch = m?.[2] ?? '';
+  if (!m || !m[1] || !branch || branch === 'HEAD' || !validRefName(branch)) {
+    throw new GitError(`Not a remote branch: ${name}`, '');
+  }
+  return branch;
+}
+
+/**
+ * Check out a branch. Local names are checked out directly; for a remote-tracking
+ * ref like `origin/feature` this creates (or reuses) the local `feature` branch and
+ * tracks the remote — purely local, no fetch.
+ */
+export async function checkoutBranch(repoPath: string, name: string, remote = false): Promise<void> {
+  if (!remote) {
+    await git(repoPath, ['checkout', name]);
+    return;
+  }
+  const branchName = remoteBranchLocalName(name);
+  const exists = await git(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`])
+    .then(() => true)
+    .catch(() => false);
+  if (exists) {
+    await git(repoPath, ['checkout', branchName]);
+  } else {
+    await git(repoPath, ['checkout', '-b', branchName, '--track', name]);
+  }
 }
 
 /** Create a branch and check it out (`git checkout -b`); fails if it exists. */
