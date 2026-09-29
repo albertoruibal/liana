@@ -14,10 +14,10 @@ const CHIP_H = 21;
 const ICON = 13;
 const ICON_GAP = 5;
 const CHIP_PAD = 8;
-// Chips beyond this many tags in one row collapse into a "+N" badge; the hidden
-// tags are revealed in a floating cluster when the ref column is hovered. Keeps
-// the ref column narrow so the graph lanes stay on screen.
-const MAX_VISIBLE_TAGS = 4;
+// Maximum width of the ref column, padding included. Refs that don't fit are
+// collapsed into a "+N" badge revealed on hover, so the ref column stays narrow
+// and the graph lanes stay on screen regardless of how many refs a row carries.
+const MAX_REF_W = 240;
 const CHIP_GAP = 6;
 // Gap between the lane (graph) area and the commit-text column on the right.
 const COLUMN_GAP = 36;
@@ -33,6 +33,16 @@ const DATE_W = 116;
 const HASH_W = 64;
 const META_GAP = 20;
 const META_PAD = 28;
+
+/** One measured ref chip, shared by the visible strip and the hover cluster. */
+interface Chip {
+  text: SVGTextElement;
+  icon: SVGGElement | null;
+  isHead: boolean;
+  kind: string;
+  name: string;
+  width: number;
+}
 
 export interface GraphMetrics {
   /** Column left offsets (px from the SVG origin) for the sticky header. */
@@ -125,52 +135,36 @@ export function renderGraph(
   // --- Measurement pass: build the ref/tag chips and size the left column. ---
   // Chips are appended (so they get a layout box and real text length) but only
   // positioned after we know how wide the column must be.
-  interface Chip {
-    text: SVGTextElement;
-    icon: SVGGElement | null;
-    isHead: boolean;
-    kind: string;
-    name: string;
-    width: number;
-  }
   interface RefRow {
     row: number;
     cy: number;
     hash: string;
     chips: Chip[];
-    /** Tags collapsed into the "+N" badge; empty when everything fits. */
+    /** Refs collapsed into the "+N" badge; empty when everything fits. */
     hidden: GitRef[];
     /** Width of the visible strip (incl. the "+N" badge) once positioned. */
     renderedW: number;
     /** Right x of the floating cluster once built (for hover tracking). */
     overflowRight: number;
-    /** SVG group holding the hidden tags, built lazily on first reveal. */
+    /** SVG group holding the hidden refs, built lazily on first reveal. */
     overflow: SVGGElement | null;
   }
   const refRows: RefRow[] = [];
   const refRowByRow = new Map<number, RefRow>();
   let maxChipRowW = 0;
 
+  // Chip strip budget: the column width minus its padding on both sides.
+  const stripBudget = Math.max(0, MAX_REF_W - REF_PAD * 2);
   for (const n of layout.nodes) {
     if (n.commit.refs.length === 0) continue;
     const cy = y(n.row);
     const sorted = [...n.commit.refs].sort((a, b) =>
       a.kind === 'head' ? -1 : b.kind === 'head' ? 1 : 0,
     );
-    // Keep every non-tag ref, plus the first MAX_VISIBLE_TAGS tags; the rest
-    // collapse into the "+N" badge revealed on hover. HEAD sorts first.
-    const hidden: GitRef[] = [];
-    let tagCount = 0;
-    const visible = sorted.filter((ref) => {
-      if (ref.kind !== 'tag') return true;
-      tagCount += 1;
-      if (tagCount <= MAX_VISIBLE_TAGS) return true;
-      hidden.push(ref);
-      return false;
-    });
-    const chips: Chip[] = [];
-    let rowW = 0;
-    for (const ref of visible) {
+
+    // Build (and measure) a chip per ref, appended so it gets a real layout box.
+    const candidates: Chip[] = [];
+    for (const ref of sorted) {
       const isHead = ref.kind === 'head';
       const icon = createRefIcon(ns, ref.kind);
       if (icon) {
@@ -189,9 +183,49 @@ export function renderGraph(
       svg.appendChild(text);
       const iconW = icon ? ICON + ICON_GAP : 0;
       const width = measureText(text) + CHIP_PAD * 2 + iconW;
-      chips.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
-      rowW += width + CHIP_GAP;
+      candidates.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
     }
+
+    // Keep the longest prefix that fits the budget. When refs remain, reserve
+    // a generous gap + width for the "+N" badge and shrink the prefix until both
+    // fit (the badge is at most a few characters, so a fixed reserve suffices).
+    const badgeReserve = CHIP_GAP + CHIP_PAD * 2 + 30;
+    const stripW = (upto: number): number => {
+      let w = 0;
+      for (let i = 0; i < upto; i++) w += candidates[i]!.width + CHIP_GAP;
+      return w > 0 ? w - CHIP_GAP : 0;
+    };
+    let keep = candidates.length;
+    while (keep > 0 && stripW(keep) > stripBudget) keep -= 1;
+    if (keep < candidates.length) {
+      while (keep > 0 && stripW(keep) + badgeReserve > stripBudget) keep -= 1;
+    }
+    // A lone chip wider than the whole cap: truncate its label with an ellipsis
+    // (full name stays in the tooltip and dataset) so the cap is always honored.
+    // Leave room for the "+N" badge when other refs still need collapsing.
+    if (keep === 0 && candidates.length > 0) {
+      const first = candidates[0]!;
+      const iconW = first.icon ? ICON + ICON_GAP : 0;
+      const reserve = candidates.length > 1 ? badgeReserve : 0;
+      const labelW = Math.max(0, stripBudget - reserve - CHIP_PAD * 2 - iconW);
+      first.text.textContent = fitText(first.text, first.name, labelW);
+      first.width = measureText(first.text) + CHIP_PAD * 2 + iconW;
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = first.name;
+      first.text.appendChild(title);
+      keep = 1;
+    }
+
+    // Drop the candidates that didn't make the cut; the hover cluster rebuilds
+    // their chips from `row.hidden` on first reveal.
+    for (const c of candidates.slice(keep)) {
+      c.icon?.remove();
+      c.text.remove();
+    }
+
+    const chips = candidates.slice(0, keep);
+    let rowW = stripW(keep);
+    const hidden = sorted.slice(keep);
     if (hidden.length > 0) {
       const badge = document.createElementNS(ns, 'text');
       badge.setAttribute('y', String(cy + 4));
@@ -202,9 +236,9 @@ export function renderGraph(
       svg.appendChild(badge);
       const width = measureText(badge) + CHIP_PAD * 2;
       chips.push({ text: badge, icon: null, isHead: false, kind: 'overflow', name: '', width });
-      rowW += width + CHIP_GAP;
+      rowW += CHIP_GAP + width;
     }
-    if (rowW > 0) maxChipRowW = Math.max(maxChipRowW, rowW - CHIP_GAP);
+    if (rowW > 0) maxChipRowW = Math.max(maxChipRowW, rowW);
     const row: RefRow = {
       row: n.row,
       cy,
@@ -322,7 +356,7 @@ export function renderGraph(
     row.renderedW = row.chips.length > 0 ? chipX - CHIP_GAP - refX : 0;
   }
 
-  // Build (once) the floating cluster of tags hidden behind a row's "+N" badge.
+  // Build (once) the floating cluster of refs hidden behind a row's "+N" badge.
   // Kept out of the layout pass: it is appended on reveal, so it paints above
   // the edges, row bands, and full-width row hit rectangles.
   const buildOverflow = (row: RefRow): void => {
