@@ -1831,6 +1831,27 @@ function buildMenu(target: ContextTarget): MenuItem[] {
   const name = target.name ?? '';
   const currentBranch = lastResponse?.state?.headBranch ?? '';
   const detached = lastResponse?.state?.detachedHead ?? false;
+  const commit = hash ? (lastResponse?.commits ?? []).find((c) => c.hash === hash) : undefined;
+  // Tip of the checked-out branch already contains this commit — nothing to pick.
+  const isHeadTip = target.isHead ?? commit?.refs.some((r) => r.kind === 'head') ?? false;
+  if (hash && currentBranch && !detached && !isHeadTip) {
+    items.push({ separator: true });
+    const short = hash.slice(0, 7);
+    if (commit && commit.parents.length >= 2) {
+      commit.parents.forEach((_p, i) => {
+        items.push({
+          label: `Cherry-pick ${short} onto ${currentBranch} (-m ${i + 1})`,
+          action: () => void cherryPickFromMenu(hash, i + 1),
+        });
+      });
+    } else {
+      items.push({ label: `Cherry-pick ${short} onto ${currentBranch}`, action: () => void cherryPickFromMenu(hash) });
+      items.push({
+        label: `Cherry-pick ${short} onto ${currentBranch} (record source -x)`,
+        action: () => void cherryPickFromMenu(hash, undefined, true),
+      });
+    }
+  }
   if ((target.kind === 'local' || target.kind === 'remote' || target.kind === 'tag') && name) {
     items.push({ separator: true });
     items.push({ label: 'Copy name', action: () => void copyToClipboard(name) });
@@ -1956,6 +1977,18 @@ async function rebaseOntoBranch(name: string): Promise<void> {
     await refresh();
   } catch (err) {
     alert(`Rebase failed:\n${String(err)}`);
+  }
+}
+
+async function cherryPickFromMenu(hash: string, mainline?: number, record?: boolean): Promise<void> {
+  const branch = lastResponse?.state?.headBranch ?? 'the current branch';
+  const what = mainline !== undefined ? `commit ${hash.slice(0, 7)} (-m ${mainline})` : `commit ${hash.slice(0, 7)}`;
+  if (!confirm(`Cherry-pick ${what} onto ${branch}?`)) return;
+  try {
+    await api('/cherry-pick', { ref: hash, mainline, record });
+    await refresh();
+  } catch (err) {
+    alert(`Cherry-pick failed:\n${String(err)}`);
   }
 }
 
