@@ -148,3 +148,33 @@ export interface RebaseTodoItem {
   /** Replacement message; required for reword/squash, ignored otherwise. */
   message?: string;
 }
+
+/** A single `git` invocation observed by the backend, surfaced in the UI status bar. */
+export interface GitCommandRecord {
+  /** Full argument vector, without the leading `git`. */
+  argv: string[];
+  /** Human-readable command line, e.g. `git log --all --date-order`. */
+  display: string;
+  /** True while the process is still running. */
+  running: boolean;
+  /** Process exit code, or null while running (or when killed by a signal). */
+  exitCode: number | null;
+  /** Wall-clock duration in milliseconds, or null while running. */
+  durationMs: number | null;
+  /** Epoch milliseconds when the process started. */
+  startedAt: number;
+  /** Epoch milliseconds when the process finished, or null while running. */
+  finishedAt: number | null;
+  /** True when the command failed (nonzero exit or failed to spawn). */
+  failed: boolean;
+}
+
+/** Current git activity for one repository, for the status bar. */
+export interface RepoActivity {
+  /** Most recently started command still running, or null when idle. */
+  running: GitCommandRecord | null;
+  /** Most recently finished command, or null when none has run yet. */
+  last: GitCommandRecord | null;
+  /** Number of git processes currently running for this repository. */
+  active: number;
+}

@@ -6,7 +6,7 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight,
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { CommitFile, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
+import type { CommitFile, GitCommandRecord, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -75,8 +75,11 @@ function loadTab(tab: RepoTab): void {
   zoom = tab.zoom;
   repoName = tab.name;
   currentLayout = null;
+  // The cached activity belongs to the previously active tab.
+  activity = null;
   applyTransform();
   renderTabs();
+  renderStatusBar();
   persistTabs();
 }
 
@@ -120,6 +123,85 @@ async function api<T>(route: string, body?: unknown, opts: ApiOpts = {}): Promis
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) throw new Error(data.error ?? res.statusText);
   return data;
+}
+
+// --- Git command status bar ---
+
+/** Last activity snapshot for the active tab, kept so a stale poll can be dropped. */
+let activity: RepoActivity | null = null;
+
+/** Format a finished command's duration for the status bar meta. */
+function commandMeta(cmd: GitCommandRecord): string {
+  const ms = cmd.durationMs ?? 0;
+  const time = ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
+  if (cmd.running) return '';
+  if (cmd.exitCode === null) return `failed · ${time}`;
+  return cmd.exitCode === 0 ? time : `exit ${cmd.exitCode} · ${time}`;
+}
+
+/** Paint the status bar from the current `activity` snapshot. */
+function renderStatusBar(): void {
+  const bar = document.querySelector('#status-bar');
+  if (!(bar instanceof HTMLElement)) return;
+  const spinner = $('#status-spinner');
+  const commandEl = $('#status-command');
+  const metaEl = $('#status-meta');
+
+  if (!activeTab()) {
+    bar.classList.remove('is-running', 'is-error');
+    spinner.hidden = true;
+    commandEl.textContent = 'No repository open';
+    metaEl.textContent = '';
+    return;
+  }
+
+  const running = activity?.running ?? null;
+  const last = activity?.last ?? null;
+  const shown = running ?? last;
+  const failed = !running && last !== null && last.failed;
+
+  bar.classList.toggle('is-running', running !== null);
+  bar.classList.toggle('is-error', failed);
+  spinner.hidden = running === null;
+  commandEl.textContent = shown ? shown.display : 'Ready';
+  commandEl.title = shown ? shown.display : '';
+  metaEl.textContent = running
+    ? 'running…'
+    : last
+      ? commandMeta(last)
+      : '';
+}
+
+/** Fetch the active tab's git activity and repaint (drops stale cross-tab responses). */
+async function refreshActivity(): Promise<void> {
+  const reqId = activeId;
+  if (!reqId) {
+    activity = null;
+    renderStatusBar();
+    return;
+  }
+  try {
+    const next = await api<RepoActivity>('/activity');
+    if (activeId !== reqId) return;
+    activity = next;
+    renderStatusBar();
+  } catch {
+    // Transient (e.g. dev-server restart); keep the previous snapshot.
+  }
+}
+
+// Poll while anything is running (fast) and idle slowly, so the bar reflects
+// external commands too. A command's own API call triggers an immediate refresh.
+const ACTIVITY_RUNNING_MS = 250;
+const ACTIVITY_IDLE_MS = 1500;
+let activityTimer: number | undefined;
+
+function scheduleActivityPoll(): void {
+  window.clearTimeout(activityTimer);
+  const delay = activity?.active ? ACTIVITY_RUNNING_MS : ACTIVITY_IDLE_MS;
+  activityTimer = window.setTimeout(() => {
+    void refreshActivity().finally(scheduleActivityPoll);
+  }, delay);
 }
 
 // --- Rendering ---
@@ -831,6 +913,7 @@ function renderNoRepo(): void {
     </div>`;
   pane.querySelector('#empty-open-repo')?.addEventListener('click', () => void openRepo());
   updateSyncButtons();
+  renderStatusBar();
 }
 
 /** Open a folder picker and add the chosen repository as a tab. */
@@ -943,6 +1026,7 @@ async function refresh(): Promise<void> {
     renderAll(resp);
     renderTabs();
     persistTabs();
+    void refreshActivity();
   } catch (err) {
     if (activeId !== reqId) return;
     $('#detail-pane').innerHTML = `<p class="error">Failed to load repo: ${esc(String(err))}</p>`;
@@ -2096,3 +2180,4 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap();
+scheduleActivityPoll();

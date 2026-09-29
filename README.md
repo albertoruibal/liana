@@ -57,6 +57,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/repos` | GET | — | Repositories known to the server: `[{id, path, name}]` |
 | `/api/open` | POST | `{path}` | Validate a local repo and register it (idempotent); returns `{id, path, name}` |
 | `/api/state` | GET | — | Repo state, commits (date-order, first 500), status |
+| `/api/activity` | GET | — | Git commands for this repo: `{running, last, active}` (running command or the most recent one) |
 | `/api/commit` | POST | `{message, files[]}` | `git commit` of the listed paths; stages selected files and unstages already-staged files that aren't listed |
 | `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
 | `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
@@ -112,6 +113,13 @@ toggle switches between a single-column and a side-by-side layout, and the choic
 is remembered in `localStorage`. Diffs are read from the commit via
 `git show --first-parent`, so merge commits show the changes they introduce
 against their mainline parent.
+
+A slim status bar along the bottom shows the `git` command currently executing for
+the active tab (with a spinner) and, when idle, the most recently finished command
+with its duration or exit code. The backend records every spawned command per
+repository, so even commands that don't back a UI action (background state loads)
+appear there; the UI polls `/api/activity` (fast while something runs, slowly when
+idle).
 
 ## Run
 

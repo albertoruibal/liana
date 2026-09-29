@@ -2086,6 +2086,61 @@ dialog input[type='text'] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Status bar (last / running git command)
+ * ------------------------------------------------------------------ */
+#status-bar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 14px;
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+
+#status-command {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#status-bar.is-running #status-command {
+  color: var(--fg);
+}
+
+#status-bar.is-error #status-command {
+  color: var(--danger);
+}
+
+#status-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.status-spinner {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sync-spin 700ms linear infinite;
+}
+
+.status-spinner[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ *
  * Motion preferences
  * ------------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {

@@ -12,11 +12,13 @@ import { parseCommitFiles } from './commit-files';
 import type {
   BranchInfo,
   CommitFile,
+  GitCommandRecord,
   GitCommit,
   GitRef,
   RebaseAction,
   RebaseTodoItem,
   RemoteStatus,
+  RepoActivity,
   RepoState,
   RepoStatus,
   ResetMode,
@@ -25,6 +27,52 @@ import type {
 } from './types';
 
 const UNIT = '\x1f';
+
+/** Per-repository git activity, keyed by absolute repo path, for the status bar. */
+interface ActivityState {
+  /** Commands still running, oldest first; the last entry is the most recently started. */
+  running: GitCommandRecord[];
+  /** Most recently finished command. */
+  last: GitCommandRecord | null;
+}
+
+const activity = new Map<string, ActivityState>();
+
+function activityFor(repoPath: string): ActivityState {
+  let state = activity.get(repoPath);
+  if (!state) {
+    state = { running: [], last: null };
+    activity.set(repoPath, state);
+  }
+  return state;
+}
+
+/** Snapshot of one repository's git activity for `/activity`. */
+export function repoActivity(repoPath: string): RepoActivity {
+  const state = activityFor(repoPath);
+  return {
+    running: state.running[state.running.length - 1] ?? null,
+    last: state.last,
+    active: state.running.length,
+  };
+}
+
+/** Quote a single argv token for display, leaving shell-safe tokens bare. */
+function formatArg(arg: string): string {
+  // Render control characters (the \x1f field separator, \n, \t, …) as escapes so
+  // format-string argv stays on the status bar's single line.
+  const safe = arg.replace(/[\x00-\x1f\x7f]/g, (c) => {
+    const code = c.charCodeAt(0).toString(16).padStart(2, '0');
+    return `\\x${code}`;
+  });
+  if (safe.length > 0 && !/[\s"'\\$`]/.test(safe)) return safe;
+  return `'${safe.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Human-readable command line, e.g. `git log --all --date-order`. */
+function formatCommand(args: string[]): string {
+  return ['git', ...args].map(formatArg).join(' ');
+}
 
 export class GitError extends Error {
   constructor(
@@ -42,6 +90,30 @@ export function gitRun(
   args: string[],
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<string> {
+  const state = activityFor(repoPath);
+  const record: GitCommandRecord = {
+    argv: args,
+    display: formatCommand(args),
+    running: true,
+    exitCode: null,
+    durationMs: null,
+    startedAt: Date.now(),
+    finishedAt: null,
+    failed: false,
+  };
+  state.running.push(record);
+
+  /** Retire the record from the running list and make it the latest finished command. */
+  const finish = (exitCode: number | null): void => {
+    const idx = state.running.indexOf(record);
+    if (idx !== -1) state.running.splice(idx, 1);
+    record.running = false;
+    record.exitCode = exitCode;
+    record.finishedAt = Date.now();
+    record.durationMs = record.finishedAt - record.startedAt;
+    state.last = record;
+  };
+
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {
       cwd: repoPath,
@@ -51,8 +123,14 @@ export function gitRun(
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
     child.stderr.on('data', (d) => (stderr += d));
-    child.on('error', (err) => reject(new GitError(`git failed to start: ${err.message}`, stderr)));
+    child.on('error', (err) => {
+      record.failed = true;
+      finish(null);
+      reject(new GitError(`git failed to start: ${err.message}`, stderr));
+    });
     child.on('close', (code) => {
+      record.failed = code !== 0;
+      finish(code);
       if (code === 0) resolve(stdout);
       // Some commands (e.g. `git stash apply`) report conflicts on stdout, so fall
       // back to it when stderr is empty rather than hiding git's explanation.
@@ -790,6 +868,9 @@ export function createApi(defaultRepo: string | null): Api {
           status: 200,
           body: { configured: true, repoPath, state, commits: log, status },
         };
+      }
+      if (route === '/activity' && method === 'GET') {
+        return { status: 200, body: repoActivity(repoPath) };
       }
 
       if (route === '/commit' && method === 'POST') {
