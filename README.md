@@ -60,6 +60,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/activity` | GET | — | Git commands for this repo: `{running, last, active}` (running command or the most recent one) |
 | `/api/commit` | POST | `{message, files[]}` | `git commit` of the listed paths; stages selected files and unstages already-staged files that aren't listed |
 | `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
+| `/api/merge` | POST | `{ref}` | Merge a branch or commit into the checked-out branch (`git merge --no-edit`, 409 if dirty) |
 | `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
 | `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |
 | `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
@@ -79,8 +80,8 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
-`/api/cherry-pick`) return HTTP **409** with a human message instead of
-raw stderr; failed operations keep the graph intact. Pull is the exception: local
+`/api/cherry-pick`, `/api/merge`) return HTTP **409** with a human message instead
+of raw stderr; failed operations keep the graph intact. Pull is the exception: local
 changes are allowed through and git's own error is surfaced if they'd be
 overwritten. Interactive rebase ships behind `INTERACTIVE_REBASE_ENABLED` in
 `src/config.ts`.
@@ -96,8 +97,8 @@ so a missing credential fails fast with git's error instead of hanging.
 
 Right-click a commit to create a branch/tag there or reset the checked-out branch
 to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
-chip (in the graph or the detail pane) to check it out, rebase the checked-out
-branch onto it, or delete it. Checking out
+chip (in the graph or the detail pane) to check it out, merge or rebase the
+checked-out branch onto it, or delete it. Checking out
 a remote-tracking ref creates or reuses the matching local branch tracking it — no
 fetch, purely local. Deleting a remote branch runs `git push <remote> --delete`.
 

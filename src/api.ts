@@ -341,6 +341,12 @@ async function rebaseOnto(repoPath: string, onto: string): Promise<string> {
   return out.trim();
 }
 
+/** Merge `ref` into the checked-out branch; `--no-edit` keeps git from opening an editor. */
+async function mergeBranch(repoPath: string, ref: string): Promise<string> {
+  const out = await gitRun(repoPath, ['merge', '--no-edit', ref]);
+  return out.trim();
+}
+
 async function cherryPick(
   repoPath: string,
   ref: string,
@@ -919,6 +925,14 @@ export function createApi(defaultRepo: string | null): Api {
         const dirty = await dirtyGuard(repoPath, 'rebasing');
         if (dirty) return { status: 409, body: { error: dirty } };
         const out = await executeRebase(repoPath, onto.trim(), items);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/merge' && method === 'POST') {
+        const { ref } = JSON.parse(rawBody) as { ref?: string };
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing ref' } };
+        const dirty = await dirtyGuard(repoPath, 'merging');
+        if (dirty) return { status: 409, body: { error: dirty } };
+        const out = await mergeBranch(repoPath, ref.trim());
         return { status: 200, body: { ok: true, output: out } };
       }
       if (route === '/cherry-pick' && method === 'POST') {

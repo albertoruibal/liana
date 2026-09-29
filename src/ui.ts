@@ -1771,6 +1771,7 @@ function buildMenu(target: ContextTarget): MenuItem[] {
     items.push({ separator: true });
     items.push({ label: `Checkout ${name}`, action: () => void checkout(name) });
     if (currentBranch && !detached) {
+      items.push({ label: `Merge ${name} into ${currentBranch}`, action: () => void mergeIntoCurrent(name) });
       items.push({ label: `Rebase ${currentBranch} onto ${name}`, action: () => void rebaseOntoBranch(name) });
     }
     items.push({ label: `Delete branch ${name}`, danger: true, action: () => void deleteBranch(name, false) });
@@ -1781,6 +1782,7 @@ function buildMenu(target: ContextTarget): MenuItem[] {
       items.push({ label: `Checkout ${local} (tracking ${name})`, action: () => void checkout(name, true) });
     }
     if (currentBranch && !detached) {
+      items.push({ label: `Merge ${name} into ${currentBranch}`, action: () => void mergeIntoCurrent(name) });
       items.push({ label: `Rebase ${currentBranch} onto ${name}`, action: () => void rebaseOntoBranch(name) });
     }
     items.push({ label: `Delete remote branch ${name}`, danger: true, action: () => void deleteBranch(name, true) });
@@ -1886,6 +1888,17 @@ async function rebaseOntoBranch(name: string): Promise<void> {
     await refresh();
   } catch (err) {
     alert(`Rebase failed:\n${String(err)}`);
+  }
+}
+
+async function mergeIntoCurrent(name: string): Promise<void> {
+  const branch = lastResponse?.state?.headBranch ?? 'the current branch';
+  if (!confirm(`Merge ${name} into ${branch}?`)) return;
+  try {
+    await api('/merge', { ref: name });
+    await refresh();
+  } catch (err) {
+    alert(`Merge failed:\n${String(err)}`);
   }
 }
 

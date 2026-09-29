@@ -358,6 +358,12 @@ export async function rebaseOnto(repoPath: string, onto: string): Promise<string
   return out.trim();
 }
 
+/** Merge `ref` into the checked-out branch; `--no-edit` keeps git from opening an editor. */
+export async function mergeBranch(repoPath: string, ref: string): Promise<string> {
+  const out = await git(repoPath, ['merge', '--no-edit', ref]);
+  return out.trim();
+}
+
 /**
  * Cherry-pick `ref` onto the current branch.
  * `mainline` selects the parent of a merge commit (git -m N);
