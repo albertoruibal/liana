@@ -1658,15 +1658,22 @@ function buildMenu(target: ContextTarget): MenuItem[] {
   }
   const name = target.name ?? '';
   const currentBranch = lastResponse?.state?.headBranch ?? '';
+  const detached = lastResponse?.state?.detachedHead ?? false;
   if (target.kind === 'local' && name && name !== currentBranch && !target.isHead) {
     items.push({ separator: true });
     items.push({ label: `Checkout ${name}`, action: () => void checkout(name) });
+    if (currentBranch && !detached) {
+      items.push({ label: `Rebase ${currentBranch} onto ${name}`, action: () => void rebaseOntoBranch(name) });
+    }
     items.push({ label: `Delete branch ${name}`, danger: true, action: () => void deleteBranch(name, false) });
   } else if (target.kind === 'remote' && name) {
     const local = remoteLocalName(name);
     items.push({ separator: true });
     if (local && local !== currentBranch) {
       items.push({ label: `Checkout ${local} (tracking ${name})`, action: () => void checkout(name, true) });
+    }
+    if (currentBranch && !detached) {
+      items.push({ label: `Rebase ${currentBranch} onto ${name}`, action: () => void rebaseOntoBranch(name) });
     }
     items.push({ label: `Delete remote branch ${name}`, danger: true, action: () => void deleteBranch(name, true) });
   } else if (target.kind === 'tag' && name) {
@@ -1762,6 +1769,17 @@ document.addEventListener('pointerdown', (ev) => {
 });
 window.addEventListener('resize', closeContextMenu);
 graphScroll.addEventListener('scroll', closeContextMenu);
+
+async function rebaseOntoBranch(name: string): Promise<void> {
+  const branch = lastResponse?.state?.headBranch ?? 'the current branch';
+  if (!confirm(`Rebase ${branch} onto ${name}?`)) return;
+  try {
+    await api('/rebase', { onto: name });
+    await refresh();
+  } catch (err) {
+    alert(`Rebase failed:\n${String(err)}`);
+  }
+}
 
 async function deleteBranch(name: string, remote: boolean): Promise<void> {
   const noun = remote ? `remote branch "${name}"` : `branch "${name}"`;
