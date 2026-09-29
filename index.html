@@ -155,7 +155,7 @@
     <nav id="context-menu" class="context-menu" hidden aria-label="Context menu"></nav>
 
     <dialog id="name-dialog">
-      <form method="dialog">
+      <form method="dialog" id="name-form">
         <div class="dialog-head">
           <h3 id="name-title">Create branch</h3>
           <p class="muted hint" id="name-subtitle"></p>
@@ -166,7 +166,7 @@
         </label>
         <div id="name-error" class="dialog-status"></div>
         <menu>
-          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn" type="button" id="name-cancel">Cancel</button>
           <button class="btn btn-primary" id="name-submit" value="ok">Create</button>
         </menu>
       </form>
@@ -188,7 +188,7 @@
     </dialog>
 
     <dialog id="stash-dialog">
-      <form method="dialog">
+      <form method="dialog" id="stash-form">
         <div class="dialog-head">
           <h3>Stash changes</h3>
           <p class="muted hint">Saves uncommitted changes and restores the working tree.</p>
@@ -204,14 +204,14 @@
         </label>
         <div id="stash-status" class="dialog-status"></div>
         <menu>
-          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn" type="button" id="stash-cancel">Cancel</button>
           <button class="btn btn-primary" id="stash-submit" value="ok">Stash</button>
         </menu>
       </form>
     </dialog>
 
     <dialog id="commit-dialog">
-      <form method="dialog">
+      <form method="dialog" id="commit-form">
         <div class="dialog-head">
           <h3>Create commit</h3>
           <p class="muted hint">Changes are committed on the checked-out branch.</p>
@@ -232,7 +232,7 @@
         </div>
         <div id="commit-status" class="dialog-status"></div>
         <menu>
-          <button class="btn" value="cancel">Cancel</button>
+          <button class="btn" type="button" id="commit-cancel">Cancel</button>
           <button class="btn btn-primary" id="commit-submit" value="ok">Commit</button>
         </menu>
       </form>

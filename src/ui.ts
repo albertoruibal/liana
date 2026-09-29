@@ -1447,7 +1447,9 @@ $('#btn-stash').addEventListener('click', () => {
   dlg.showModal();
 });
 
-$('#stash-submit').addEventListener('click', (ev) => {
+// Submit (not click) so Enter in the message field runs the stash instead of
+// implicitly activating Cancel, the first submit button.
+$('#stash-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const message = $<HTMLInputElement>('#stash-message').value.trim();
   const includeUntracked = $<HTMLInputElement>('#stash-untracked').checked;
@@ -1464,6 +1466,10 @@ $('#stash-submit').addEventListener('click', (ev) => {
       $('#stash-status').textContent = String(err);
     }
   })();
+});
+
+$('#stash-cancel').addEventListener('click', () => {
+  $<HTMLDialogElement>('#stash-dialog').close();
 });
 
 $('#btn-commit').addEventListener('click', () => {
@@ -1488,7 +1494,9 @@ $('#commit-select-all').addEventListener('change', (ev) => {
 
 $('#commit-file-list').addEventListener('change', () => updateCommitSelection());
 
-$('#commit-submit').addEventListener('click', (ev) => {
+// Submit (not click) so Enter on a focused control runs the commit instead of
+// implicitly activating Cancel, the first submit button.
+$('#commit-form').addEventListener('submit', (ev) => {
   // Keep the dialog open until the commit succeeds so errors stay visible.
   ev.preventDefault();
   const msg = $<HTMLTextAreaElement>('#commit-message').value.trim();
@@ -1513,6 +1521,10 @@ $('#commit-submit').addEventListener('click', (ev) => {
       $('#commit-status').textContent = String(err);
     }
   })();
+});
+
+$('#commit-cancel').addEventListener('click', () => {
+  $<HTMLDialogElement>('#commit-dialog').close();
 });
 
 $('#rebase-submit').addEventListener('click', (ev) => {
@@ -2131,7 +2143,9 @@ function openNameDialog(mode: NameMode, ref: string): void {
   input.focus();
 }
 
-$('#name-submit').addEventListener('click', (ev) => {
+// Submit (not click) so Enter in the name field creates the ref instead of
+// implicitly activating Cancel, the first submit button.
+$('#name-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const name = $<HTMLInputElement>('#name-input').value.trim();
   if (!name) {
@@ -2148,6 +2162,10 @@ $('#name-submit').addEventListener('click', (ev) => {
       $('#name-error').textContent = String(err);
     }
   })();
+});
+
+$('#name-cancel').addEventListener('click', () => {
+  $<HTMLDialogElement>('#name-dialog').close();
 });
 
 // Escape closes an open dialog, otherwise clears the selection.
