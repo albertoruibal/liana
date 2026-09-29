@@ -1622,6 +1622,26 @@ function closeContextMenu(): void {
   contextMenu.hidden = true;
 }
 
+async function copyToClipboard(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // Clipboard API needs a secure context; fall back for plain HTTP.
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    ta.remove();
+  }
+}
+
 function menuTitle(target: ContextTarget): string {
   if (target.kind === 'empty') return 'Repository';
   if (target.kind === 'stash') return `Stash ${target.name ?? ''}`;
@@ -1659,6 +1679,10 @@ function buildMenu(target: ContextTarget): MenuItem[] {
   const name = target.name ?? '';
   const currentBranch = lastResponse?.state?.headBranch ?? '';
   const detached = lastResponse?.state?.detachedHead ?? false;
+  if ((target.kind === 'local' || target.kind === 'remote' || target.kind === 'tag') && name) {
+    items.push({ separator: true });
+    items.push({ label: 'Copy name', action: () => void copyToClipboard(name) });
+  }
   if (target.kind === 'local' && name && name !== currentBranch && !target.isHead) {
     items.push({ separator: true });
     items.push({ label: `Checkout ${name}`, action: () => void checkout(name) });
