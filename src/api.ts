@@ -307,8 +307,13 @@ async function loadStashes(
   return { stashes, hidden };
 }
 
-async function loadRepoState(repoPath: string): Promise<RepoState> {
-  const [branchOut, symbolicOut] = await Promise.all([
+/**
+ * Read every ref once. Returns the branch view plus a fingerprint over *all*
+ * refs (heads, remotes, tags, stash) so a cached log can be invalidated when
+ * any of them moves — tags included, since they decorate the graph too.
+ */
+async function loadRepoRefs(repoPath: string): Promise<{ state: RepoState; fingerprint: string }> {
+  const [refsOut, symbolicOut] = await Promise.all([
     gitRun(repoPath, ['for-each-ref', '--format=%(refname)%00%(objectname)']),
     gitRun(repoPath, ['rev-parse', '--symbolic-full-name', 'HEAD']).catch(() => ''),
   ]);
@@ -318,7 +323,7 @@ async function loadRepoState(repoPath: string): Promise<RepoState> {
   const headBranch = detachedHead ? null : symbolic.replace(/^refs\/heads\//, '');
 
   const branches: BranchInfo[] = [];
-  for (const line of branchOut.split('\n')) {
+  for (const line of refsOut.split('\n')) {
     if (!line.trim()) continue;
     const [refname = '', hash = ''] = line.split('\x00');
     if (!refname.startsWith('refs/heads/') && !refname.startsWith('refs/remotes/')) continue;
@@ -331,7 +336,12 @@ async function loadRepoState(repoPath: string): Promise<RepoState> {
   }
 
   const name = path.basename(repoPath);
-  return { name, headBranch, detachedHead, branches };
+  return {
+    state: { name, headBranch, detachedHead, branches },
+    // `refsOut` lists every ref (heads, remotes, tags, stash) with its object id,
+    // so comparing it catches any ref move. HEAD name covers unborn/detached.
+    fingerprint: `${detachedHead ? 'HEAD' : headBranch}\n${refsOut}`,
+  };
 }
 
 async function loadStatus(repoPath: string): Promise<RepoStatus> {
@@ -881,6 +891,12 @@ export function createApi(defaultRepo: string | null): Api {
   const repos = new Map<string, { path: string; name: string }>();
   let nextId = 1;
 
+  // Parsed log cache, keyed by repo id. `git log --all` is the most expensive
+  // read on `/state`; it only changes when a ref (or the stash list) moves, so
+  // fingerprint the refs and reuse the parsed commits otherwise. Status and
+  // remote status are always re-read since they change without refs moving.
+  const logCache = new Map<string, { fingerprint: string; commits: GitCommit[] }>();
+
   function register(abs: string): RepoEntry {
     for (const [id, entry] of repos) {
       if (entry.path === abs) return { id, path: entry.path, name: entry.name };
@@ -931,15 +947,24 @@ export function createApi(defaultRepo: string | null): Api {
       if (!entry) return { status: 400, body: { error: 'Unknown repository' } };
       const repoPath = entry.path;
       if (route === '/state' && method === 'GET') {
-        const [{ stashes, hidden }, state, status] = await Promise.all([
+        const [{ stashes, hidden }, { state, fingerprint: refsPrint }, status] = await Promise.all([
           loadStashes(repoPath),
-          loadRepoState(repoPath),
+          loadRepoRefs(repoPath),
           loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
         ]);
-        const log = (await loadLog(repoPath, 500, stashes)).filter((c) => !hidden.has(c.hash));
+        const fingerprint = `${refsPrint}\nstash:${[...stashes.keys()].sort().join(',')}`;
+        const cacheKey = repoId ?? repoPath;
+        const cached = logCache.get(cacheKey);
+        let commits: GitCommit[];
+        if (cached && cached.fingerprint === fingerprint) {
+          commits = cached.commits;
+        } else {
+          commits = (await loadLog(repoPath, 500, stashes)).filter((c) => !hidden.has(c.hash));
+          logCache.set(cacheKey, { fingerprint, commits });
+        }
         return {
           status: 200,
-          body: { configured: true, repoPath, state, commits: log, status },
+          body: { configured: true, repoPath, state, commits, status },
         };
       }
       if (route === '/activity' && method === 'GET') {

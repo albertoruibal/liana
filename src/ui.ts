@@ -630,7 +630,17 @@ function renderGraphHeader(m: GraphMetrics): void {
     .join('');
 }
 
+/**
+ * Re-paint the graph/detail from the last fetched response without touching the
+ * network. Selection and search are pure client state, so a click or keystroke
+ * must never re-run the git subprocesses behind `/state`.
+ */
+function renderCached(): void {
+  if (lastResponse) renderAll(lastResponse);
+}
+
 function renderAll(resp: StateResponse): void {
+  lastResponse = resp;
   const commits = resp.commits ?? [];
   const layout = layoutGraph(commits);
   currentLayout = layout;
@@ -731,10 +741,10 @@ function scrollToHash(hash: string): void {
 }
 
 /** Select a search result, reload the view, and bring its row into sight. */
-async function focusMatch(hash: string): Promise<void> {
+function focusMatch(hash: string): void {
   searchCurrent = hash;
   selectedHash = hash;
-  await refresh();
+  renderCached();
   scrollToHash(hash);
 }
 
@@ -749,7 +759,7 @@ function searchStep(delta: number): void {
         : searchMatches.length - 1
       : (idx + delta + searchMatches.length) % searchMatches.length;
   const match = searchMatches[next];
-  if (match) void focusMatch(match.commit.hash);
+  if (match) focusMatch(match.commit.hash);
 }
 
 /** Render the results list and the "n/total" counter for the current query. */
@@ -786,7 +796,7 @@ function renderSearchResults(): void {
           <span>${isoDate(m.commit.timestamp)}</span>
           <span class="search-result-refs" title="Matched: ${esc(m.fields.join(', '))}">${esc(m.fields.join(' · '))}</span>
         </div>`;
-      li.addEventListener('click', () => void focusMatch(m.commit.hash));
+      li.addEventListener('click', () => focusMatch(m.commit.hash));
       return li;
     }),
   );
@@ -816,7 +826,8 @@ function closeSearch(): void {
   searchCurrent = null;
   searchMatches = [];
   $<HTMLInputElement>('#search-input').value = '';
-  if (lastResponse) renderAll(lastResponse);
+  window.clearTimeout(searchDebounce);
+  renderCached();
 }
 
 /** True when the event target is a text field, so shortcuts don't hijack typing. */
@@ -834,10 +845,14 @@ $('#search-close').addEventListener('click', () => closeSearch());
 $('#search-next').addEventListener('click', () => searchStep(1));
 $('#search-prev').addEventListener('click', () => searchStep(-1));
 
+// Search only filters the already-fetched log, so debounce the rebuild and
+// never hit `/state` while the user is typing.
+let searchDebounce: number | undefined;
 $('#search-input').addEventListener('input', (ev) => {
   searchQuery = (ev.target as HTMLInputElement).value;
   searchCurrent = null;
-  if (lastResponse) renderAll(lastResponse);
+  window.clearTimeout(searchDebounce);
+  searchDebounce = window.setTimeout(renderCached, 150);
 });
 
 $('#search-input').addEventListener('keydown', (ev) => {
@@ -1726,7 +1741,7 @@ $svg('#graph-svg').addEventListener('click', (ev) => {
   const hash = el.dataset?.hash ?? null;
   // Clicking the selected row again clears the selection.
   selectedHash = hash === selectedHash ? null : hash;
-  void refresh();
+  renderCached();
 });
 
 // Ctrl+wheel zooms about the cursor; plain wheel keeps scrolling the pane.
@@ -2200,7 +2215,7 @@ document.addEventListener('keydown', (ev) => {
   }
   if (selectedHash === null) return;
   selectedHash = null;
-  void refresh();
+  renderCached();
 });
 
 // --- Resizable detail pane ---
@@ -2252,9 +2267,7 @@ void currentLayout;
 let resizeTimer: number | undefined;
 window.addEventListener('resize', () => {
   window.clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => {
-    if (lastResponse) renderAll(lastResponse);
-  }, 120);
+  resizeTimer = window.setTimeout(renderCached, 120);
 });
 
 /**

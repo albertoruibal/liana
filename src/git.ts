@@ -307,7 +307,14 @@ export async function loadStashes(
   return { stashes, hidden };
 }
 
-export async function loadRepoState(repoPath: string): Promise<RepoState> {
+/**
+ * Read every ref once. Returns the branch view plus a fingerprint over *all*
+ * refs (heads, remotes, tags, stash) so a cached log can be invalidated when
+ * any of them moves — tags included, since they decorate the graph too.
+ */
+export async function loadRepoRefs(
+  repoPath: string,
+): Promise<{ state: RepoState; fingerprint: string }> {
   const [symbolicOut, branchOut, nameOut] = await Promise.all([
     git(repoPath, ['rev-parse', '--symbolic-full-name', 'HEAD']).catch(() => ''),
     git(repoPath, ['for-each-ref', '--format=%(refname)%00%(objectname)']),
@@ -333,7 +340,16 @@ export async function loadRepoState(repoPath: string): Promise<RepoState> {
   }
 
   const name = nameOut.trim().split('/').pop() || repoPath;
-  return { name, headBranch, detachedHead, branches };
+  return {
+    state: { name, headBranch, detachedHead, branches },
+    // `branchOut` lists every ref (heads, remotes, tags, stash) with its object
+    // id, so comparing it catches any ref move. HEAD name covers unborn/detached.
+    fingerprint: `${detachedHead ? 'HEAD' : headBranch}\n${branchOut}`,
+  };
+}
+
+export async function loadRepoState(repoPath: string): Promise<RepoState> {
+  return (await loadRepoRefs(repoPath)).state;
 }
 
 export async function loadStatus(repoPath: string): Promise<RepoStatus> {

@@ -1,6 +1,6 @@
 // SVG rendering of the commit graph (left pane).
 
-import type { GitRef, GraphLayout, RefKind, RepoState } from './types';
+import type { GitRef, GraphLayout, GraphNode, RefKind, RepoState } from './types';
 import { REF_ICON_PATHS } from './refs';
 import { isoDate, isoDateTime } from './dates';
 
@@ -132,6 +132,10 @@ export function renderGraph(
   const height = TOP_PAD + Math.max(1, layout.nodes.length) * ROW_H + TOP_PAD;
   svg.replaceChildren();
 
+  // O(1) row lookup for the selection/search bands (was an O(n) scan per match).
+  const nodeByHash = new Map<string, GraphNode>();
+  for (const n of layout.nodes) nodeByHash.set(n.commit.hash, n);
+
   // --- Measurement pass: build the ref/tag chips and size the left column. ---
   // Chips are appended (so they get a layout box and real text length) but only
   // positioned after we know how wide the column must be.
@@ -182,7 +186,7 @@ export function renderGraph(
       text.textContent = ref.name;
       svg.appendChild(text);
       const iconW = icon ? ICON + ICON_GAP : 0;
-      const width = measureText(text) + CHIP_PAD * 2 + iconW;
+      const width = measureText(text, ref.name) + CHIP_PAD * 2 + iconW;
       candidates.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
     }
 
@@ -209,7 +213,7 @@ export function renderGraph(
       const reserve = candidates.length > 1 ? badgeReserve : 0;
       const labelW = Math.max(0, stripBudget - reserve - CHIP_PAD * 2 - iconW);
       first.text.textContent = fitText(first.text, first.name, labelW);
-      first.width = measureText(first.text) + CHIP_PAD * 2 + iconW;
+      first.width = measureText(first.text, first.text.textContent ?? '') + CHIP_PAD * 2 + iconW;
       const title = document.createElementNS(ns, 'title');
       title.textContent = first.name;
       first.text.appendChild(title);
@@ -234,7 +238,7 @@ export function renderGraph(
       badge.dataset.hash = n.commit.hash; // commit menu, not a tag menu
       badge.textContent = `+${hidden.length}`;
       svg.appendChild(badge);
-      const width = measureText(badge) + CHIP_PAD * 2;
+      const width = measureText(badge, badge.textContent ?? '') + CHIP_PAD * 2;
       chips.push({ text: badge, icon: null, isHead: false, kind: 'overflow', name: '', width });
       rowW += CHIP_GAP + width;
     }
@@ -267,7 +271,7 @@ export function renderGraph(
     text.setAttribute('class', 'graph-row-label graph-author-label');
     text.textContent = n.commit.author;
     svg.appendChild(text);
-    authorNameW = Math.max(authorNameW, measureText(text));
+    authorNameW = Math.max(authorNameW, measureText(text, n.commit.author));
     authorTexts.set(n.commit.hash, text);
   }
   const authorColumnW = AVATAR + 8 + authorNameW;
@@ -299,7 +303,7 @@ export function renderGraph(
 
   // Persistent tint for the selected row, under everything else.
   if (selectedHash) {
-    const selNode = layout.nodes.find((n) => n.commit.hash === selectedHash);
+    const selNode = nodeByHash.get(selectedHash);
     if (selNode) {
       const selBand = document.createElementNS(ns, 'rect');
       selBand.setAttribute('x', '0');
@@ -316,7 +320,7 @@ export function renderGraph(
   // Painted under the edges/nodes so the graph stays legible.
   if (highlight && highlight.matches.size > 0) {
     const addMatchBand = (hash: string, current: boolean): void => {
-      const node = layout.nodes.find((n) => n.commit.hash === hash);
+      const node = nodeByHash.get(hash);
       if (!node) return;
       const band = document.createElementNS(ns, 'rect');
       band.setAttribute('x', '0');
@@ -391,7 +395,7 @@ export function renderGraph(
         isHead: false,
         kind: ref.kind,
         name: ref.name,
-        width: measureText(text) + CHIP_PAD * 2 + iconW,
+        width: measureText(text, ref.name) + CHIP_PAD * 2 + iconW,
       });
     }
     let chipX = startX;
@@ -728,10 +732,7 @@ function applyChipStyle(rect: SVGElement, kind: string, isHead: boolean): void {
 
 /** Truncate `text` to fit `maxW` px, appending an ellipsis when clipped. */
 function fitText(el: SVGTextElement, text: string, maxW: number): string {
-  const measure = (s: string): number => {
-    el.textContent = s;
-    return measureText(el);
-  };
+  const measure = (s: string): number => measureText(el, s);
   if (measure(text) <= maxW) return text;
   const ellipsis = '\u2026';
   let lo = 0;
@@ -744,17 +745,57 @@ function fitText(el: SVGTextElement, text: string, maxW: number): string {
   return lo > 0 ? text.slice(0, lo) + ellipsis : ellipsis;
 }
 
-/** Rendered width of a text node; falls back to an em estimate when not laid out. */
-function measureText(el: SVGTextElement): number {
+// Reusable 2D context for text metrics. `getComputedTextLength()` forces a
+// synchronous layout per call (hundreds of times per render); canvas metrics are
+// layout-free. Fonts are resolved once per class and cached.
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+const fontCache = new Map<string, string>();
+
+function canvasFont(el: SVGTextElement): string {
+  const key =
+    el.classList.contains('ref-chip') ? 'chip' : el.classList.contains('graph-meta-label') ? 'meta' : 'label';
+  const cached = fontCache.get(key);
+  if (cached) return cached;
+  let font = '12.5px sans-serif';
+  try {
+    const cs = getComputedStyle(el);
+    const weight = cs.fontWeight || '400';
+    const size = cs.fontSize || '12.5px';
+    const family = cs.fontFamily || 'sans-serif';
+    font = `${weight} ${size} ${family}`;
+  } catch {
+    // Element not in the document yet; keep the fallback.
+  }
+  fontCache.set(key, font);
+  return font;
+}
+
+/**
+ * Rendered width of `text` when drawn with `el`'s font. Prefers canvas metrics so
+ * measuring never forces layout; falls back to `getComputedTextLength`, then an
+ * em estimate, when a canvas context is unavailable.
+ */
+function measureText(el: SVGTextElement, text: string): number {
+  if (measureCtx === undefined) {
+    measureCtx =
+      typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  }
+  if (measureCtx) {
+    measureCtx.font = canvasFont(el);
+    return measureCtx.measureText(text).width;
+  }
+  const prev = el.textContent;
+  el.textContent = text;
   try {
     const len = el.getComputedTextLength();
     if (len > 0) return len;
   } catch {
     // getComputedTextLength throws for elements not yet in the document.
+  } finally {
+    el.textContent = prev;
   }
-  const chars = (el.textContent ?? '').length;
   const fs = el.classList.contains('ref-chip') ? 11 : LABEL_FS;
-  return chars * fs * 0.58;
+  return text.length * fs * 0.58;
 }
 
 export { EMPTY_METRICS };
