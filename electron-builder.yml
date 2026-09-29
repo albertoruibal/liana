@@ -2,10 +2,13 @@ appId: dev.liana.app
 productName: Liana
 directories:
   output: release
+  buildResources: build
 executableName: liana
+icon: build/icon.png
 files:
   - dist/**
   - dist-electron/**
+  - build/icon.png
   - package.json
 asar: true
 linux:

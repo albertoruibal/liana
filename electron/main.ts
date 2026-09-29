@@ -17,6 +17,9 @@ import { startServer, type RunningServer } from './server';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.LIANA_DEV_URL ?? 'http://localhost:5173';
 
+/** App/window icon, shipped in the asar root (build/icon.png). */
+const ICON_PATH = path.join(app.getAppPath(), 'build', 'icon.png');
+
 let server: RunningServer | null = null;
 let token = '';
 let gitAvailable = true;
@@ -36,6 +39,7 @@ function createWindow(): BrowserWindow {
     width: 1400,
     height: 900,
     backgroundColor: '#1e1e1e',
+    icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1d1830" />
+      <stop offset="1" stop-color="#0d0b16" />
+    </linearGradient>
+    <linearGradient id="rope" x1="7" y1="3" x2="25" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a78bfa" />
+      <stop offset="1" stop-color="#22d3ee" />
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded tile: legible against both light and dark desktops. -->
+  <rect width="512" height="512" rx="112" fill="url(#tile)" />
+  <rect x="3" y="3" width="506" height="506" rx="109" fill="none" stroke="#3b3159" stroke-width="6" />
+
+  <!-- Rope loop with a tail, same geometry as the in-app brand mark. -->
+  <g transform="translate(80 80) scale(11)">
+    <g stroke="url(#rope)" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <circle cx="16" cy="12.5" r="8.5" />
+      <path d="M16 21v8.5" />
+    </g>
+    <g stroke="rgba(15,10,35,.5)" stroke-width="2.8" stroke-linecap="round">
+      <path d="M6.8 8.4 9.9 10.1" />
+      <path d="M25.2 8.4 22.1 10.1" />
+      <path d="M6.8 16.6 9.9 14.9" />
+      <path d="M25.2 16.6 22.1 14.9" />
+      <path d="M14.6 23.6 17.4 25.4" />
+    </g>
+    <g stroke="rgba(255,255,255,.6)" stroke-width="1.2" stroke-linecap="round">
+      <path d="M6.9 7.6 10 9.3" />
+      <path d="M25.1 7.6 22 9.3" />
+      <path d="M14.6 22.8 17.4 24.6" />
+    </g>
+  </g>
+</svg>
