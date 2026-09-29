@@ -1737,6 +1737,7 @@ dialog input[type='text'] {
 .context-menu button {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 9px;
   width: 100%;
   padding: 8px 10px;
