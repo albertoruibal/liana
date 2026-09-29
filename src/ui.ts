@@ -474,38 +474,15 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
         '</p>';
     }
     html += '</div>';
-    const isHead = commit.refs.some((r) => r.kind === 'head');
-    // Tip of the currently checked-out branch
-    const headTip = (state?.branches ?? []).find((b) => b.isHead);
-    const atBranchTip = headTip !== undefined && headTip.hash === commit.hash;
-
-    html += '<div class="actions">';
     if (commit.isStash) {
       const branch = commit.stash?.branch ? ` (from ${esc(commit.stash.branch)})` : '';
+      html += '<div class="actions">';
       html += `<p class="muted hint">Stash entry${branch}. Applying restores the saved changes on the checked-out branch.</p>`;
       html += `<button class="btn act" data-act="stash-apply">Apply stash — keep the entry</button>`;
       html += `<button class="btn act" data-act="stash-pop">Apply stash &amp; drop it</button>`;
       html += `<button class="btn act btn-danger" data-act="stash-drop">Drop stash</button>`;
-    } else {
-      if (!isHead) {
-        if (commit.parents.length >= 2) {
-          html += `<p class="muted hint">Merge commit — pick a parent to cherry-pick against:</p>`;
-          commit.parents.forEach((p, i) => {
-            html += `<button class="btn act" data-act="cherry-pick" data-mainline="${i + 1}">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')} (-m ${i + 1}) <code>${esc(p.slice(0, 7))}</code></button>`;
-          });
-        } else {
-          html += `<button class="btn act" data-act="cherry-pick">Cherry-pick onto ${esc(state?.headBranch ?? 'HEAD')}</button>`;
-        }
-        html += `<label class="checkbox-label"><input type="checkbox" id="cherry-record" /> Record source hash in message (-x)</label>`;
-      }
-      if (!atBranchTip) {
-        html += `<button class="btn act" data-act="rebase-here">Rebase ${esc(state?.headBranch ?? 'branch')} onto this commit</button>`;
-        if (INTERACTIVE_REBASE_ENABLED) {
-          html += `<button class="btn act" data-act="rebase-interactive">Interactive rebase onto this commit…</button>`;
-        }
-      }
+      html += '</div>';
     }
-    html += '</div>';
     html += '<h4>Files changed</h4>';
     html += '<div id="commit-diff" class="diff-files">Loading…</div>';
     html += '<div class="detail-empty"><span class="hint">Click a file to view its diff. Operations run on the checked-out branch; the graph reloads after.</span></div>';
@@ -1115,16 +1092,7 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
   const act = btn.dataset.act ?? '';
   btn.disabled = true;
   try {
-    if (act === 'cherry-pick') {
-      const mainline = btn.dataset.mainline ? Number(btn.dataset.mainline) : undefined;
-      const record = $<HTMLInputElement>('#cherry-record').checked;
-      await api('/cherry-pick', { ref: selectedHash, mainline, record });
-    } else if (act === 'rebase-here') {
-      await api('/rebase', { onto: selectedHash });
-    } else if (act === 'rebase-interactive') {
-      await openRebaseDialog();
-      return;
-    } else if (act === 'stash-apply') {
+    if (act === 'stash-apply') {
       await api('/stash-apply', { hash: selectedHash });
     } else if (act === 'stash-pop') {
       await api('/stash-apply', { hash: selectedHash });
@@ -1186,8 +1154,10 @@ function renderRebaseTodo(
   });
 }
 
-async function openRebaseDialog(): Promise<void> {
-  const onto = selectedHash;
+/** Commit hash the open interactive-rebase dialog is based on. */
+let rebaseOnto: string | null = null;
+
+async function openRebaseDialog(onto: string): Promise<void> {
   if (!onto) return;
   const dlg = $<HTMLDialogElement>('#rebase-dialog');
   $('#rebase-status').textContent = '';
@@ -1198,6 +1168,7 @@ async function openRebaseDialog(): Promise<void> {
       return;
     }
     $('#rebase-summary').textContent = `${plan.items.length} commit(s) to replay onto ${plan.onto.slice(0, 7)} — oldest first`;
+    rebaseOnto = onto;
     renderRebaseTodo(plan.items);
     dlg.showModal();
   } catch (err) {
@@ -1207,7 +1178,7 @@ async function openRebaseDialog(): Promise<void> {
 
 async function submitRebase(): Promise<void> {
   const dlg = $<HTMLDialogElement>('#rebase-dialog');
-  const onto = selectedHash;
+  const onto = rebaseOnto;
   if (!onto) return;
   const items: RebaseTodoItem[] = [];
   $('#rebase-todo')
@@ -1221,6 +1192,7 @@ async function submitRebase(): Promise<void> {
   const status = $('#rebase-status');
   try {
     await api('/rebase-execute', { onto, items });
+    rebaseOnto = null;
     dlg.close();
     await refresh();
   } catch (err) {
@@ -1535,6 +1507,7 @@ $('#rebase-submit').addEventListener('click', (ev) => {
 
 $('#rebase-cancel').addEventListener('click', (ev) => {
   ev.preventDefault();
+  rebaseOnto = null;
   $<HTMLDialogElement>('#rebase-dialog').close();
 });
 
@@ -1867,6 +1840,12 @@ function buildMenu(target: ContextTarget): MenuItem[] {
       items.push({
         label: `Cherry-pick ${short} onto ${currentBranch} (record source -x)`,
         action: () => void cherryPickFromMenu(hash, undefined, true),
+      });
+    }
+    if (INTERACTIVE_REBASE_ENABLED) {
+      items.push({
+        label: `Interactive rebase onto ${short}…`,
+        action: () => void openRebaseDialog(hash),
       });
     }
   }
