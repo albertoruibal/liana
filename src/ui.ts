@@ -975,11 +975,7 @@ $('#btn-theme').addEventListener('click', () => {
 });
 
 $('#btn-about').addEventListener('click', () => {
-  const tab = activeTab();
   $('#about-version').textContent = __APP_VERSION__;
-  const repo = $('#about-repo');
-  repo.textContent = tab ? tab.path : 'No repository open';
-  repo.title = tab ? tab.path : '';
   closeMoreMenu();
   $<HTMLDialogElement>('#about-dialog').showModal();
 });
