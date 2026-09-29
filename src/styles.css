@@ -2113,7 +2113,6 @@ dialog input[type='text'] {
   display: block;
   flex: 0 1 auto;
   padding: 2px 6px;
-  margin-left: -6px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: none;
@@ -2155,6 +2154,7 @@ dialog input[type='text'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-left: -6px;
   padding: 1px 6px;
   border: 1px solid var(--border-soft);
   border-radius: 999px;

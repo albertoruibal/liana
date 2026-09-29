@@ -150,7 +150,7 @@ function renderStatusBar(): void {
   const metaEl = $('#status-meta');
   const tab = activeTab();
 
-  // Current branch (or detached HEAD) of the active tab, shown right of the command.
+  // Current branch (or detached HEAD) of the active tab, shown left of the command.
   const state = tab?.lastResponse?.state;
   const branch = state
     ? state.detachedHead
