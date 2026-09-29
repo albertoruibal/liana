@@ -362,7 +362,10 @@ export function renderGraph(
   const buildOverflow = (row: RefRow): void => {
     const g = document.createElementNS(ns, 'g') as SVGGElement;
     g.setAttribute('class', 'ref-overflow-group');
-    g.style.display = 'none';
+    // Attach before measuring: a detached element has no layout box, so
+    // getComputedTextLength() would fall back to a rough em estimate and the
+    // pills would end up wider than their labels. Hidden once placed.
+    svg.appendChild(g);
     const startX = refX + row.renderedW + CHIP_PAD;
     const built: Chip[] = [];
     for (const ref of row.hidden) {
@@ -405,7 +408,7 @@ export function renderGraph(
     bg.setAttribute('rx', '7');
     bg.setAttribute('class', 'ref-overflow-bg');
     g.insertBefore(bg, g.firstChild);
-    svg.appendChild(g);
+    g.style.display = 'none';
     row.overflow = g;
     row.overflowRight = chipX - CHIP_GAP;
   };
