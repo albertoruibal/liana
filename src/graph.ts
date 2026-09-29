@@ -1,6 +1,6 @@
 // SVG rendering of the commit graph (left pane).
 
-import type { GraphLayout, RefKind, RepoState } from './types';
+import type { GitRef, GraphLayout, RefKind, RepoState } from './types';
 import { REF_ICON_PATHS } from './refs';
 import { isoDate, isoDateTime } from './dates';
 
@@ -14,6 +14,11 @@ const CHIP_H = 21;
 const ICON = 13;
 const ICON_GAP = 5;
 const CHIP_PAD = 8;
+// Chips beyond this many tags in one row collapse into a "+N" badge; the hidden
+// tags are revealed in a floating cluster when the ref column is hovered. Keeps
+// the ref column narrow so the graph lanes stay on screen.
+const MAX_VISIBLE_TAGS = 4;
+const CHIP_GAP = 6;
 // Gap between the lane (graph) area and the commit-text column on the right.
 const COLUMN_GAP = 36;
 // Gap between the ref/tag column on the left and the graph lanes.
@@ -122,10 +127,21 @@ export function renderGraph(
     width: number;
   }
   interface RefRow {
+    row: number;
     cy: number;
+    hash: string;
     chips: Chip[];
+    /** Tags collapsed into the "+N" badge; empty when everything fits. */
+    hidden: GitRef[];
+    /** Width of the visible strip (incl. the "+N" badge) once positioned. */
+    renderedW: number;
+    /** Right x of the floating cluster once built (for hover tracking). */
+    overflowRight: number;
+    /** SVG group holding the hidden tags, built lazily on first reveal. */
+    overflow: SVGGElement | null;
   }
   const refRows: RefRow[] = [];
+  const refRowByRow = new Map<number, RefRow>();
   let maxChipRowW = 0;
 
   for (const n of layout.nodes) {
@@ -134,9 +150,20 @@ export function renderGraph(
     const sorted = [...n.commit.refs].sort((a, b) =>
       a.kind === 'head' ? -1 : b.kind === 'head' ? 1 : 0,
     );
+    // Keep every non-tag ref, plus the first MAX_VISIBLE_TAGS tags; the rest
+    // collapse into the "+N" badge revealed on hover. HEAD sorts first.
+    const hidden: GitRef[] = [];
+    let tagCount = 0;
+    const visible = sorted.filter((ref) => {
+      if (ref.kind !== 'tag') return true;
+      tagCount += 1;
+      if (tagCount <= MAX_VISIBLE_TAGS) return true;
+      hidden.push(ref);
+      return false;
+    });
     const chips: Chip[] = [];
     let rowW = 0;
-    for (const ref of sorted) {
+    for (const ref of visible) {
       const isHead = ref.kind === 'head';
       const icon = createRefIcon(ns, ref.kind);
       if (icon) {
@@ -156,10 +183,33 @@ export function renderGraph(
       const iconW = icon ? ICON + ICON_GAP : 0;
       const width = measureText(text) + CHIP_PAD * 2 + iconW;
       chips.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
-      rowW += width + 6;
+      rowW += width + CHIP_GAP;
     }
-    refRows.push({ cy, chips });
-    maxChipRowW = Math.max(maxChipRowW, rowW - 6);
+    if (hidden.length > 0) {
+      const badge = document.createElementNS(ns, 'text');
+      badge.setAttribute('y', String(cy + 4));
+      badge.setAttribute('text-anchor', 'start');
+      badge.setAttribute('class', 'ref-chip ref-chip-overflow');
+      badge.dataset.hash = n.commit.hash; // commit menu, not a tag menu
+      badge.textContent = `+${hidden.length}`;
+      svg.appendChild(badge);
+      const width = measureText(badge) + CHIP_PAD * 2;
+      chips.push({ text: badge, icon: null, isHead: false, kind: 'overflow', name: '', width });
+      rowW += width + CHIP_GAP;
+    }
+    if (rowW > 0) maxChipRowW = Math.max(maxChipRowW, rowW - CHIP_GAP);
+    const row: RefRow = {
+      row: n.row,
+      cy,
+      hash: n.commit.hash,
+      chips,
+      hidden,
+      renderedW: 0,
+      overflowRight: 0,
+      overflow: null,
+    };
+    refRows.push(row);
+    refRowByRow.set(n.row, row);
   }
 
   // Left column width (chips + padding), 0 when the repo has no refs.
@@ -236,30 +286,65 @@ export function renderGraph(
   for (const row of refRows) {
     let chipX = refX;
     for (const chip of row.chips) {
-      const rect = document.createElementNS(ns, 'rect');
-      rect.setAttribute('x', String(chipX));
-      rect.setAttribute('y', String(row.cy - CHIP_H / 2));
-      rect.setAttribute('width', String(chip.width));
-      rect.setAttribute('height', String(CHIP_H));
-      rect.setAttribute('rx', String(CHIP_H / 2));
-      rect.dataset.kind = chip.kind;
-      rect.dataset.name = chip.name;
-      rect.dataset.hash = chip.text.dataset.hash ?? '';
-      applyChipStyle(rect, chip.kind, chip.isHead);
-      // Insert the pill underneath its icon and text.
-      svg.insertBefore(rect, chip.icon ?? chip.text);
-      const iconX = chipX + CHIP_PAD;
-      const textX = iconX + (chip.icon ? ICON + ICON_GAP : 0);
-      if (chip.icon) {
-        chip.icon.setAttribute(
-          'transform',
-          `translate(${iconX} ${row.cy - ICON / 2})`,
-        );
-      }
-      chip.text.setAttribute('x', String(textX));
-      chipX += chip.width + 6;
+      placeChip(ns, svg, chip, chipX, row.cy);
+      chipX += chip.width + CHIP_GAP;
     }
+    row.renderedW = row.chips.length > 0 ? chipX - CHIP_GAP - refX : 0;
   }
+
+  // Build (once) the floating cluster of tags hidden behind a row's "+N" badge.
+  // Kept out of the layout pass: it is appended on reveal, so it paints above
+  // the edges, row bands, and full-width row hit rectangles.
+  const buildOverflow = (row: RefRow): void => {
+    const g = document.createElementNS(ns, 'g') as SVGGElement;
+    g.setAttribute('class', 'ref-overflow-group');
+    g.style.display = 'none';
+    const startX = refX + row.renderedW + CHIP_PAD;
+    const built: Chip[] = [];
+    for (const ref of row.hidden) {
+      const icon = createRefIcon(ns, ref.kind);
+      if (icon) {
+        icon.dataset.name = ref.name;
+        icon.dataset.hash = row.hash;
+        g.appendChild(icon);
+      }
+      const text = document.createElementNS(ns, 'text');
+      text.setAttribute('y', String(row.cy + 4));
+      text.setAttribute('text-anchor', 'start');
+      text.setAttribute('class', `ref-chip ref-${ref.kind}`);
+      text.dataset.kind = ref.kind;
+      text.dataset.name = ref.name;
+      text.dataset.hash = row.hash;
+      text.textContent = ref.name;
+      g.appendChild(text);
+      const iconW = icon ? ICON + ICON_GAP : 0;
+      built.push({
+        text,
+        icon,
+        isHead: false,
+        kind: ref.kind,
+        name: ref.name,
+        width: measureText(text) + CHIP_PAD * 2 + iconW,
+      });
+    }
+    let chipX = startX;
+    for (const chip of built) {
+      placeChip(ns, g, chip, chipX, row.cy);
+      chipX += chip.width + CHIP_GAP;
+    }
+    // Soft panel behind the cluster so overlapped lanes stay legible.
+    const bg = document.createElementNS(ns, 'rect');
+    bg.setAttribute('x', String(startX - CHIP_PAD / 2));
+    bg.setAttribute('y', String(row.cy - CHIP_H / 2 - 4));
+    bg.setAttribute('width', String(chipX - CHIP_GAP + CHIP_PAD / 2 - startX));
+    bg.setAttribute('height', String(CHIP_H + 8));
+    bg.setAttribute('rx', '7');
+    bg.setAttribute('class', 'ref-overflow-bg');
+    g.insertBefore(bg, g.firstChild);
+    svg.appendChild(g);
+    row.overflow = g;
+    row.overflowRight = chipX - CHIP_GAP;
+  };
 
   // Separators: ref column | lanes | commit text | author.
   const addSep = (sx: number): void => {
@@ -445,8 +530,16 @@ export function renderGraph(
   hoverController?.abort();
   hoverController = new AbortController();
   const signal = hoverController.signal;
+  // The overflow cluster reveals while the pointer is over its row's ref column
+  // (or over the open cluster itself, so a hidden tag can be right-clicked).
+  let openOverflow: RefRow | null = null;
   const hideBand = (): void => {
     hoverBand.setAttribute('visibility', 'hidden');
+  };
+  const hideOverflow = (): void => {
+    if (!openOverflow) return;
+    openOverflow.overflow?.style.setProperty('display', 'none');
+    openOverflow = null;
   };
   svg.addEventListener(
     'pointermove',
@@ -454,20 +547,81 @@ export function renderGraph(
       // Map the cursor to a row in the SVG's own (untransformed) coordinates.
       const box = svg.getBoundingClientRect();
       const svgH = Number(svg.getAttribute('height')) || 1;
-      const localY = (ev.clientY - box.top) / (box.height / svgH);
+      const svgW = Number(svg.getAttribute('width')) || 1;
+      const scale = box.height / svgH;
+      const localY = (ev.clientY - box.top) / scale;
+      const localX = (ev.clientX - box.left) / (box.width / svgW);
       const row = Math.round((localY - TOP_PAD) / ROW_H);
       if (row < 0 || row >= layout.nodes.length) {
         hideBand();
+        hideOverflow();
         return;
       }
       hoverBand.setAttribute('y', String(y(row) - ROW_H / 2));
       hoverBand.setAttribute('visibility', 'visible');
+
+      // The cluster is only shown over the ref column; once open it stays open
+      // across its whole width so a hidden tag can be reached and right-clicked.
+      const target = refRowByRow.get(row);
+      const overCluster =
+        openOverflow !== null &&
+        openOverflow.row === row &&
+        localX <= openOverflow.overflowRight + 8;
+      const inRefBand = localX >= refX - CHIP_PAD && localX <= laneLeft - REF_GAP / 2;
+      if (target && target.hidden.length > 0 && (inRefBand || overCluster)) {
+        if (openOverflow !== target) {
+          hideOverflow();
+          if (!target.overflow) buildOverflow(target);
+          target.overflow?.style.setProperty('display', '');
+          openOverflow = target;
+        }
+      } else {
+        hideOverflow();
+      }
     },
     { signal },
   );
-  svg.addEventListener('pointerleave', hideBand, { signal });
+  const onLeave = (): void => {
+    hideBand();
+    hideOverflow();
+  };
+  svg.addEventListener('pointerleave', onLeave, { signal });
 
   return { refX, lanesX: laneLeft, authorX, subjectX, dateX, hashX, totalW: width };
+}
+
+/**
+ * Draw one chip (pill + optional icon + label) into `root`, left edge at `x`,
+ * vertically centered on `cy`. Shared by the visible strip and the overflow
+ * cluster, which lives in its own `<g>`.
+ */
+function placeChip(
+  ns: string,
+  root: SVGElement,
+  chip: { text: SVGTextElement; icon: SVGGElement | null; isHead: boolean; kind: string; name: string; width: number },
+  x: number,
+  cy: number,
+): void {
+  const rect = document.createElementNS(ns, 'rect') as SVGRectElement;
+  rect.setAttribute('x', String(x));
+  rect.setAttribute('y', String(cy - CHIP_H / 2));
+  rect.setAttribute('width', String(chip.width));
+  rect.setAttribute('height', String(CHIP_H));
+  rect.setAttribute('rx', String(CHIP_H / 2));
+  if (chip.kind !== 'overflow') {
+    rect.dataset.kind = chip.kind;
+    rect.dataset.name = chip.name;
+  }
+  rect.dataset.hash = chip.text.dataset.hash ?? '';
+  applyChipStyle(rect, chip.kind, chip.isHead);
+  // Insert the pill underneath its icon and text.
+  root.insertBefore(rect, chip.icon ?? chip.text);
+  const iconX = x + CHIP_PAD;
+  const textX = iconX + (chip.icon ? ICON + ICON_GAP : 0);
+  if (chip.icon) {
+    chip.icon.setAttribute('transform', `translate(${iconX} ${cy - ICON / 2})`);
+  }
+  chip.text.setAttribute('x', String(textX));
 }
 
 /** Build the small kind icon that sits at the left of a ref chip. */
@@ -497,6 +651,7 @@ function applyChipStyle(rect: SVGElement, kind: string, isHead: boolean): void {
     remote: '34, 211, 238',
     tag: '251, 191, 36',
     stash: '244, 114, 182',
+    overflow: '164, 157, 192',
   };
   const rgb = tones[kind] ?? '164, 157, 192';
   rect.setAttribute('fill', `rgba(${rgb}, 0.12)`);

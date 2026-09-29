@@ -807,6 +807,21 @@ main {
   fill: var(--accent-contrast);
 }
 
+/* "+N" badge that collapses a row's excess tags. */
+.ref-chip.ref-chip-overflow {
+  font-weight: 700;
+  fill: var(--fg-dim);
+}
+
+/* Floating cluster of tags revealed by hovering a row's ref column. */
+.ref-overflow-bg {
+  fill: var(--bg-elev-2);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35));
+}
+
 /* Kind icon inside a graph ref chip; stroke follows the chip's tone. */
 .ref-chip-icon {
   fill: none;
