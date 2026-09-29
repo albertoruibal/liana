@@ -57,7 +57,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/repos` | GET | — | Repositories known to the server: `[{id, path, name}]` |
 | `/api/open` | POST | `{path}` | Validate a local repo and register it (idempotent); returns `{id, path, name}` |
 | `/api/state` | GET | — | Repo state, commits (date-order, first 500), status |
-| `/api/activity` | GET | — | Git commands for this repo: `{running, last, active}` (running command or the most recent one) |
+| `/api/activity` | GET | — | Git commands for this repo: `{running, last, active, history}` (running command, most recent user action, and the last 10 user commands) |
 | `/api/commit` | POST | `{message, files[]}` | `git commit` of the listed paths; stages selected files and unstages already-staged files that aren't listed |
 | `/api/rebase` | POST | `{onto}` | Rebase current branch onto a branch or commit hash (409 if dirty) |
 | `/api/merge` | POST | `{ref}` | Merge a branch or commit into the checked-out branch (`git merge --no-edit`, 409 if dirty) |
@@ -120,7 +120,11 @@ the active tab (with a spinner) and, when idle, the most recently finished comma
 with its duration or exit code. The backend records every spawned command per
 repository, so even commands that don't back a UI action (background state loads)
 appear there; the UI polls `/api/activity` (fast while something runs, slowly when
-idle).
+idle). Idle, the bar prefers the last user-initiated command (push, commit, rebase,
+checkout, stash, reset, …) over the background reads a refresh triggers, so a push
+isn't buried by the `git show` that follows it. Clicking the bar opens a popover of
+the last 10 user-initiated commands (failed ones in red); clicking an entry copies
+its command line.
 
 ## Run
 

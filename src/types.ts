@@ -167,14 +167,18 @@ export interface GitCommandRecord {
   finishedAt: number | null;
   /** True when the command failed (nonzero exit or failed to spawn). */
   failed: boolean;
+  /** True for user-driven commands (push, commit, …) vs background reads (log, show, …). */
+  userInitiated: boolean;
 }
 
 /** Current git activity for one repository, for the status bar. */
 export interface RepoActivity {
   /** Most recently started command still running, or null when idle. */
   running: GitCommandRecord | null;
-  /** Most recently finished command, or null when none has run yet. */
+  /** Most recent user action, or the last finished command when none has run. */
   last: GitCommandRecord | null;
   /** Number of git processes currently running for this repository. */
   active: number;
+  /** The last 10 user-initiated commands, most recent first. */
+  history: GitCommandRecord[];
 }

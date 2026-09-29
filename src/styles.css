@@ -2109,6 +2109,29 @@ dialog input[type='text'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* It's a button: undo the generic button chrome and read as plain text. */
+  display: block;
+  flex: 0 1 auto;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#status-command:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+}
+
+#status-command:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--ring);
 }
 
 #status-bar.is-running #status-command {
@@ -2124,6 +2147,47 @@ dialog input[type='text'] {
   margin-left: auto;
   color: var(--fg-faint);
   font-size: 11px;
+}
+
+/* Popover listing the recent user-initiated git commands. */
+.status-history {
+  max-width: min(640px, 92vw);
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.status-history .status-history-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.status-history .status-history-item code {
+  display: block;
+  max-width: 100%;
+  background: none;
+  padding: 0;
+  color: var(--fg);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-history .status-history-item .status-history-meta {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.status-history .status-history-item.is-failed code {
+  color: var(--danger);
+}
+
+.status-history .status-history-empty {
+  padding: 8px 10px;
+  color: var(--fg-dim);
+  font-size: 12.5px;
 }
 
 .status-spinner {

@@ -77,6 +77,7 @@ function loadTab(tab: RepoTab): void {
   currentLayout = null;
   // The cached activity belongs to the previously active tab.
   activity = null;
+  closeStatusHistory();
   applyTransform();
   renderTabs();
   renderStatusBar();
@@ -185,6 +186,8 @@ async function refreshActivity(): Promise<void> {
     if (activeId !== reqId) return;
     activity = next;
     renderStatusBar();
+    // Keep an open popover live as commands start and finish.
+    if (!statusHistory.hidden) renderStatusHistory();
   } catch {
     // Transient (e.g. dev-server restart); keep the previous snapshot.
   }
@@ -203,6 +206,63 @@ function scheduleActivityPoll(): void {
     void refreshActivity().finally(scheduleActivityPoll);
   }, delay);
 }
+
+const statusHistory = $('#status-history');
+
+function closeStatusHistory(): void {
+  if (statusHistory.hidden) return;
+  statusHistory.hidden = true;
+  $('#status-command').setAttribute('aria-expanded', 'false');
+}
+
+/** Render the recent-commands popover from the current activity snapshot. */
+function renderStatusHistory(): void {
+  statusHistory.replaceChildren();
+  const entries = activity?.history ?? [];
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'status-history-empty';
+    empty.textContent = 'No commands yet';
+    statusHistory.appendChild(empty);
+    return;
+  }
+  for (const cmd of entries) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `status-history-item${cmd.failed ? ' is-failed' : ''}`;
+    btn.title = `Copy: ${cmd.display}`;
+    const code = document.createElement('code');
+    code.textContent = cmd.display;
+    const meta = document.createElement('span');
+    meta.className = 'status-history-meta';
+    meta.textContent = commandMeta(cmd);
+    btn.append(code, meta);
+    btn.addEventListener('click', () => {
+      closeStatusHistory();
+      void copyToClipboard(cmd.display);
+    });
+    statusHistory.appendChild(btn);
+  }
+}
+
+/** Toggle the recent-commands popover, anchored above the status bar. */
+function toggleStatusHistory(): void {
+  if (!statusHistory.hidden) {
+    closeStatusHistory();
+    return;
+  }
+  renderStatusHistory();
+  const bar = $('#status-bar').getBoundingClientRect();
+  statusHistory.hidden = false;
+  $('#status-command').setAttribute('aria-expanded', 'true');
+  // Grow upward from the bar; the popover width is capped by CSS.
+  statusHistory.style.bottom = `${window.innerHeight - bar.top + 6}px`;
+  statusHistory.style.top = 'auto';
+  statusHistory.style.right = `${Math.max(8, window.innerWidth - bar.right + 10)}px`;
+  statusHistory.style.left = 'auto';
+}
+
+$('#status-command').addEventListener('click', () => toggleStatusHistory());
 
 // --- Rendering ---
 
@@ -1356,10 +1416,18 @@ document.addEventListener('pointerdown', (ev) => {
   if (!themeMenu.hidden && !themeMenu.contains(ev.target as Node) && !$('#btn-theme').contains(ev.target as Node)) {
     closeThemeMenu();
   }
+  if (
+    !statusHistory.hidden &&
+    !statusHistory.contains(ev.target as Node) &&
+    !$('#status-command').contains(ev.target as Node)
+  ) {
+    closeStatusHistory();
+  }
 });
 window.addEventListener('resize', () => {
   closeMoreMenu();
   closeThemeMenu();
+  closeStatusHistory();
 });
 
 // --- Wire up static UI ---
@@ -2050,6 +2118,10 @@ document.addEventListener('keydown', (ev) => {
   }
   if (!moreMenu.hidden) {
     closeMoreMenu();
+    return;
+  }
+  if (!statusHistory.hidden) {
+    closeStatusHistory();
     return;
   }
   if (!contextMenu.hidden) {

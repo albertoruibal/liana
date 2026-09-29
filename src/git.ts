@@ -39,26 +39,78 @@ export class GitError extends Error {
 interface ActivityState {
   running: GitCommandRecord[];
   last: GitCommandRecord | null;
+  history: GitCommandRecord[];
 }
 
 const activity = new Map<string, ActivityState>();
 
+/** How many user-initiated commands to keep for the status-bar history popover. */
+const HISTORY_LIMIT = 10;
+
 function activityFor(repoPath: string): ActivityState {
   let state = activity.get(repoPath);
   if (!state) {
-    state = { running: [], last: null };
+    state = { running: [], last: null, history: [] };
     activity.set(repoPath, state);
   }
   return state;
 }
 
+/**
+ * The git subcommand, skipping global options like `-c key=value` so that
+ * `-c core.editor=true rebase -i …` classifies as `rebase`.
+ */
+function gitSubcommand(args: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === undefined) break;
+    if (arg === '-c' || arg === '-C') {
+      i++;
+      continue;
+    }
+    if (arg.startsWith('-')) continue;
+    return arg;
+  }
+  return '';
+}
+
+/** Read-only / plumbing subcommands that should never appear as a user action. */
+const READ_SUBCOMMANDS = new Set([
+  'log',
+  'show',
+  'status',
+  'rev-parse',
+  'rev-list',
+  'for-each-ref',
+  'show-ref',
+  'config',
+  'remote',
+  'ls-files',
+  'cat-file',
+  'diff',
+  'merge-base',
+  'symbolic-ref',
+]);
+
+/** True for user commands (push, commit, …) vs background reads (log, show, …). */
+function isUserInitiated(args: string[]): boolean {
+  const cmd = gitSubcommand(args);
+  if (!cmd || READ_SUBCOMMANDS.has(cmd)) return false;
+  if (cmd === 'add' || cmd === 'rm') return false;
+  if (cmd === 'stash' && args.includes('list')) return false;
+  if (cmd === 'reset' && args.includes('--')) return false;
+  return true;
+}
+
 /** Snapshot of one repository's git activity (mirrors `repoActivity` in src/api.ts). */
 export function repoActivity(repoPath: string): RepoActivity {
   const state = activityFor(repoPath);
+  const runningUser = [...state.running].reverse().find((r) => r.userInitiated);
   return {
-    running: state.running[state.running.length - 1] ?? null,
-    last: state.last,
+    running: runningUser ?? state.running[state.running.length - 1] ?? null,
+    last: state.history[0] ?? state.last,
     active: state.running.length,
+    history: state.history,
   };
 }
 
@@ -86,6 +138,7 @@ export function git(
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<string> {
   const state = activityFor(repoPath);
+  const userInitiated = isUserInitiated(args);
   const record: GitCommandRecord = {
     argv: args,
     display: formatCommand(args),
@@ -95,6 +148,7 @@ export function git(
     startedAt: Date.now(),
     finishedAt: null,
     failed: false,
+    userInitiated,
   };
   state.running.push(record);
 
@@ -106,6 +160,10 @@ export function git(
     record.finishedAt = Date.now();
     record.durationMs = record.finishedAt - record.startedAt;
     state.last = record;
+    if (record.userInitiated) {
+      state.history.unshift(record);
+      if (state.history.length > HISTORY_LIMIT) state.history.length = HISTORY_LIMIT;
+    }
   };
 
   return new Promise((resolve, reject) => {
