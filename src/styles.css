@@ -1271,6 +1271,11 @@ button.file-row .file-stats {
   white-space: pre;
 }
 
+.dl-note {
+  padding: 12px;
+  color: var(--fg-faint);
+}
+
 /* Side-by-side rows */
 .dl-split-row {
   display: grid;

@@ -108,7 +108,13 @@ export function pairHunk(hunk: DiffHunk): SplitRow[] {
     const adds: DiffLine[] = [];
     while (i < lines.length) {
       const cur = lines[i];
-      if (!cur || (cur.kind !== 'add' && cur.kind !== 'del')) break;
+      if (!cur) break;
+      // Skip "no newline" markers so a delete/add pair separated by one still aligns.
+      if (cur.kind === 'nonewline') {
+        i++;
+        continue;
+      }
+      if (cur.kind !== 'add' && cur.kind !== 'del') break;
       if (cur.kind === 'del') dels.push(cur);
       else adds.push(cur);
       i++;

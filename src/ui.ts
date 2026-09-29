@@ -175,10 +175,10 @@ function renderUnified(sections: DiffSection[]): string {
 }
 
 /** One cell of the split view: line number + text, or a blank filler. */
-function splitCell(line: DiffLine | null, kindClass: string): string {
-  if (!line) return `<div class="dl-cell dl-empty ${kindClass}"></div>`;
-  const no = line.newNo ?? line.oldNo;
-  return `<div class="dl-cell ${kindClass}">${gutter(no)}<span class="dl-text">${esc(line.text)}</span></div>`;
+function splitCell(line: DiffLine | null, side: 'old' | 'new'): string {
+  if (!line) return '<div class="dl-cell dl-empty"></div>';
+  const no = side === 'old' ? line.oldNo : line.newNo;
+  return `<div class="dl-cell dl-${line.kind}">${gutter(no)}<span class="dl-text">${esc(line.text)}</span></div>`;
 }
 
 /** Render parsed diff sections as a two-column (old | new) view. */
@@ -193,7 +193,7 @@ function renderSplit(sections: DiffSection[]): string {
       const pairs: SplitRow[] = pairHunk(hunk);
       for (const [left, right] of pairs) {
         rows.push(
-          `<div class="dl-split-row">${splitCell(left, left ? `dl-${left.kind}` : '')}${splitCell(right, right ? `dl-${right.kind}` : '')}</div>`,
+          `<div class="dl-split-row">${splitCell(left, 'old')}${splitCell(right, 'new')}</div>`,
         );
       }
     }
@@ -203,9 +203,8 @@ function renderSplit(sections: DiffSection[]): string {
 
 /** Render the dialog body for the given layout. */
 function renderDiffBody(patch: string, view: DiffView): string {
-  if (!patch) return '<div class="dl-meta">No textual diff.</div>';
-  const sections = parsePatch(patch);
-  if (sections.length === 0) return '<div class="dl-meta">No textual diff.</div>';
+  const sections = patch ? parsePatch(patch) : [];
+  if (sections.length === 0) return '<div class="dl-note">No textual diff.</div>';
   return view === 'split' ? renderSplit(sections) : renderUnified(sections);
 }
 
