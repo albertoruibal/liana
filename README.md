@@ -140,9 +140,12 @@ npm run electron:dist                    # -> release/Liana-0.1.0.AppImage, lian
 ```
 
 In dev the Electron window simply loads `http://localhost:5173`, so the Vite plugin
-still serves `/api`. Packaged builds start a loopback server on `127.0.0.1` (ephemeral
-port) that serves the built UI and the same API; API requests carry a per-launch
-`x-liana-token` header so other local processes cannot drive git, and the server binds
+still serves `/api`. Packaged builds start a loopback server on `127.0.0.1` with a
+fixed preferred port (54262, falling back to nearby ports or an ephemeral one when
+taken) that serves the built UI and the same API. The stable origin is what lets
+the UI's localStorage — open repository tabs, theme, layout prefs — survive app
+restarts. API requests carry a per-launch `x-liana-token` header so other local
+processes cannot drive git, and the server binds
 to loopback only. On a GUI launch the app augments `PATH` with common install locations
 so it can find `git`.
 

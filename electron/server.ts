@@ -1,7 +1,7 @@
 // Packaged-mode backend: a loopback HTTP server that serves the built UI (`dist/`)
 // and routes `/api/*` into the shared git API (`src/api.ts`).
-// Bound to 127.0.0.1 on an ephemeral port; API calls require a per-launch token
-// so other local processes cannot drive git through this server.
+// Bound to 127.0.0.1 on a fixed preferred port (ephemeral fallback); API calls
+// require a per-launch token so other local processes cannot drive git through this server.
 
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -16,6 +16,11 @@ export interface ServerOptions {
   staticDir: string;
   /** Secret required in the `x-liana-token` header on /api requests. */
   token: string;
+  /**
+   * Preferred port. Binding it keeps the renderer's origin — and with it
+   * localStorage (open tabs, theme, layout prefs) — stable across launches.
+   */
+  port?: number | null;
 }
 
 export interface RunningServer {
@@ -78,7 +83,31 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-export function startServer(opts: ServerOptions): Promise<RunningServer> {
+/**
+ * Bind `127.0.0.1` on the preferred port, falling back to nearby ports and
+ * finally an ephemeral one when the preferred port is occupied (origin changes,
+ * so persisted UI state is lost for that session — but the app still works).
+ */
+async function listenOn(server: http.Server, preferred: number | null): Promise<number> {
+  const candidates =
+    preferred !== null ? [preferred, preferred + 1, preferred + 2, preferred + 3, 0] : [0];
+  for (const port of candidates) {
+    try {
+      return await new Promise<number>((resolve, reject) => {
+        server.listen(port, '127.0.0.1', () => {
+          const addr = server.address();
+          resolve(typeof addr === 'object' && addr !== null ? addr.port : port);
+        });
+        server.once('error', reject);
+      });
+    } catch {
+      // port taken — try the next candidate
+    }
+  }
+  throw new Error('could not bind loopback server');
+}
+
+export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const api = createApi(opts.defaultRepo);
   const root = path.resolve(opts.staticDir);
 
@@ -108,18 +137,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     serveStatic(res, root, urlPath);
   });
 
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
-      resolve({
-        port,
-        close: () =>
-          new Promise<void>((done) => {
-            server.close(() => done());
-          }),
-      });
-    });
-  });
+  const port = await listenOn(server, opts.port ?? null);
+  return {
+    port,
+    close: () =>
+      new Promise<void>((done) => {
+        server.close(() => done());
+      }),
+  };
 }

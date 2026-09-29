@@ -22,7 +22,8 @@ server (`electron/server.ts`) in the packaged app.
   README.md. For visual checks use headless Chromium
   (`chromium --headless=new --screenshot=... http://localhost:5173/`). For the
   packaged app, run the binary under Xvfb and inspect it via `--remote-debugging-port`
-  (CDP) — the loopback port is ephemeral and API calls need the `x-liana-token` header.
+  (CDP) — the loopback port is fixed (54262, with fallbacks) and API calls need
+  the `x-liana-token` header.
 
 ## Non-negotiables
 

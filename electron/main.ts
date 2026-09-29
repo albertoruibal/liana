@@ -19,6 +19,15 @@ import { startServer, type RunningServer } from './server';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.LIANA_DEV_URL ?? 'http://localhost:5173';
 
+/**
+ * Fixed preferred loopback port for the packaged app. Binding it keeps the
+ * renderer's origin stable across launches, which is what lets localStorage
+ * (open repository tabs, theme, layout prefs) survive a restart. If another
+ * process occupies it, nearby ports and finally an ephemeral one are tried;
+ * the app still works, but persisted state is unavailable that session.
+ */
+const PREFERRED_PORT = 54262;
+
 /** App/window icon, shipped in the asar root (build/icon.png). */
 const ICON_PATH = path.join(app.getAppPath(), 'build', 'icon.png');
 
@@ -139,6 +148,7 @@ async function bootstrap(): Promise<void> {
       defaultRepo,
       staticDir: path.join(app.getAppPath(), 'dist'),
       token,
+      port: PREFERRED_PORT,
     });
     await win.loadURL(`http://127.0.0.1:${server.port}/?lianaToken=${token}`);
   } else {
