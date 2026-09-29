@@ -243,6 +243,17 @@
       </menu>
     </dialog>
 
+    <dialog id="sync-dialog" class="sync-dialog">
+      <div class="dialog-head">
+        <h3 id="sync-title">Working…</h3>
+        <p class="muted hint" id="sync-detail"></p>
+      </div>
+      <div class="sync-progress" role="status" aria-live="polite" aria-busy="true">
+        <span class="sync-spinner" aria-hidden="true"></span>
+        <span id="sync-message">Talking to the remote — waiting for git…</span>
+      </div>
+    </dialog>
+
     <dialog id="diff-dialog">
       <div class="dialog-head">
         <h3 id="diff-title">File diff</h3>

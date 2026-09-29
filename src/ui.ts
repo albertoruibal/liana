@@ -952,13 +952,37 @@ function updateSyncButtons(): void {
   pull.title = rs.upstream ? `Pull ${rs.upstream} into ${branch}` : 'Push first to set an upstream';
 }
 
+/** Show the modal progress dialog while a network git action is in flight. */
+function openSyncDialog(title: string, detail: string): void {
+  const dlg = $<HTMLDialogElement>('#sync-dialog');
+  $('#sync-title').textContent = title;
+  $('#sync-detail').textContent = detail;
+  if (!dlg.open) dlg.showModal();
+}
+
+function closeSyncDialog(): void {
+  const dlg = $<HTMLDialogElement>('#sync-dialog');
+  if (dlg.open) dlg.close();
+}
+
+// The git process keeps running regardless, so Escape must not dismiss the
+// progress dialog and leave the user without feedback.
+$('#sync-dialog').addEventListener('cancel', (ev) => ev.preventDefault());
+
 /** Run a network git action, surfacing git's error and reloading on success. */
 async function runSync(route: '/push' | '/pull', body: unknown): Promise<void> {
+  const rs = remoteStatus;
+  if (route === '/pull') {
+    const detail = rs?.upstream ? `${rs.upstream} into ${rs.currentBranch ?? 'HEAD'}` : '';
+    openSyncDialog('Pulling…', detail);
+  }
   try {
     await api(route, body);
     await refresh();
   } catch (err) {
     alert(`${route === '/push' ? 'Push' : 'Pull'} failed:\n${String(err)}`);
+  } finally {
+    closeSyncDialog();
   }
 }
 
@@ -979,14 +1003,23 @@ async function doPush(force = false): Promise<void> {
     remote = (await pickRemote('Push to which remote?')) ?? undefined;
     if (!remote) return;
   }
+  const branch = rs.currentBranch ?? 'HEAD';
+  const dest = remote ?? rs.upstream ?? 'a new upstream';
+  openSyncDialog(
+    force ? 'Force-pushing…' : 'Pushing…',
+    `${branch} → ${dest}${rs.upstream ? '' : ' (setting upstream)'}`,
+  );
   try {
     await api('/push', { remote, force });
     await refresh();
+    closeSyncDialog();
   } catch (err) {
+    // Close before the retry prompt / alert so they aren't stacked behind the spinner.
+    closeSyncDialog();
     const message = String(err);
     if (!force && /non-fast-forward|\[rejected\]|fetch first/i.test(message)) {
-      const branch = rs.currentBranch ?? 'this branch';
-      if (confirm(`Push rejected: the remote has commits you don't have.\n\nForce-push ${branch} with --force-with-lease?`)) {
+      const branchName = rs.currentBranch ?? 'this branch';
+      if (confirm(`Push rejected: the remote has commits you don't have.\n\nForce-push ${branchName} with --force-with-lease?`)) {
         await doPush(true);
       }
       return;
