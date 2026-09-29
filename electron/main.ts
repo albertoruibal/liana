@@ -9,6 +9,8 @@
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron';
 import path from 'node:path';
+import { homedir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -29,6 +31,53 @@ const WINDOW_ICON_SIZE = 192;
 // Wayland resolves the dock/taskbar icon by matching the window's app_id to an
 // installed .desktop file. Must be called before the `ready` event.
 if (process.platform === 'linux') app.setDesktopName('dev.liana.app');
+
+/**
+ * Running a bare AppImage installs nothing, so on Wayland (which has no
+ * per-window icon protocol) GNOME cannot match the window's app_id
+ * (`dev.liana.app`) to a .desktop entry and draws a generic icon. Register a
+ * per-user entry + themed icon on first run, pointing at the AppImage path.
+ * No-op unless launched as an AppImage; failures never block startup.
+ */
+function integrateAppImage(): void {
+  if (process.platform !== 'linux') return;
+  const appImage = process.env.APPIMAGE;
+  const appDir = process.env.APPDIR;
+  if (!appImage || !appDir) return; // not an AppImage launch
+
+  try {
+    const dataHome = process.env.XDG_DATA_HOME || path.join(homedir(), '.local', 'share');
+    const iconDir = path.join(dataHome, 'icons', 'hicolor', '512x512', 'apps');
+    const appsDir = path.join(dataHome, 'applications');
+    const iconSrc = path.join(appDir, 'usr', 'share', 'icons', 'hicolor', '512x512', 'apps', 'liana.png');
+    if (!existsSync(iconSrc)) return;
+
+    mkdirSync(iconDir, { recursive: true });
+    mkdirSync(appsDir, { recursive: true });
+    writeFileSync(path.join(iconDir, 'liana.png'), readFileSync(iconSrc));
+
+    const desktop = [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=Liana',
+      'Comment=Minimal git graph GUI',
+      `Exec="${appImage}" --no-sandbox %U`,
+      'Icon=liana',
+      'Terminal=false',
+      'Categories=Development;',
+      'StartupWMClass=dev.liana.app',
+      '',
+    ].join('\n');
+    writeFileSync(path.join(appsDir, 'dev.liana.app.desktop'), desktop);
+
+    // Refresh the icon cache so the new entry is picked up promptly.
+    spawnSync('gtk-update-icon-cache', ['-f', '-t', path.join(dataHome, 'icons', 'hicolor')], {
+      stdio: 'ignore',
+    });
+  } catch {
+    // best-effort: a missing dock icon must never block the app
+  }
+}
 
 let server: RunningServer | null = null;
 let token = '';
@@ -80,6 +129,7 @@ function createWindow(): BrowserWindow {
 
 async function bootstrap(): Promise<void> {
   ensureGitOnPath();
+  integrateAppImage();
   const win = createWindow();
 
   if (app.isPackaged) {
