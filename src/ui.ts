@@ -255,11 +255,11 @@ function toggleStatusHistory(): void {
   const bar = $('#status-bar').getBoundingClientRect();
   statusHistory.hidden = false;
   $('#status-command').setAttribute('aria-expanded', 'true');
-  // Grow upward from the bar; the popover width is capped by CSS.
+  // Grow upward from the bar's left edge; the popover width is capped by CSS.
   statusHistory.style.bottom = `${window.innerHeight - bar.top + 6}px`;
   statusHistory.style.top = 'auto';
-  statusHistory.style.right = `${Math.max(8, window.innerWidth - bar.right + 10)}px`;
-  statusHistory.style.left = 'auto';
+  statusHistory.style.left = `${Math.max(8, bar.left + 10)}px`;
+  statusHistory.style.right = 'auto';
 }
 
 $('#status-command').addEventListener('click', () => toggleStatusHistory());
