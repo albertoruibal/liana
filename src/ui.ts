@@ -787,6 +787,7 @@ const THEMES: ThemeDef[] = [
   { id: 'nord', label: 'Nord', swatch: ['#88c0d0', '#81a1c1'], dark: true },
   { id: 'gruvbox', label: 'Gruvbox', swatch: ['#d79921', '#b8bb26'], dark: true },
   { id: 'solarized', label: 'Solarized', swatch: ['#268bd2', '#2aa198'], dark: true },
+  { id: 'phosphor', label: 'Phosphor', swatch: ['#35ff6d', '#7dffb0'], dark: true },
   { id: 'light', label: 'Light', swatch: ['#7c3aed', '#0891b2'], dark: false },
 ];
 
