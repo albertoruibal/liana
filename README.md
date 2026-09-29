@@ -98,6 +98,13 @@ to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag
 chip (in the graph or the detail pane) to check it out, or delete it. Deleting a
 remote branch runs `git push <remote> --delete`.
 
+Select a commit to list its changed files; click a file to open its diff in a
+dialog with line-number gutters and add/delete row shading. A **Unified / Split**
+toggle switches between a single-column and a side-by-side layout, and the choice
+is remembered in `localStorage`. Diffs are read from the commit via
+`git show --first-parent`, so merge commits show the changes they introduce
+against their mainline parent.
+
 ## Run
 
 ```bash

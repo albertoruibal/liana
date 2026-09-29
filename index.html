@@ -248,11 +248,17 @@
     </dialog>
 
     <dialog id="diff-dialog">
-      <div class="dialog-head">
-        <h3 id="diff-title">File diff</h3>
-        <p class="muted hint" id="diff-subtitle"></p>
+      <div class="dialog-head diff-head">
+        <div>
+          <h3 id="diff-title">File diff</h3>
+          <p class="muted hint" id="diff-subtitle"></p>
+        </div>
+        <div class="diff-view-toggle" role="group" aria-label="Diff layout">
+          <button type="button" class="diff-view-btn" data-view="unified">Unified</button>
+          <button type="button" class="diff-view-btn" data-view="split">Split</button>
+        </div>
       </div>
-      <pre id="diff-body" class="diff-patch"></pre>
+      <div id="diff-body" class="diff-body"></div>
       <div id="diff-status" class="dialog-status"></div>
       <menu>
         <button class="btn btn-primary" id="diff-close" value="cancel">Close</button>

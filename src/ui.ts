@@ -1,6 +1,7 @@
 // UI entry: wires the graph pane, detail pane, toolbar actions, and dialogs.
 
 import { layoutGraph } from './layout';
+import { parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow } from './diff';
 import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphMetrics } from './graph';
 import { refIconHtml, refLabel } from './refs';
 import { isoDate, isoDateTime } from './dates';
@@ -144,19 +145,68 @@ function statusClass(ch: string): string {
   }
 }
 
-/** Colourise a unified diff without trusting its content as HTML. */
-function formatPatch(patch: string): string {
-  return patch
-    .split('\n')
-    .map((line) => {
-      if (/^(diff --git |index |--- |\+\+\+ |@@ |new file|deleted file|similarity index|rename from|rename to|copy from|copy to|old mode|new mode|Binary files|GIT binary patch|literal |delta )/.test(line)) {
-        return `<span class="dph-meta">${esc(line)}</span>`;
+/** Right-aligned line-number cell, empty when the side has no line. */
+function gutter(no: number | null): string {
+  return `<span class="dl-no">${no ?? ''}</span>`;
+}
+
+/** Render parsed diff sections as a unified (single-column) table. */
+function renderUnified(sections: DiffSection[]): string {
+  const rows: string[] = [];
+  for (const section of sections) {
+    for (const line of section.meta) {
+      rows.push(`<div class="dl-row dl-meta">${esc(line.text)}</div>`);
+    }
+    for (const hunk of section.hunks) {
+      rows.push(`<div class="dl-row dl-hunk">${esc(hunk.header)}</div>`);
+      for (const line of hunk.lines) {
+        if (line.kind === 'nonewline') {
+          rows.push(`<div class="dl-row dl-nonewline">${esc(line.text)}</div>`);
+          continue;
+        }
+        const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+        rows.push(
+          `<div class="dl-row dl-${line.kind}">${gutter(line.oldNo)}${gutter(line.newNo)}<span class="dl-sign">${sign}</span><span class="dl-text">${esc(line.text)}</span></div>`,
+        );
       }
-      if (line.startsWith('+')) return `<span class="dph-add">${esc(line)}</span>`;
-      if (line.startsWith('-')) return `<span class="dph-del">${esc(line)}</span>`;
-      return `<span class="dph-ctx">${esc(line)}</span>`;
-    })
-    .join('\n');
+    }
+  }
+  return rows.join('');
+}
+
+/** One cell of the split view: line number + text, or a blank filler. */
+function splitCell(line: DiffLine | null, kindClass: string): string {
+  if (!line) return `<div class="dl-cell dl-empty ${kindClass}"></div>`;
+  const no = line.newNo ?? line.oldNo;
+  return `<div class="dl-cell ${kindClass}">${gutter(no)}<span class="dl-text">${esc(line.text)}</span></div>`;
+}
+
+/** Render parsed diff sections as a two-column (old | new) view. */
+function renderSplit(sections: DiffSection[]): string {
+  const rows: string[] = [];
+  for (const section of sections) {
+    for (const line of section.meta) {
+      rows.push(`<div class="dl-meta split-meta">${esc(line.text)}</div>`);
+    }
+    for (const hunk of section.hunks) {
+      rows.push(`<div class="dl-hunk split-meta">${esc(hunk.header)}</div>`);
+      const pairs: SplitRow[] = pairHunk(hunk);
+      for (const [left, right] of pairs) {
+        rows.push(
+          `<div class="dl-split-row">${splitCell(left, left ? `dl-${left.kind}` : '')}${splitCell(right, right ? `dl-${right.kind}` : '')}</div>`,
+        );
+      }
+    }
+  }
+  return rows.join('');
+}
+
+/** Render the dialog body for the given layout. */
+function renderDiffBody(patch: string, view: DiffView): string {
+  if (!patch) return '<div class="dl-meta">No textual diff.</div>';
+  const sections = parsePatch(patch);
+  if (sections.length === 0) return '<div class="dl-meta">No textual diff.</div>';
+  return view === 'split' ? renderSplit(sections) : renderUnified(sections);
 }
 
 /** `+N − M` line counts for a changed file, or a binary marker. */
@@ -371,17 +421,40 @@ async function loadCommitFiles(hash: string): Promise<void> {
   }
 }
 
+/** Diff layout preference for the modal viewer. */
+type DiffView = 'unified' | 'split';
+const DIFF_VIEW_KEY = 'liana-diff-view';
+
+function readDiffView(): DiffView {
+  return localStorage.getItem(DIFF_VIEW_KEY) === 'split' ? 'split' : 'unified';
+}
+
+/** Cached patch for the currently open file, so toggling layout needn't refetch. */
+let diffPatch = '';
+let diffView: DiffView = 'unified';
+
+/** Repaint the open dialog body and sync the toggle's active state. */
+function renderDiffDialog(): void {
+  $<HTMLDivElement>('#diff-body').innerHTML = renderDiffBody(diffPatch, diffView);
+  document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((b) => {
+    b.classList.toggle('is-active', b.dataset.view === diffView);
+    b.setAttribute('aria-pressed', String(b.dataset.view === diffView));
+  });
+}
+
 /** Open the modal diff viewer for a file in the selected commit. */
 function openDiffDialog(path: string, oldPath: string): void {
   const commit = (lastResponse?.commits ?? []).find((c) => c.hash === selectedHash);
   if (!commit) return;
   const dlg = $<HTMLDialogElement>('#diff-dialog');
-  const body = $<HTMLPreElement>('#diff-body');
   $('#diff-title').textContent = path;
   const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
   $('#diff-subtitle').textContent = `${renamed}${path} · commit ${commit.hash.slice(0, 7)}`;
   $('#diff-status').textContent = '';
-  body.textContent = 'Loading diff…';
+  diffPatch = '';
+  diffView = readDiffView();
+  renderDiffDialog();
+  $<HTMLDivElement>('#diff-body').textContent = 'Loading diff…';
   dlg.showModal();
   void (async () => {
     try {
@@ -390,9 +463,11 @@ function openDiffDialog(path: string, oldPath: string): void {
         path,
         oldPath: oldPath || null,
       });
-      body.innerHTML = patch ? formatPatch(patch) : '<span class="dph-meta">No textual diff.</span>';
+      diffPatch = patch;
+      renderDiffDialog();
     } catch (err) {
-      body.textContent = '';
+      diffPatch = '';
+      $<HTMLDivElement>('#diff-body').textContent = '';
       $('#diff-status').textContent = String(err);
     }
   })();
@@ -918,6 +993,21 @@ $('#about-close').addEventListener('click', (ev) => {
 $('#diff-close').addEventListener('click', (ev) => {
   ev.preventDefault();
   $<HTMLDialogElement>('#diff-dialog').close();
+});
+
+// Unified / split layout toggle; the choice persists across opens.
+document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.view === 'split' ? 'split' : 'unified';
+    if (next === diffView) return;
+    diffView = next;
+    try {
+      localStorage.setItem(DIFF_VIEW_KEY, diffView);
+    } catch {
+      // localStorage may be unavailable; the dialog still works in-session.
+    }
+    renderDiffDialog();
+  });
 });
 
 // --- Toolbar "three dots" menu ---

@@ -1159,31 +1159,166 @@ button.file-row .file-stats {
 .file-stat.del { color: var(--del); }
 .file-stat.binary { color: var(--fg-faint); }
 
-/* Unified diff viewer (diff dialog) */
+/* Diff viewer (diff dialog) */
 #diff-dialog {
-  width: min(900px, 90vw);
-  max-width: 90vw;
+  width: min(1000px, 92vw);
+  max-width: 92vw;
 }
 
-.diff-patch {
+.diff-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.diff-view-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+}
+
+.diff-view-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.diff-view-btn:hover {
+  color: var(--fg);
+}
+
+.diff-view-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.diff-body {
   margin: 4px 0 12px;
-  padding: 10px 12px;
   background: var(--bg-elev-2);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   font-family: var(--mono);
   font-size: 11.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--fg-dim);
   overflow: auto;
-  white-space: pre;
-  max-height: 60vh;
+  max-height: 62vh;
 }
 
-.diff-patch .dph-add { color: var(--add); }
-.diff-patch .dph-del { color: var(--del); }
-.diff-patch .dph-meta { color: var(--fg-faint); }
-.diff-patch .dph-ctx { color: var(--fg-dim); }
+/* Unified rows */
+.dl-row {
+  display: grid;
+  grid-template-columns: 3.5em 3.5em 1.4em 1fr;
+  min-width: max-content;
+}
+
+.dl-row .dl-no {
+  text-align: right;
+  padding: 0 8px 0 6px;
+  color: var(--fg-faint);
+  user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+
+.dl-row .dl-sign {
+  text-align: center;
+  color: var(--fg-faint);
+  user-select: none;
+}
+
+.dl-row .dl-text {
+  padding: 0 12px 0 4px;
+  white-space: pre;
+}
+
+.dl-row.dl-add { background: color-mix(in srgb, var(--add) 13%, transparent); }
+.dl-row.dl-del { background: color-mix(in srgb, var(--del) 13%, transparent); }
+.dl-row.dl-add .dl-sign { color: var(--add); }
+.dl-row.dl-del .dl-sign { color: var(--del); }
+.dl-row.dl-add .dl-text { color: var(--fg); }
+.dl-row.dl-del .dl-text { color: var(--fg); }
+
+.dl-row.dl-meta,
+.dl-row.dl-hunk {
+  display: block;
+  padding: 0 12px;
+  color: var(--fg-faint);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  white-space: pre;
+}
+
+.dl-row.dl-hunk {
+  color: var(--accent-2);
+}
+
+.dl-row.dl-nonewline {
+  display: block;
+  padding: 0 12px;
+  color: var(--fg-faint);
+  font-style: italic;
+  white-space: pre;
+}
+
+/* Side-by-side rows */
+.dl-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: max-content;
+}
+
+.dl-split-row .dl-cell {
+  display: grid;
+  grid-template-columns: 3.5em 1fr;
+  min-width: 0;
+}
+
+.dl-split-row .dl-cell:nth-child(2) {
+  border-left: 1px solid var(--border-strong);
+}
+
+.dl-split-row .dl-cell .dl-text {
+  padding: 0 12px 0 4px;
+  white-space: pre;
+}
+
+.dl-split-row .dl-cell .dl-no {
+  text-align: right;
+  padding: 0 8px 0 6px;
+  color: var(--fg-faint);
+  user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+
+.dl-split-row .dl-cell.dl-add { background: color-mix(in srgb, var(--add) 13%, transparent); }
+.dl-split-row .dl-cell.dl-del { background: color-mix(in srgb, var(--del) 13%, transparent); }
+.dl-split-row .dl-cell.dl-add .dl-text,
+.dl-split-row .dl-cell.dl-del .dl-text { color: var(--fg); }
+.dl-split-row .dl-cell.dl-empty { background: color-mix(in srgb, var(--fg-faint) 6%, transparent); }
+
+.diff-body .split-meta {
+  padding: 0 12px;
+  color: var(--fg-faint);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diff-body .dl-hunk.split-meta {
+  color: var(--accent-2);
+}
 
 /* Reference pills in detail pane */
 .ref-pill {
