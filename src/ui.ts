@@ -773,20 +773,130 @@ async function checkout(branch: string): Promise<void> {
 
 const THEME_KEY = 'liana-theme';
 
+interface ThemeDef {
+  id: string;
+  label: string;
+  /** [accent, secondary] used for the swatch in the picker. */
+  swatch: [string, string];
+  dark: boolean;
+}
+
+const THEMES: ThemeDef[] = [
+  { id: 'midnight', label: 'Midnight', swatch: ['#a78bfa', '#22d3ee'], dark: true },
+  { id: 'dracula', label: 'Dracula', swatch: ['#bd93f9', '#8be9fd'], dark: true },
+  { id: 'nord', label: 'Nord', swatch: ['#88c0d0', '#81a1c1'], dark: true },
+  { id: 'gruvbox', label: 'Gruvbox', swatch: ['#d79921', '#b8bb26'], dark: true },
+  { id: 'solarized', label: 'Solarized', swatch: ['#268bd2', '#2aa198'], dark: true },
+  { id: 'light', label: 'Light', swatch: ['#7c3aed', '#0891b2'], dark: false },
+];
+
+const DEFAULT_THEME = 'midnight';
+
+function isThemeId(id: string | undefined | null): id is string {
+  return !!id && THEMES.some((t) => t.id === id);
+}
+
+function currentTheme(): string {
+  const id = document.documentElement.dataset.theme;
+  return isThemeId(id) ? id : DEFAULT_THEME;
+}
+
 function applyTheme(theme: string): void {
-  document.documentElement.dataset.theme = theme;
-  $('#menu-theme-label').textContent = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+  const id = isThemeId(theme) ? theme : DEFAULT_THEME;
+  document.documentElement.dataset.theme = id;
+  const def = THEMES.find((t) => t.id === id);
+  $('#menu-theme-label').textContent = def ? `Theme: ${def.label}` : 'Theme';
+  themeMenu.querySelectorAll<HTMLButtonElement>('.theme-option').forEach((btn) => {
+    btn.setAttribute('aria-checked', String(btn.dataset.themeValue === id));
+  });
+}
+
+function selectTheme(theme: string): void {
+  if (!isThemeId(theme)) return;
+  applyTheme(theme);
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // localStorage may be unavailable (private mode); theme still applies in-session.
+  }
 }
 
 function initTheme(): void {
-  applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    // ignore
+  }
+  applyTheme(isThemeId(stored) ? stored : DEFAULT_THEME);
+}
+
+const themeMenu = $('#theme-menu');
+
+function buildThemeMenu(): void {
+  themeMenu.replaceChildren();
+  for (const theme of THEMES) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'theme-option';
+    btn.dataset.themeValue = theme.id;
+    btn.setAttribute('role', 'menuitemradio');
+    btn.setAttribute('aria-checked', 'false');
+
+    const swatch = document.createElement('span');
+    swatch.className = 'theme-swatch';
+    swatch.style.background = `linear-gradient(135deg, ${theme.swatch[0]} 0%, ${theme.swatch[1]} 100%)`;
+
+    const label = document.createElement('span');
+    label.textContent = theme.label;
+
+    const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    check.setAttribute('viewBox', '0 0 16 16');
+    check.setAttribute('aria-hidden', 'true');
+    check.classList.add('theme-check');
+    const tick = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tick.setAttribute('d', 'M3.2 8.4 6.4 11.6 12.8 4.8');
+    tick.setAttribute('fill', 'none');
+    tick.setAttribute('stroke', 'currentColor');
+    tick.setAttribute('stroke-width', '1.8');
+    tick.setAttribute('stroke-linecap', 'round');
+    tick.setAttribute('stroke-linejoin', 'round');
+    check.appendChild(tick);
+
+    btn.append(swatch, label, check);
+    btn.addEventListener('click', () => {
+      selectTheme(theme.id);
+      closeThemeMenu();
+    });
+    themeMenu.appendChild(btn);
+  }
+}
+
+function closeThemeMenu(): void {
+  themeMenu.hidden = true;
+}
+
+function positionMenuUnder(menu: HTMLElement, anchor: HTMLElement): void {
+  const rect = anchor.getBoundingClientRect();
+  menu.hidden = false;
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${left}px`;
+  menu.style.right = 'auto';
 }
 
 $('#btn-theme').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  localStorage.setItem(THEME_KEY, next);
-  applyTheme(next);
+  if (!themeMenu.hidden) {
+    closeThemeMenu();
+    return;
+  }
+  // Anchor to the always-visible "more" button; #btn-theme lives inside the
+  // popover that is about to close, so its rect would collapse to 0,0.
   closeMoreMenu();
+  buildThemeMenu();
+  applyTheme(currentTheme());
+  positionMenuUnder(themeMenu, $('#btn-more'));
 });
 
 $('#btn-about').addEventListener('click', () => {
@@ -836,8 +946,14 @@ document.addEventListener('pointerdown', (ev) => {
   if (!moreMenu.hidden && !moreMenu.contains(ev.target as Node) && !moreButton.contains(ev.target as Node)) {
     closeMoreMenu();
   }
+  if (!themeMenu.hidden && !themeMenu.contains(ev.target as Node) && !$('#btn-theme').contains(ev.target as Node)) {
+    closeThemeMenu();
+  }
 });
-window.addEventListener('resize', closeMoreMenu);
+window.addEventListener('resize', () => {
+  closeMoreMenu();
+  closeThemeMenu();
+});
 
 // --- Wire up static UI ---
 
@@ -1458,6 +1574,10 @@ $('#name-submit').addEventListener('click', (ev) => {
 // Escape closes an open dialog, otherwise clears the selection.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
+  if (!themeMenu.hidden) {
+    closeThemeMenu();
+    return;
+  }
   if (!moreMenu.hidden) {
     closeMoreMenu();
     return;
