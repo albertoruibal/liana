@@ -17,6 +17,10 @@ linux:
     - deb
   category: Development
   syncDesktopName: true
+  # The freedesktop hicolor theme indexes standard sizes up to 512x512 (plus
+  # scalable); it has no 1024x1024/apps, so a lone 1024px icon resolves to
+  # nothing and GNOME shows a generic icon. Use a conventional size set.
+  icon: build/icons
   synopsis: Minimal git graph GUI
   description: >-
     Liana is a minimal git GUI: an interactive commit graph with commit, rebase,
