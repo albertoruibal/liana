@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "author": "Liana",
+  "desktopName": "dev.liana.app",
   "homepage": "https://example.com/liana",
   "main": "dist-electron/main.mjs",
   "scripts": {

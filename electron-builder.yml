@@ -16,6 +16,7 @@ linux:
     - AppImage
     - deb
   category: Development
+  syncDesktopName: true
   synopsis: Minimal git graph GUI
   description: >-
     Liana is a minimal git GUI: an interactive commit graph with commit, rebase,

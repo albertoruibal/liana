@@ -20,6 +20,10 @@ const DEV_URL = process.env.LIANA_DEV_URL ?? 'http://localhost:5173';
 /** App/window icon, shipped in the asar root (build/icon.png). */
 const ICON_PATH = path.join(app.getAppPath(), 'build', 'icon.png');
 
+// Wayland resolves the dock/taskbar icon by matching the window's app_id to an
+// installed .desktop file. Must be called before the `ready` event.
+if (process.platform === 'linux') app.setDesktopName('dev.liana.app');
+
 let server: RunningServer | null = null;
 let token = '';
 let gitAvailable = true;
