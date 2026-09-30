@@ -783,10 +783,15 @@ main {
   font-size: 12.5px;
 }
 
-#graph-svg text.graph-meta-label {
+#graph-svg text.graph-day-label {
   fill: var(--fg-faint);
   font-family: var(--mono);
   font-size: 11.5px;
+}
+
+#graph-svg line.graph-day-sep {
+  stroke: var(--border-soft, #221c37);
+  stroke-width: 1;
 }
 
 #graph-svg rect.graph-row-hover {
@@ -831,10 +836,6 @@ main {
   font-weight: 700;
   letter-spacing: 0.02em;
   pointer-events: none;
-}
-
-#graph-svg .graph-hash {
-  cursor: pointer;
 }
 
 /* Ref chips in the SVG */

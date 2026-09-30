@@ -2,7 +2,7 @@
 
 import type { GraphLayout, GraphNode, RefKind, RepoState } from './types';
 import { REF_ICON_PATHS, displayRefs, type DisplayRef } from './refs';
-import { isoDate, isoDateTime } from './dates';
+import { isoDate } from './dates';
 
 const ROW_H = 26;
 const TOP_PAD = 24;
@@ -26,13 +26,10 @@ const COLUMN_GAP = 36;
 // Gap between the ref/tag column on the left and the graph lanes.
 const REF_GAP = 16;
 const REF_PAD = 12;
-// Fixed width reserved for the commit subject; the date/hash columns follow it.
+// Fixed width reserved for the commit subject.
 const SUBJECT_W = 480;
 // Author avatar diameter (name is shown on hover).
 const AVATAR = 22;
-const DATE_W = 116;
-const HASH_W = 70;
-const META_GAP = 20;
 const META_PAD = 28;
 
 /** One measured ref chip, shared by the visible strip and the hover cluster. */
@@ -54,8 +51,6 @@ export interface GraphMetrics {
   refX: number;
   lanesX: number;
   subjectX: number;
-  dateX: number;
-  hashX: number;
   totalW: number;
 }
 
@@ -69,8 +64,6 @@ const EMPTY_METRICS: GraphMetrics = {
   refX: 0,
   lanesX: 0,
   subjectX: 0,
-  dateX: 0,
-  hashX: 0,
   totalW: 0,
 };
 
@@ -247,23 +240,51 @@ export function renderGraph(
   const laneRight = laneLeft + layout.columns * COL_W;
 
   // Column x offsets. The subject column flexes to fill whatever space the
-  // scroll viewport leaves, so the date/hash columns stay on screen. The author
-  // avatar occupies the first AVATAR+8 px of the commit column; the subject text
-  // starts just after it.
+  // scroll viewport leaves, so the graph stays on screen. The author avatar
+  // occupies the first AVATAR+8 px of the commit column; the subject text starts
+  // just after it.
   const refX = LEFT_PAD;
   const subjectX = laneRight + COLUMN_GAP;
   const authorTextX = subjectX + AVATAR + 8;
-  const fixedW = authorTextX + META_GAP + DATE_W + META_GAP + HASH_W + META_PAD;
+  const fixedW = authorTextX + META_PAD;
   const viewportW = svg.closest('#graph-scroll')?.clientWidth ?? 0;
   const subjectW =
     viewportW > 0 ? Math.max(160, Math.min(SUBJECT_W, viewportW - fixedW)) : SUBJECT_W;
-  const dateX = subjectX + subjectW + META_GAP;
-  const hashX = dateX + DATE_W + META_GAP;
-  const hashRight = hashX + HASH_W;
-  const width = hashRight + META_PAD;
+  const width = subjectX + subjectW + META_PAD;
   const x = (col: number) => laneLeft + col * COL_W;
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
+
+  // Day markers: a faint right-aligned date + full-width separator whenever the
+  // local calendar day changes between consecutive rows (--date-order keeps a
+  // day's commits contiguous). Painted first so it sits behind the graph.
+  const addDayMarkers = (): void => {
+    let prevDay: string | null = null;
+    for (const n of layout.nodes) {
+      const day = isoDate(n.commit.timestamp);
+      if (day === prevDay) continue;
+      prevDay = day;
+      const sepY = y(n.row) - ROW_H / 2;
+      const line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', '0');
+      line.setAttribute('x2', String(width));
+      line.setAttribute('y1', String(sepY));
+      line.setAttribute('y2', String(sepY));
+      line.setAttribute('class', 'graph-day-sep');
+      line.setAttribute('pointer-events', 'none');
+      svg.appendChild(line);
+
+      const label = document.createElementNS(ns, 'text');
+      label.setAttribute('x', String(width - META_PAD));
+      label.setAttribute('y', String(y(n.row) + 4));
+      label.setAttribute('text-anchor', 'end');
+      label.setAttribute('class', 'graph-day-label');
+      label.setAttribute('pointer-events', 'none');
+      label.textContent = day;
+      svg.appendChild(label);
+    }
+  };
+  addDayMarkers();
 
   // Persistent tint for the selected row, under everything else.
   if (selectedHash) {
@@ -456,7 +477,7 @@ export function renderGraph(
     }
 
     // Commit subject lives in its own aligned column; clip with an ellipsis so
-    // long subjects never bleed into the date column.
+    // long subjects never bleed past the graph width.
     const rowText = document.createElementNS(ns, 'text');
     rowText.setAttribute('x', String(authorTextX));
     rowText.setAttribute('y', String(cy + 4));
@@ -465,27 +486,6 @@ export function renderGraph(
     rowText.textContent = n.commit.subject;
     svg.appendChild(rowText);
     rowText.textContent = fitText(rowText, n.commit.subject, subjectW - AVATAR - 20);
-
-    // Date column (ISO calendar day in local time; full stamp in the title).
-    const dateText = document.createElementNS(ns, 'text');
-    dateText.setAttribute('x', String(dateX));
-    dateText.setAttribute('y', String(cy + 4));
-    dateText.setAttribute('class', 'graph-meta-label');
-    dateText.textContent = isoDate(n.commit.timestamp);
-    dateText.dataset.hash = n.commit.hash;
-    const title = document.createElementNS(ns, 'title');
-    title.textContent = isoDateTime(n.commit.timestamp);
-    dateText.appendChild(title);
-    svg.appendChild(dateText);
-
-    // Short hash column.
-    const hashText = document.createElementNS(ns, 'text');
-    hashText.setAttribute('x', String(hashX));
-    hashText.setAttribute('y', String(cy + 4));
-    hashText.setAttribute('class', 'graph-meta-label graph-hash');
-    hashText.dataset.hash = n.commit.hash;
-    hashText.textContent = n.commit.hash.slice(0, 8);
-    svg.appendChild(hashText);
   }
 
   // --- Full-width row hit targets ---
@@ -596,7 +596,7 @@ export function renderGraph(
   };
   svg.addEventListener('pointerleave', onLeave, { signal });
 
-  return { refX, lanesX: laneLeft, subjectX, dateX, hashX, totalW: width };
+  return { refX, lanesX: laneLeft, subjectX, totalW: width };
 }
 
 /**
@@ -733,7 +733,7 @@ const fontCache = new Map<string, string>();
 
 function canvasFont(el: SVGTextElement): string {
   const key =
-    el.classList.contains('ref-chip') ? 'chip' : el.classList.contains('graph-meta-label') ? 'meta' : 'label';
+    el.classList.contains('ref-chip') ? 'chip' : el.classList.contains('graph-day-label') ? 'meta' : 'label';
   const cached = fontCache.get(key);
   if (cached) return cached;
   let font = '12.5px sans-serif';

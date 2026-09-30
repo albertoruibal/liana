@@ -602,7 +602,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       </div>`;
     html += `<div class="meta-row">
       <span class="meta-chip">${avatarHtml(commit.author, true)}${esc(commit.author)}</span>
-      <span class="meta-chip" title="${esc(isoDateTime(commit.timestamp))}">${isoDate(commit.timestamp)}</span>
+      <span class="meta-chip" title="${esc(isoDateTime(commit.timestamp))}">${esc(isoDateTime(commit.timestamp))}</span>
       <span class="meta-chip"><code>${short}</code></span>
     </div>`;
     if (commit.refs.length > 0) {
@@ -864,8 +864,6 @@ function renderGraphHeader(m: GraphMetrics): void {  const header = $('#graph-he
     [m.refX, 'Refs'],
     [m.lanesX - 4, 'Graph'],
     [m.subjectX, 'Commit'],
-    [m.dateX, 'Date'],
-    [m.hashX, 'Hash'],
   ];
   header.innerHTML = labels
     .map(([x, label]) => `<span style="left:${Math.max(0, Math.round(x))}px">${label}</span>`)
