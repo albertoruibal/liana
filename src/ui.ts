@@ -3,7 +3,7 @@
 import { layoutGraph } from './layout';
 import { parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow } from './diff';
 import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight, type GraphMetrics } from './graph';
-import { displayRefs, refIconHtml } from './refs';
+import { displayRefs, refIconHtml, remoteBranchName } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import type { CommitFile, GitCommandRecord, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
@@ -421,9 +421,10 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
         for (const b of state.branches) {
           const kind = b.isRemote ? 'remote' : 'local';
           const badge = b.isHead ? '<span class="head-badge">HEAD</span>' : '';
+          const label = b.isRemote ? remoteBranchName(b.name) : b.name;
           html += `<li class="branch-${kind}" data-branch="${esc(b.name)}" data-remote="${b.isRemote ? 'true' : 'false'}" title="Checkout ${esc(b.name)}">
             ${refIconHtml(kind)}
-            <span class="branch-name">${esc(b.name)}</span>
+            <span class="branch-name">${esc(label)}</span>
             ${badge}
           </li>`;
         }
