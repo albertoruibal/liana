@@ -922,6 +922,62 @@ main {
   margin-bottom: 14px;
 }
 
+.detail-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.detail-title h3 {
+  flex: 1 1 auto;
+}
+
+.head-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+  color: var(--accent);
+}
+
+.icon-btn:active {
+  transform: translateY(1px);
+}
+
+.icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--accent);
+}
+
 .detail-empty {
   display: flex;
   flex-direction: column;

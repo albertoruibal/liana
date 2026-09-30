@@ -588,7 +588,18 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     </div>`;
   } else {
     const short = commit.hash.slice(0, 8);
-    html += `<div class="detail-head"><h3>${esc(commit.subject)}</h3>`;
+    html += `<div class="detail-head">
+      <div class="detail-title">
+        <h3>${esc(commit.subject)}</h3>
+        <span class="head-actions">
+          <button type="button" class="icon-btn act" data-act="copy-subject" data-copy="${esc(commit.subject)}" title="Copy commit text" aria-label="Copy commit text">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="9" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 5.5V3.4A1.4 1.4 0 0 0 9.1 2H3.9A1.4 1.4 0 0 0 2.5 3.4v5.2a1.4 1.4 0 0 0 1.4 1.4h2.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn act" data-act="copy-hash" data-copy="${esc(commit.hash)}" title="Copy commit hash" aria-label="Copy commit hash">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 2 4.8 14M11.2 2 9.8 14M2.5 5.6h11M2 10.4h11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+        </span>
+      </div>`;
     html += `<div class="meta-row">
       <span class="meta-chip">${avatarHtml(commit.author, true)}${esc(commit.author)}</span>
       <span class="meta-chip" title="${esc(isoDateTime(commit.timestamp))}">${isoDate(commit.timestamp)}</span>
@@ -1398,6 +1409,9 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
     } else if (act === 'sub-deinit') {
       if (!confirm(`Deinitialize ${path}? Its working tree is removed (the recorded commit is kept).`)) return;
       await api('/submodule-deinit', { path, force: true });
+    } else if (act === 'copy-subject' || act === 'copy-hash') {
+      await copyToClipboard(btn.dataset.copy ?? '');
+      return;
     }
     await refresh();
   } catch (err) {
