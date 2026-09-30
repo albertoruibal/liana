@@ -25,7 +25,8 @@ const COLUMN_GAP = 36;
 // Gap between the ref/tag column on the left and the graph lanes.
 const REF_GAP = 16;
 const REF_PAD = 12;
-// Fixed width reserved for the commit subject.
+// Fallback subject width when the viewport can't be measured; otherwise the
+// commit column flexes to fill the available width.
 const SUBJECT_W = 480;
 // Author avatar diameter (name is shown on hover).
 const AVATAR = 22;
@@ -239,16 +240,15 @@ export function renderGraph(
   const laneRight = laneLeft + layout.columns * COL_W;
 
   // Column x offsets. The subject column flexes to fill whatever space the
-  // scroll viewport leaves, so the graph stays on screen. The author avatar
-  // occupies the first AVATAR+8 px of the commit column; the subject text starts
-  // just after it.
+  // scroll viewport leaves, so the graph stays on screen and the commit text
+  // uses all the room available. The author avatar occupies the first
+  // AVATAR+8 px of the commit column; the subject text starts just after it.
   const refX = LEFT_PAD;
   const subjectX = laneRight + COLUMN_GAP;
   const authorTextX = subjectX + AVATAR + 8;
   const fixedW = authorTextX + META_PAD;
   const viewportW = svg.closest('#graph-scroll')?.clientWidth ?? 0;
-  const subjectW =
-    viewportW > 0 ? Math.max(160, Math.min(SUBJECT_W, viewportW - fixedW)) : SUBJECT_W;
+  const subjectW = viewportW > 0 ? Math.max(0, viewportW - fixedW) : SUBJECT_W;
   const width = subjectX + subjectW + META_PAD;
   const x = (col: number) => laneLeft + col * COL_W;
   svg.setAttribute('width', String(width));
