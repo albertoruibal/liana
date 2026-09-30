@@ -624,7 +624,6 @@ function renderGraphHeader(m: GraphMetrics): void {
   const labels: Array<[number, string]> = [
     [m.refX, 'Refs'],
     [m.lanesX - 4, 'Graph'],
-    [m.authorX, 'Author'],
     [m.subjectX, 'Commit'],
     [m.dateX, 'Date'],
     [m.hashX, 'Hash'],

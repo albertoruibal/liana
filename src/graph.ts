@@ -28,9 +28,8 @@ const REF_GAP = 16;
 const REF_PAD = 12;
 // Fixed width reserved for the commit subject; the date/hash columns follow it.
 const SUBJECT_W = 480;
-// Author avatar + name column.
+// Author avatar diameter (name is shown on hover).
 const AVATAR = 22;
-const AUTHOR_GAP = 18;
 const DATE_W = 116;
 const HASH_W = 70;
 const META_GAP = 20;
@@ -52,7 +51,6 @@ export interface GraphMetrics {
   /** Column left offsets (px from the SVG origin) for the sticky header. */
   refX: number;
   lanesX: number;
-  authorX: number;
   subjectX: number;
   dateX: number;
   hashX: number;
@@ -68,7 +66,6 @@ export interface GraphHighlight {
 const EMPTY_METRICS: GraphMetrics = {
   refX: 0,
   lanesX: 0,
-  authorX: 0,
   subjectX: 0,
   dateX: 0,
   hashX: 0,
@@ -247,37 +244,17 @@ export function renderGraph(
   const laneLeft = refColumnW > 0 ? LEFT_PAD + refColumnW + REF_GAP : LEFT_PAD;
   const laneRight = laneLeft + layout.columns * COL_W;
 
-  // Measurement pass for the author column: append the texts so they get a
-  // layout box, size the column to the longest name, then reposition later.
-  const authorTexts = new Map<string, SVGTextElement>();
-  let authorNameW = 0;
-  for (const n of layout.nodes) {
-    const text = document.createElementNS(ns, 'text');
-    text.setAttribute('class', 'graph-row-label graph-author-label');
-    text.textContent = n.commit.author;
-    svg.appendChild(text);
-    authorNameW = Math.max(authorNameW, measureText(text, n.commit.author));
-    authorTexts.set(n.commit.hash, text);
-  }
-  const authorColumnW = AVATAR + 8 + authorNameW;
-
   // Column x offsets. The subject column flexes to fill whatever space the
-  // scroll viewport leaves, so the date/hash columns stay on screen.
+  // scroll viewport leaves, so the date/hash columns stay on screen. The author
+  // avatar occupies the first AVATAR+8 px of the commit column; the subject text
+  // starts just after it.
   const refX = LEFT_PAD;
-  const authorX = laneRight + COLUMN_GAP;
-  const fixedW =
-    authorX +
-    authorColumnW +
-    AUTHOR_GAP +
-    META_GAP +
-    DATE_W +
-    META_GAP +
-    HASH_W +
-    META_PAD;
+  const subjectX = laneRight + COLUMN_GAP;
+  const authorTextX = subjectX + AVATAR + 8;
+  const fixedW = authorTextX + META_GAP + DATE_W + META_GAP + HASH_W + META_PAD;
   const viewportW = svg.closest('#graph-scroll')?.clientWidth ?? 0;
   const subjectW =
     viewportW > 0 ? Math.max(160, Math.min(SUBJECT_W, viewportW - fixedW)) : SUBJECT_W;
-  const subjectX = authorX + authorColumnW + AUTHOR_GAP;
   const dateX = subjectX + subjectW + META_GAP;
   const hashX = dateX + DATE_W + META_GAP;
   const hashRight = hashX + HASH_W;
@@ -390,7 +367,6 @@ export function renderGraph(
   };
   if (refColumnW > 0) addSep(laneLeft - REF_GAP / 2);
   addSep(laneRight + COLUMN_GAP / 2);
-  addSep(subjectX - AUTHOR_GAP / 2);
 
   // --- Edges first (under dots) ---
   for (const e of layout.edges) {
@@ -477,36 +453,16 @@ export function renderGraph(
       svg.appendChild(sel);
     }
 
-    // Author avatar + name.
-    const ax = authorX;
-    const avatar = document.createElementNS(ns, 'circle');
-    avatar.setAttribute('cx', String(ax + AVATAR / 2));
-    avatar.setAttribute('cy', String(cy));
-    avatar.setAttribute('r', String(AVATAR / 2));
-    avatar.setAttribute('fill', avatarColor(n.commit.author));
-    avatar.setAttribute('opacity', '0.9');
-    avatar.dataset.hash = n.commit.hash;
-    svg.appendChild(avatar);
-
-    const avText = document.createElementNS(ns, 'text');
-    avText.setAttribute('x', String(ax + AVATAR / 2));
-    avText.setAttribute('y', String(cy + 3.5));
-    avText.setAttribute('text-anchor', 'middle');
-    avText.setAttribute('class', 'graph-avatar-text');
-    avText.setAttribute('fill', '#0d0b16');
-    avText.textContent = initials(n.commit.author);
-    svg.appendChild(avText);
-
     // Commit subject lives in its own aligned column; clip with an ellipsis so
     // long subjects never bleed into the date column.
     const rowText = document.createElementNS(ns, 'text');
-    rowText.setAttribute('x', String(subjectX));
+    rowText.setAttribute('x', String(authorTextX));
     rowText.setAttribute('y', String(cy + 4));
     rowText.setAttribute('class', 'graph-row-label');
     rowText.dataset.hash = n.commit.hash;
     rowText.textContent = n.commit.subject;
     svg.appendChild(rowText);
-    rowText.textContent = fitText(rowText, n.commit.subject, subjectW - 12);
+    rowText.textContent = fitText(rowText, n.commit.subject, subjectW - AVATAR - 20);
 
     // Date column (ISO calendar day in local time; full stamp in the title).
     const dateText = document.createElementNS(ns, 'text');
@@ -528,15 +484,6 @@ export function renderGraph(
     hashText.dataset.hash = n.commit.hash;
     hashText.textContent = n.commit.hash.slice(0, 8);
     svg.appendChild(hashText);
-
-    // Author name (measured earlier), re-appended to paint above the bands.
-    const authorText = authorTexts.get(n.commit.hash);
-    if (authorText) {
-      authorText.setAttribute('x', String(ax + AVATAR + 8));
-      authorText.setAttribute('y', String(cy + 4));
-      authorText.dataset.hash = n.commit.hash;
-      svg.appendChild(authorText);
-    }
   }
 
   // --- Full-width row hit targets ---
@@ -554,6 +501,36 @@ export function renderGraph(
     hit.setAttribute('class', 'graph-row-hit');
     hit.dataset.hash = n.commit.hash;
     svg.appendChild(hit);
+  }
+
+  // Author avatars, painted above the row hit targets so their <title> tooltips
+  // fire on hover (and the circles stay right-clickable); the rect beneath still
+  // handles clicks on the rest of the row. The name is only revealed on hover.
+  for (const n of layout.nodes) {
+    const ax = subjectX;
+    const cy = y(n.row);
+    const avatar = document.createElementNS(ns, 'circle');
+    avatar.setAttribute('cx', String(ax + AVATAR / 2));
+    avatar.setAttribute('cy', String(cy));
+    avatar.setAttribute('r', String(AVATAR / 2));
+    avatar.setAttribute('fill', avatarColor(n.commit.author));
+    avatar.setAttribute('opacity', '0.9');
+    avatar.dataset.hash = n.commit.hash;
+
+    const avatarTitle = document.createElementNS(ns, 'title');
+    avatarTitle.textContent = n.commit.author;
+    avatar.appendChild(avatarTitle);
+
+    const avText = document.createElementNS(ns, 'text');
+    avText.setAttribute('x', String(ax + AVATAR / 2));
+    avText.setAttribute('y', String(cy + 3.5));
+    avText.setAttribute('text-anchor', 'middle');
+    avText.setAttribute('class', 'graph-avatar-text');
+    avText.setAttribute('fill', '#0d0b16');
+    avText.textContent = initials(n.commit.author);
+
+    svg.appendChild(avatar);
+    svg.appendChild(avText);
   }
 
   // --- Row hover highlight ---
@@ -617,7 +594,7 @@ export function renderGraph(
   };
   svg.addEventListener('pointerleave', onLeave, { signal });
 
-  return { refX, lanesX: laneLeft, authorX, subjectX, dateX, hashX, totalW: width };
+  return { refX, lanesX: laneLeft, subjectX, dateX, hashX, totalW: width };
 }
 
 /**

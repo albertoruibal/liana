@@ -783,10 +783,6 @@ main {
   font-size: 12.5px;
 }
 
-#graph-svg text.graph-author-label {
-  fill: var(--fg-dim);
-}
-
 #graph-svg text.graph-meta-label {
   fill: var(--fg-faint);
   font-family: var(--mono);
