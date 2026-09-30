@@ -49,6 +49,97 @@ export function refLabel(ref: GitRef): string {
   return ref.kind === 'head' ? ref.name : `${REF_KIND_LABEL[ref.kind]} ${ref.name}`;
 }
 
+/** Branch name a remote-tracking ref points at: "origin/feature" -> "feature". */
+export function remoteBranchName(name: string): string {
+  const slash = name.indexOf('/');
+  return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
+/** A ref as rendered: one display pill that may merge a local branch with its remote twin. */
+export interface DisplayRef {
+  /** Kind driving the pill tone and context menu; 'local' when a local/remote pair is merged. */
+  kind: RefKind;
+  /** Text shown next to the icon(s); for a remote-only ref this drops the "<remote>/" prefix. */
+  name: string;
+  /** Icons drawn left to right. */
+  icons: RefKind[];
+  /** True when this pill merges a local branch and its remote-tracking ref. */
+  merged: boolean;
+  /** Full human label (keeps the remote prefix), for tooltips. */
+  title: string;
+  /**
+   * Ref name the backend actions expect. For a remote-only ref this keeps the
+   * "<remote>/" prefix (`origin/release`); for a merged pill it is the local
+   * branch name, so the context menu treats the merged pill as that branch.
+   */
+  menuName: string;
+}
+
+/**
+ * Collapse a commit's refs for display. A local branch and the remote-tracking
+ * ref that mirrors it (`main` + `origin/main`) become one pill carrying both
+ * icons; remote-only refs drop the "<remote>/" prefix and show just the icon
+ * plus branch name.
+ */
+export function displayRefs(refs: GitRef[]): DisplayRef[] {
+  const localNames = new Set<string>();
+  for (const r of refs) if (r.kind === 'local') localNames.add(r.name);
+
+  // Pair each local branch with the first remote-tracking ref that mirrors it.
+  const remoteFor = new Map<string, GitRef>();
+  const paired = new Set<GitRef>();
+  for (const r of refs) {
+    if (r.kind !== 'remote') continue;
+    const branch = remoteBranchName(r.name);
+    if (branch !== r.name && localNames.has(branch) && !remoteFor.has(branch)) {
+      remoteFor.set(branch, r);
+      paired.add(r);
+    }
+  }
+
+  const out: DisplayRef[] = [];
+  const emitted = new Set<string>();
+  for (const r of refs) {
+    if (r.kind === 'remote') {
+      if (paired.has(r)) continue;
+      out.push({
+        kind: 'remote',
+        name: remoteBranchName(r.name),
+        icons: ['remote'],
+        merged: false,
+        title: `remote ${r.name}`,
+        menuName: r.name,
+      });
+    } else if (r.kind === 'local') {
+      const remote = remoteFor.get(r.name);
+      if (remote) {
+        if (emitted.has(r.name)) continue;
+        emitted.add(r.name);
+        out.push({
+          kind: 'local',
+          name: r.name,
+          icons: ['local', 'remote'],
+          merged: true,
+          title: `local ${r.name} · remote ${remote.name}`,
+          menuName: r.name,
+        });
+      } else {
+        out.push({ kind: 'local', name: r.name, icons: ['local'], merged: false, title: `local ${r.name}`, menuName: r.name });
+      }
+    } else {
+      out.push({
+        kind: r.kind,
+        name: r.name,
+        icons: r.kind === 'head' ? [] : [r.kind],
+        merged: false,
+        title: refLabel(r),
+        menuName: r.name,
+      });
+    }
+  }
+  return out;
+}
+
 /** Inline `<svg>` icon markup for a ref kind, or `''` for HEAD. */
 export function refIconHtml(kind: RefKind): string {
   const paths = REF_ICON_PATHS[kind];

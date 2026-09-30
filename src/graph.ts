@@ -1,7 +1,7 @@
 // SVG rendering of the commit graph (left pane).
 
-import type { GitRef, GraphLayout, GraphNode, RefKind, RepoState } from './types';
-import { REF_ICON_PATHS } from './refs';
+import type { GraphLayout, GraphNode, RefKind, RepoState } from './types';
+import { REF_ICON_PATHS, displayRefs, type DisplayRef } from './refs';
 import { isoDate, isoDateTime } from './dates';
 
 const ROW_H = 26;
@@ -13,6 +13,8 @@ const CHIP_H = 21;
 // Ref chip internals: leading kind icon + a little breathing room.
 const ICON = 13;
 const ICON_GAP = 5;
+// Gap between stacked icons on a merged local+remote chip (tighter than ICON_GAP).
+const ICON_STACK_GAP = -1;
 const CHIP_PAD = 8;
 // Maximum width of the ref column, padding included. Refs that don't fit are
 // collapsed into a "+N" badge revealed on hover, so the ref column stays narrow
@@ -37,9 +39,11 @@ const META_PAD = 28;
 /** One measured ref chip, shared by the visible strip and the hover cluster. */
 interface Chip {
   text: SVGTextElement;
-  icon: SVGGElement | null;
+  /** Leading kind icons, left to right (empty for HEAD). */
+  icons: SVGGElement[];
   isHead: boolean;
   kind: string;
+  /** Ref name the context-menu actions expect (remote prefix preserved for remote-only refs). */
   name: string;
   width: number;
 }
@@ -145,7 +149,7 @@ export function renderGraph(
     hash: string;
     chips: Chip[];
     /** Refs collapsed into the "+N" badge; empty when everything fits. */
-    hidden: GitRef[];
+    hidden: DisplayRef[];
     /** Width of the visible strip (incl. the "+N" badge) once positioned. */
     renderedW: number;
     /** Right x of the floating cluster once built (for hover tracking). */
@@ -162,33 +166,14 @@ export function renderGraph(
   for (const n of layout.nodes) {
     if (n.commit.refs.length === 0) continue;
     const cy = y(n.row);
-    const sorted = [...n.commit.refs].sort((a, b) =>
+    const sorted = displayRefs(n.commit.refs).sort((a, b) =>
       a.kind === 'head' ? -1 : b.kind === 'head' ? 1 : 0,
     );
 
-    // Build (and measure) a chip per ref, appended so it gets a real layout box.
-    const candidates: Chip[] = [];
-    for (const ref of sorted) {
-      const isHead = ref.kind === 'head';
-      const icon = createRefIcon(ns, ref.kind);
-      if (icon) {
-        icon.dataset.name = ref.name;
-        icon.dataset.hash = n.commit.hash;
-        svg.appendChild(icon);
-      }
-      const text = document.createElementNS(ns, 'text');
-      text.setAttribute('y', String(cy + 4));
-      text.setAttribute('text-anchor', 'start');
-      text.setAttribute('class', isHead ? 'ref-chip ref-head' : `ref-chip ref-${ref.kind}`);
-      text.dataset.kind = ref.kind;
-      text.dataset.name = ref.name;
-      text.dataset.hash = n.commit.hash;
-      text.textContent = ref.name;
-      svg.appendChild(text);
-      const iconW = icon ? ICON + ICON_GAP : 0;
-      const width = measureText(text, ref.name) + CHIP_PAD * 2 + iconW;
-      candidates.push({ text, icon, isHead, kind: ref.kind, name: ref.name, width });
-    }
+    // Build (and measure) a chip per display ref, appended so it gets a real
+    // layout box. A local branch and its remote twin share one chip with both
+    // icons; remote-only refs drop the "<remote>/" prefix and keep just the icon.
+    const candidates: Chip[] = sorted.map((ref) => buildRefChip(ns, svg, ref, cy, n.commit.hash));
 
     // Keep the longest prefix that fits the budget. When refs remain, reserve
     // a generous gap + width for the "+N" badge and shrink the prefix until both
@@ -209,7 +194,7 @@ export function renderGraph(
     // Leave room for the "+N" badge when other refs still need collapsing.
     if (keep === 0 && candidates.length > 0) {
       const first = candidates[0]!;
-      const iconW = first.icon ? ICON + ICON_GAP : 0;
+      const iconW = iconBlockWidth(first.icons.length);
       const reserve = candidates.length > 1 ? badgeReserve : 0;
       const labelW = Math.max(0, stripBudget - reserve - CHIP_PAD * 2 - iconW);
       first.text.textContent = fitText(first.text, first.name, labelW);
@@ -223,7 +208,7 @@ export function renderGraph(
     // Drop the candidates that didn't make the cut; the hover cluster rebuilds
     // their chips from `row.hidden` on first reveal.
     for (const c of candidates.slice(keep)) {
-      c.icon?.remove();
+      for (const icon of c.icons) icon.remove();
       c.text.remove();
     }
 
@@ -239,7 +224,7 @@ export function renderGraph(
       badge.textContent = `+${hidden.length}`;
       svg.appendChild(badge);
       const width = measureText(badge, badge.textContent ?? '') + CHIP_PAD * 2;
-      chips.push({ text: badge, icon: null, isHead: false, kind: 'overflow', name: '', width });
+      chips.push({ text: badge, icons: [], isHead: false, kind: 'overflow', name: '', width });
       rowW += CHIP_GAP + width;
     }
     if (rowW > 0) maxChipRowW = Math.max(maxChipRowW, rowW);
@@ -371,33 +356,7 @@ export function renderGraph(
     // pills would end up wider than their labels. Hidden once placed.
     svg.appendChild(g);
     const startX = refX + row.renderedW + CHIP_PAD;
-    const built: Chip[] = [];
-    for (const ref of row.hidden) {
-      const icon = createRefIcon(ns, ref.kind);
-      if (icon) {
-        icon.dataset.name = ref.name;
-        icon.dataset.hash = row.hash;
-        g.appendChild(icon);
-      }
-      const text = document.createElementNS(ns, 'text');
-      text.setAttribute('y', String(row.cy + 4));
-      text.setAttribute('text-anchor', 'start');
-      text.setAttribute('class', `ref-chip ref-${ref.kind}`);
-      text.dataset.kind = ref.kind;
-      text.dataset.name = ref.name;
-      text.dataset.hash = row.hash;
-      text.textContent = ref.name;
-      g.appendChild(text);
-      const iconW = icon ? ICON + ICON_GAP : 0;
-      built.push({
-        text,
-        icon,
-        isHead: false,
-        kind: ref.kind,
-        name: ref.name,
-        width: measureText(text, ref.name) + CHIP_PAD * 2 + iconW,
-      });
-    }
+    const built: Chip[] = row.hidden.map((ref) => buildRefChip(ns, g, ref, row.cy, row.hash));
     let chipX = startX;
     for (const chip of built) {
       placeChip(ns, g, chip, chipX, row.cy);
@@ -662,14 +621,14 @@ export function renderGraph(
 }
 
 /**
- * Draw one chip (pill + optional icon + label) into `root`, left edge at `x`,
+ * Draw one chip (pill + leading icon(s) + label) into `root`, left edge at `x`,
  * vertically centered on `cy`. Shared by the visible strip and the overflow
  * cluster, which lives in its own `<g>`.
  */
 function placeChip(
   ns: string,
   root: SVGElement,
-  chip: { text: SVGTextElement; icon: SVGGElement | null; isHead: boolean; kind: string; name: string; width: number },
+  chip: { text: SVGTextElement; icons: SVGGElement[]; isHead: boolean; kind: string; name: string; width: number },
   x: number,
   cy: number,
 ): void {
@@ -685,14 +644,56 @@ function placeChip(
   }
   rect.dataset.hash = chip.text.dataset.hash ?? '';
   applyChipStyle(rect, chip.kind, chip.isHead);
-  // Insert the pill underneath its icon and text.
-  root.insertBefore(rect, chip.icon ?? chip.text);
+  // Insert the pill underneath its icons and text.
+  root.insertBefore(rect, chip.icons[0] ?? chip.text);
   const iconX = x + CHIP_PAD;
-  const textX = iconX + (chip.icon ? ICON + ICON_GAP : 0);
-  if (chip.icon) {
-    chip.icon.setAttribute('transform', `translate(${iconX} ${cy - ICON / 2})`);
+  if (chip.icons.length === 0) {
+    chip.text.setAttribute('x', String(iconX));
+    return;
   }
+  let ix = iconX;
+  for (const icon of chip.icons) {
+    icon.setAttribute('transform', `translate(${ix} ${cy - ICON / 2})`);
+    ix += ICON + ICON_STACK_GAP;
+  }
+  const textX = ix - ICON_STACK_GAP + ICON_GAP;
   chip.text.setAttribute('x', String(textX));
+}
+
+/** Build and measure a display ref chip, appending its icon(s) and text to `root`. */
+function buildRefChip(ns: string, root: SVGElement, ref: DisplayRef, cy: number, hash: string): Chip {
+  const isHead = ref.kind === 'head';
+  const icons: SVGGElement[] = [];
+  for (const kind of ref.icons) {
+    const icon = createRefIcon(ns, kind);
+    if (!icon) continue;
+    icon.dataset.kind = ref.kind;
+    icon.dataset.name = ref.menuName;
+    icon.dataset.hash = hash;
+    root.appendChild(icon);
+    icons.push(icon);
+  }
+  const text = document.createElementNS(ns, 'text') as SVGTextElement;
+  text.setAttribute('y', String(cy + 4));
+  text.setAttribute('text-anchor', 'start');
+  text.setAttribute('class', isHead ? 'ref-chip ref-head' : `ref-chip ref-${ref.kind}`);
+  text.dataset.kind = ref.kind;
+  text.dataset.name = ref.menuName;
+  text.dataset.hash = hash;
+  text.textContent = ref.name;
+  // Keep the full (unmerged) label — remote prefix included — in the tooltip.
+  const title = document.createElementNS(ns, 'title');
+  title.textContent = ref.title;
+  text.appendChild(title);
+  root.appendChild(text);
+  const width = measureText(text, ref.name) + CHIP_PAD * 2 + iconBlockWidth(icons.length);
+  return { text, icons, isHead, kind: ref.kind, name: ref.menuName, width };
+}
+
+/** Width of the leading icon block plus the gap before the label. */
+function iconBlockWidth(count: number): number {
+  if (count <= 0) return 0;
+  return count * ICON + (count - 1) * ICON_STACK_GAP + ICON_GAP;
 }
 
 /** Build the small kind icon that sits at the left of a ref chip. */

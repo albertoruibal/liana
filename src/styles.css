@@ -1426,6 +1426,11 @@ button.file-row .file-stats {
   margin-right: -1px;
 }
 
+/* A merged local+remote pill stacks both icons tightly. */
+.ref-pill .ref-icon + .ref-icon {
+  margin-left: -3px;
+}
+
 .ref-head {
   color: var(--head);
 }

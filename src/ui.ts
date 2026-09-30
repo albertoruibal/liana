@@ -3,7 +3,7 @@
 import { layoutGraph } from './layout';
 import { parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow } from './diff';
 import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight, type GraphMetrics } from './graph';
-import { refIconHtml, refLabel } from './refs';
+import { displayRefs, refIconHtml } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import type { CommitFile, GitCommandRecord, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
@@ -468,8 +468,11 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     if (commit.refs.length > 0) {
       html +=
         '<p class="meta-row">' +
-        commit.refs
-          .map((r) => `<span class="ref-pill ref-${r.kind}" title="${esc(refLabel(r))}">${refIconHtml(r.kind)}${esc(r.name)}</span>`)
+        displayRefs(commit.refs)
+          .map(
+            (r) =>
+              `<span class="ref-pill ref-${r.kind}${r.merged ? ' ref-merged' : ''}" title="${esc(r.title)}">${r.icons.map(refIconHtml).join('')}${esc(r.name)}</span>`,
+          )
           .join(' ') +
         '</p>';
     }
