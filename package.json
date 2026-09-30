@@ -1,7 +1,7 @@
 {
   "name": "liana",
   "description": "Minimal git GUI: commit graph with commit / rebase / cherry-pick, push / pull / login",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "author": "Liana",
