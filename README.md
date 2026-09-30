@@ -1,25 +1,25 @@
 # Liana
 
 A minimal git GUI: an interactive commit graph with
-**commit**, **rebase**, and **cherry-pick**, plus **push**, **pull**, and
-**login** for repositories that already live on your machine. Clone, fetch, and
-remote management are deliberately absent — this is a visual history surgeon, not
-a forge client.
+**commit**, **rebase**, and **cherry-pick**, integrated **conflict resolution**,
+**submodules**, plus **push**, **pull**, and **login** for repositories that
+already live on your machine. Clone, fetch, and remote management are
+deliberately absent — this is a visual history surgeon, not a forge client.
 
 ![Liana: commit graph, refs, and detail pane](docs/liana.png)
 
 ## Architecture
 
 ```
-Renderer (lit-free vanilla TS + SVG)          Node
-  │  fetch /api/*                              │
-  ├── browser dev ──► Vite dev server (dev.ts) │
-  └── Electron ─────► electron/server.ts ──────┤
-                          (127.0.0.1 loopback)  │
-                                                ▼
-                                        src/api.ts  ──► spawn `git …`
-                                                ▼
-                        Your repository (working directory, on-disk refs)
+Renderer (lit-free vanilla TS + SVG)                Node
+  │  fetch /api/*                                   │
+  ├── browser dev ──► Vite dev server (dev.ts)      ┤
+  └── Electron ─────► electron/server.ts            ┤
+                        (127.0.0.1 loopback)        │
+                                                    ▼
+                                                    src/api.ts  ──► spawn `git …`
+                                                    ▼
+                                                    Your repository (working directory, on-disk refs)
 ```
 
 The backend is `src/api.ts`: a transport-agnostic, Node-only module holding every
@@ -80,6 +80,18 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/push` | POST | `{remote?, branch?, force?}` | Push the current branch; sets upstream with `-u` when it has none. `force` adds `--force-with-lease`. 400 without a remote |
 | `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); proceeds with local changes, git's error surfaced if they'd be overwritten |
 | `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
+| `/api/conflicts` | GET | — | Unmerged paths (`git ls-files -u`) + in-progress operation state |
+| `/api/conflict-file` | POST | `{path}` | Base / ours / theirs contents for one conflicted path |
+| `/api/conflict-resolve` | POST | `{path, resolution}` | Resolve one path: `ours` / `theirs` (`git checkout --ours/--theirs` + `add`) or `resolved` (`add`) |
+| `/api/conflict-continue` | POST | — | `git <rebase\|merge\|cherry-pick\|revert> --continue` (no editor) |
+| `/api/conflict-abort` | POST | — | `git <op> --abort` |
+| `/api/conflict-skip` | POST | — | `git <rebase\|cherry-pick\|revert> --skip` (not merge) |
+| `/api/submodules` | GET | — | Configured submodules (`.gitmodules`) with their checked-out state |
+| `/api/submodule-update` | POST | `{remote?, init?}` | `git submodule update [--init] [--remote]` (network) |
+| `/api/submodule-sync` | POST | — | `git submodule sync --recursive` (network) |
+| `/api/submodule-add` | POST | `{url, path?, branch?}` | `git submodule add` (network) |
+| `/api/submodule-deinit` | POST | `{path, force?}` | `git submodule deinit` (local) |
+| `/api/submodule-log` | POST | `{path}` | Read-only history of an initialized submodule |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
 `/api/cherry-pick`, `/api/merge`) return HTTP **409** with a human message instead
@@ -170,10 +182,10 @@ so it can find `git`.
 
 ## Scope: intentionally NOT here
 
-clone / fetch / remote management / submodules / conflict resolution UI.
-Push, pull, and login are the only network operations. Operations that would open
-an editor or conflict mid-rebase return git's error text in the API response and
-the UI shows it.
+clone / fetch / remote management. Push, pull, login, and submodule
+`init`/`update`/`sync`/`add` are the only network operations. A conflict during
+merge, rebase, or cherry-pick is shown in an integrated resolution panel (see
+below); git's error text is still surfaced unchanged through the API.
 
 Stash entries appear as synthetic nodes in the graph (one per `git stash list`
 entry, hanging off the commit they were created on) labeled `stash@{n}`. The
@@ -181,3 +193,31 @@ toolbar's **Stash** button saves the current changes (`-u` optional), and a
 selected stash can be applied, applied-and-dropped (pop), or dropped from the
 detail pane or its right-click menu. `git stash apply` keeps the entry; it is
 only removed on an explicit pop/drop.
+
+## Conflict resolution
+
+When a merge, rebase, cherry-pick, or revert stops on a conflict, the detail pane
+shows a banner naming the operation and its **Continue** / **Skip** / **Abort**
+controls next to the list of unmerged paths. State is read from git itself —
+`git ls-files -u` for the unmerged entries and `git rev-parse --git-path` on
+`rebase-merge`/`rebase-apply`/`MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD` for
+the operation — never inferred, and continue/skip/abort map 1:1 onto git's own
+`--continue`/`--skip`/`--abort`. Resolution is **file-level**: **Compare** opens a
+side-by-side Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`),
+**Ours** / **Theirs** run `git checkout --ours/--theirs` and stage the result, and
+**Mark resolved** stages the working-tree file after you edit it. Liana never
+writes merge results to disk itself, and git's stderr still comes back through
+the API unchanged.
+
+## Submodules
+
+The detail pane lists configured submodules (`.gitmodules` + `git submodule
+status --recursive`) with a state badge — up to date, new commits, not
+initialized, or conflicted — and per-entry **History**, **Update**, **Sync URL**,
+and **Deinit** actions. **Update** runs `git submodule update --init` (add
+`--remote` to track the remote branch), **Sync URL** re-reads URLs from
+`.gitmodules`; both are network operations that run with `GIT_TERMINAL_PROMPT=0`
+and store no credentials. **History** opens the submodule's own `git log` in a
+read-only dialog. A gitlink change (mode 160000) is rendered as *"Subproject
+commit …"* rather than a line diff. Create a repo to try it with
+`npm run fixture:conflict` (a conflicted rebase plus a local submodule).

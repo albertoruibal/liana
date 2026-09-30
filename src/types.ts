@@ -96,6 +96,55 @@ export interface RepoStatus {
   entries: StatusEntry[];
 }
 
+/** How the two sides of an unmerged path differ, derived from the index stages. */
+export type ConflictType =
+  | 'both-modified'
+  | 'both-added'
+  | 'added-by-us'
+  | 'added-by-them'
+  | 'deleted-by-us'
+  | 'deleted-by-them';
+
+/** One unmerged index path (a conflict), from `git ls-files -u`. */
+export interface ConflictEntry {
+  path: string;
+  type: ConflictType;
+  /** Stage-1 (base) object id, or null when there is no common ancestor (add/add). */
+  baseHash: string | null;
+  /** Stage-2 (ours) object id, or null when that side deleted/never added the path. */
+  oursHash: string | null;
+  /** Stage-3 (theirs) object id, or null when that side deleted/never added the path. */
+  theirsHash: string | null;
+  /** True when the conflicted path is a gitlink (submodule). */
+  isSubmodule: boolean;
+}
+
+/** A merge / rebase / cherry-pick / revert left in progress by a conflict. */
+export interface MergeOperation {
+  kind: 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'none';
+  inProgress: boolean;
+  /** Commit the operation is applying onto (rebase base or merged/cherry-picked head). */
+  onto: string | null;
+  /** Number of unmerged paths. */
+  conflictCount: number;
+}
+
+/** The three stage contents for one conflicted path, for the resolve dialog. */
+export interface ConflictFile {
+  path: string;
+  type: ConflictType;
+  hasBase: boolean;
+  hasOurs: boolean;
+  hasTheirs: boolean;
+  /** True when any present version is binary (contents omitted). */
+  isBinary: boolean;
+  /** True when the path is a gitlink (submodule); contents are the commit ids. */
+  isSubmodule: boolean;
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+}
+
 /** One file changed by a commit, as reported by `git show --numstat/--name-status`. */
 export interface CommitFile {
   /** Current path; rename/copy destination when applicable. */
@@ -110,6 +159,8 @@ export interface CommitFile {
   deletions: number | null;
   /** True when git reports the change as binary (line counts are unavailable). */
   binary: boolean;
+  /** True when the path is a gitlink (mode 160000, a submodule) in the new tree. */
+  isSubmodule: boolean;
 }
 
 /** A configured remote with its fetch/push URL. */
@@ -169,6 +220,22 @@ export interface GitCommandRecord {
   failed: boolean;
   /** True for user-driven commands (push, commit, …) vs background reads (log, show, …). */
   userInitiated: boolean;
+}
+
+/** A configured submodule and its checked-out state. */
+export interface SubmoduleInfo {
+  /** Submodule name from `.gitmodules` (usually its path). */
+  name: string;
+  path: string;
+  url: string;
+  /** Configured tracking branch, or null when unset. */
+  branch: string | null;
+  /** Commit id recorded in the superproject's index/HEAD, or null when untracked. */
+  recordedHash: string | null;
+  /** Commit currently checked out in the submodule, or null when uninitialized. */
+  worktreeHash: string | null;
+  /** `current` (clean), `modified` (different commit), `uninitialized`, `conflicted`, or `untracked`. */
+  status: 'current' | 'modified' | 'uninitialized' | 'conflicted' | 'untracked';
 }
 
 /** Current git activity for one repository, for the status bar. */

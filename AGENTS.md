@@ -17,6 +17,8 @@ server (`electron/server.ts`) in the packaged app.
 - `npm run electron:build` — build `dist/` + `dist-electron/` (no installer)
 - `npm run electron:dist` — the above + electron-builder Linux AppImage/deb in `release/`
 - `npm run fixture` — regenerate `./test-repo`, the demo repository
+- `npm run fixture:conflict` — `./test-repo-conflict`: a repo left mid-rebase with
+  a conflict plus a local submodule, for exercising conflict resolution
 - E2E checks: the API is plain JSON over HTTP — drive it with `curl` against
   `http://localhost:5173/api/*` while `npm run dev` runs. Routes are documented in
   README.md. For visual checks use headless Chromium
@@ -38,16 +40,14 @@ server (`electron/server.ts`) in the packaged app.
   the client). When changing a git command, mirror it in both files and keep the
   types in `src/types.ts` identical on both sides. `npm run build` must not emit any
   `node:` import into `dist/assets/`.
-- **Network operations are limited to push / pull / login.** Clone, fetch,
-  remote *management* (add/rename/set-url), submodules, and conflict-resolution UI
-  stay out of scope. Push/pull/login are the only sanctioned network operations;
-  they must set `GIT_TERMINAL_PROMPT=0` so git never blocks on a terminal prompt,
-  and must surface git's stderr through `{error}` unchanged. Credentials come from
-  git's own credential helper / SSH agent — never persist secrets in the app.
-  If a request needs any other network capability, say so instead of adding it.
-- **Conflicts surface, never get hidden.** Rebase/cherry-pick failures return
-  git's stderr through the API (`{error}`); the UI shows it with `alert()`.
-  Don't swallow stderr or invent status codes.
+- **Network operations are limited to push / pull / login / submodules.**
+  Clone, fetch, and remote *management* (add/rename/set-url) stay out of scope.
+  Push/pull/login and submodule `init`/`update`/`sync`/`add` are the only
+  sanctioned network operations; they must set `GIT_TERMINAL_PROMPT=0` so git
+  never blocks on a terminal prompt, and must surface git's stderr through
+  `{error}` unchanged. Credentials come from git's own credential helper / SSH
+  agent — never persist secrets in the app. If a request needs any other network
+  capability, say so instead of adding it.
 - **Strict TS with `noUncheckedIndexedAccess`.** Index accesses need `?? fallback`
   or `!` when proven safe. `npm run build` must stay clean.
 - **`--date-order` is load-bearing.** The layout algorithm (src/layout.ts) assumes
@@ -66,3 +66,19 @@ server (`electron/server.ts`) in the packaged app.
   `/api/open` are unscoped. When adding a route, default it to scoped — resolve the
   path from the registry, never from a global. Both adapters (`dev.ts`,
   `electron/server.ts`) pass the header through to `handle`.
+
+## Conflict resolution & submodules
+
+- Resolve conflicts **file-level**: the UI shows base / ours / theirs from
+  `git show :1:/:2:/:3:<path>` and offers `git checkout --ours|--theirs` plus
+  `git add`; Liana never writes merge results to disk itself.
+- Merge / rebase / cherry-pick / revert state is always **read from git**
+  (`git rev-parse --git-path` on `rebase-merge`/`rebase-apply`/`MERGE_HEAD`/
+  `CHERRY_PICK_HEAD`/`REVERT_HEAD`), never inferred. Continue / skip / abort map
+  1:1 to git's own `--continue` / `--skip` / `--abort`.
+- Conflicts and submodule failures surface git's stderr through the API
+  (`{error}`) unchanged — don't swallow stderr or invent status codes.
+- Submodule network access (`init`/`update`/`sync`/`add`) uses the same
+  `GIT_TERMINAL_PROMPT=0` environment as push/pull and stores no credentials.
+- Gitlink (mode 160000) and submodule changes are rendered explicitly
+  ("Subproject commit …"), never as a line diff.

@@ -6,7 +6,7 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight,
 import { displayRefs, refIconHtml, remoteBranchName } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { CommitFile, GitCommandRecord, GitCommit, GitRef, GraphLayout, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry } from './types';
+import type { CommitFile, ConflictEntry, ConflictFile, ConflictType, GitCommandRecord, GitCommit, GitRef, GraphLayout, MergeOperation, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry, SubmoduleInfo } from './types';
 
 interface StateResponse {
   configured: boolean;
@@ -14,6 +14,9 @@ interface StateResponse {
   state?: RepoState;
   commits?: GitCommit[];
   status?: RepoStatus;
+  conflicts?: ConflictEntry[];
+  operation?: MergeOperation;
+  submodules?: SubmoduleInfo[];
 }
 
 /** A repository open in a tab. Holds per-tab view state so switching is instant. */
@@ -398,13 +401,137 @@ function syncSummaryHtml(): string {
   return `<p class="sync-status"><code>${esc(rs.upstream)}</code>${divergence}</p>`;
 }
 
+/** Human label for an operation kind, used in the conflict banner. */
+function operationLabel(kind: MergeOperation['kind']): string {
+  switch (kind) {
+    case 'rebase':
+      return 'Rebase';
+    case 'merge':
+      return 'Merge';
+    case 'cherry-pick':
+      return 'Cherry-pick';
+    case 'revert':
+      return 'Revert';
+    default:
+      return 'Operation';
+  }
+}
+
+/** Human label for a conflict type. */
+function conflictTypeLabel(type: ConflictType): string {
+  switch (type) {
+    case 'both-modified':
+      return 'modified both sides';
+    case 'both-added':
+      return 'added both sides';
+    case 'added-by-us':
+      return 'added by us';
+    case 'added-by-them':
+      return 'added by them';
+    case 'deleted-by-us':
+      return 'deleted by us';
+    case 'deleted-by-them':
+      return 'deleted by them';
+  }
+}
+
+/** Banner listing the in-progress operation and its continue/skip/abort controls. */
+function operationBanner(op: MergeOperation): string {
+  const label = operationLabel(op.kind);
+  const n = op.conflictCount;
+  const noun = n === 1 ? 'file' : 'files';
+  const detail = n > 0 ? `${n} conflicted ${noun}` : 'all conflicts resolved';
+  const skip = op.kind === 'rebase' || op.kind === 'cherry-pick' || op.kind === 'revert';
+  return `<div class="conflict-banner">
+    <div class="conflict-banner-head">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span><strong>${esc(label)} in progress</strong> — ${detail}</span>
+    </div>
+    <div class="conflict-banner-actions">
+      <button type="button" class="btn btn-primary act" data-act="op-continue"${n > 0 ? ' disabled title="Resolve all files first"' : ''}>Continue</button>
+      ${skip ? '<button type="button" class="btn act" data-act="op-skip">Skip</button>' : ''}
+      <button type="button" class="btn btn-danger act" data-act="op-abort">Abort</button>
+    </div>
+  </div>`;
+}
+
+/** List of unresolved paths with per-file resolution controls. */
+function renderConflicts(conflicts: ConflictEntry[]): string {
+  if (conflicts.length === 0) return '';
+  let html = '<h4>Conflicts</h4><ul class="conflict-list">';
+  for (const c of conflicts) {
+    html += `<li class="conflict-item" data-path="${esc(c.path)}">
+      <div class="conflict-row">
+        <span class="status-badge s-conflict">!</span>
+        <span class="status-path" title="${esc(c.path)}">${esc(c.path)}</span>
+        <span class="conflict-kind">${conflictTypeLabel(c.type)}${c.isSubmodule ? ' · submodule' : ''}</span>
+      </div>
+      <div class="conflict-actions">
+        <button type="button" class="btn btn-sm act" data-act="view-conflict" data-path="${esc(c.path)}">Compare</button>
+        <button type="button" class="btn btn-sm act" data-act="take-ours" data-path="${esc(c.path)}">Ours</button>
+        <button type="button" class="btn btn-sm act" data-act="take-theirs" data-path="${esc(c.path)}">Theirs</button>
+        <button type="button" class="btn btn-sm act" data-act="mark-resolved" data-path="${esc(c.path)}">Mark resolved</button>
+      </div>
+    </li>`;
+  }
+  return html + '</ul>';
+}
+
+/** Human label for a submodule state. */
+function submoduleStateLabel(s: SubmoduleInfo['status']): string {
+  switch (s) {
+    case 'current':
+      return 'up to date';
+    case 'modified':
+      return 'new commits';
+    case 'uninitialized':
+      return 'not initialized';
+    case 'conflicted':
+      return 'conflicted';
+    case 'untracked':
+      return 'untracked';
+  }
+}
+
+/** Submodule panel: each entry with its state and the sanctioned network actions. */
+function renderSubmodules(submodules: SubmoduleInfo[]): string {
+  if (submodules.length === 0) return '';
+  let html = '<h4>Submodules</h4><ul class="submodule-list">';
+  for (const s of submodules) {
+    const short = s.worktreeHash?.slice(0, 8) ?? s.recordedHash?.slice(0, 8) ?? '';
+    const stateClass = s.status === 'current' ? 'sub-ok' : s.status === 'conflicted' ? 'sub-conflict' : 'sub-warn';
+    html += `<li class="submodule-item" data-path="${esc(s.path)}">
+      <div class="submodule-row">
+        <span class="sub-badge ${stateClass}">${esc(submoduleStateLabel(s.status))}</span>
+        <span class="status-path" title="${esc(s.path)}">${esc(s.path)}</span>
+        ${short ? `<code class="sub-hash">${esc(short)}</code>` : ''}
+      </div>
+      <div class="submodule-actions">
+        <button type="button" class="btn btn-sm act" data-act="sub-log" data-path="${esc(s.path)}">History</button>
+        <button type="button" class="btn btn-sm act" data-act="sub-update" data-path="${esc(s.path)}">Update</button>
+        <button type="button" class="btn btn-sm act" data-act="sub-sync" data-path="${esc(s.path)}">Sync URL</button>
+        <button type="button" class="btn btn-sm act btn-danger" data-act="sub-deinit" data-path="${esc(s.path)}">Deinit</button>
+      </div>
+    </li>`;
+  }
+  html += '</ul>';
+  html += '<p class="muted hint">Update fetches the recorded commit; Sync rewrites URLs from .gitmodules. Both use git\'s credential helper.</p>';
+  return html;
+}
+
 function renderDetail(commits: GitCommit[], state: RepoState | undefined, status: RepoStatus | undefined): void {
   const pane = $('#detail-pane');
   const commit = commits.find((c) => c.hash === selectedHash);
 
   let html = '';
+  const operation = lastResponse?.operation;
+  const conflicts = lastResponse?.conflicts ?? [];
+  if (operation?.inProgress) {
+    html += operationBanner(operation);
+    html += renderConflicts(conflicts);
+  }
   const dirty = status?.entries.length ?? 0;
-  if (dirty > 0) {
+  if (dirty > 0 && !operation?.inProgress) {
     const noun = dirty === 1 ? 'change' : 'changes';
     html += `<div class="dirty-banner">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -453,6 +580,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
     } else {
       html += '<p class="muted">Working tree clean</p>';
     }
+    html += renderSubmodules(lastResponse?.submodules ?? []);
     html += `<div class="detail-empty">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       <strong>No commit selected</strong>
@@ -553,10 +681,13 @@ async function loadCommitFiles(hash: string): Promise<void> {
           file.oldPath && file.oldPath !== file.path
             ? `<span class="file-old" title="${esc(file.oldPath)}">${esc(file.oldPath)} →</span> `
             : '';
-        return `<button type="button" class="file-row" data-path="${esc(file.path)}" data-old-path="${esc(file.oldPath ?? '')}">
+        const sub = file.isSubmodule
+          ? '<span class="file-submodule" title="Submodule (gitlink)">submodule</span>'
+          : '';
+        return `<button type="button" class="file-row" data-path="${esc(file.path)}" data-old-path="${esc(file.oldPath ?? '')}" data-submodule="${file.isSubmodule ? 'true' : 'false'}">
           <span class="status-badge ${statusClass(file.status)}">${esc(file.status)}</span>
           <span class="file-path" title="${esc(file.path)}">${rename}${esc(file.path)}</span>
-          <span class="file-stats">${fileStatHtml(file)}</span>
+          <span class="file-stats">${sub}${fileStatHtml(file)}</span>
         </button>`;
       })
       .join('');
@@ -617,9 +748,106 @@ function openDiffDialog(path: string, oldPath: string): void {
   })();
 }
 
+/** Open the modal side-by-side conflict viewer for one unresolved path. */
+async function openConflictDialog(path: string): Promise<void> {
+  if (!path) return;
+  conflictPath = path;
+  const dlg = $<HTMLDialogElement>('#conflict-dialog');
+  $('#conflict-title').textContent = path;
+  $('#conflict-subtitle').textContent = 'Loading…';
+  $('#conflict-body').innerHTML = '';
+  $('#conflict-status').textContent = '';
+  dlg.showModal();
+  try {
+    const { file } = await api<{ file: ConflictFile }>('/conflict-file', { path });
+    renderConflictDialog(file);
+  } catch (err) {
+    $('#conflict-subtitle').textContent = '';
+    $('#conflict-status').textContent = String(err);
+  }
+}
+
+/** One labelled column (Base / Ours / Theirs) for the conflict viewer. */
+function conflictColumn(label: string, side: 'base' | 'ours' | 'theirs', file: ConflictFile): string {
+  const present = side === 'base' ? file.hasBase : side === 'ours' ? file.hasOurs : file.hasTheirs;
+  const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
+  let body: string;
+  if (!present) body = '<div class="dl-note">(deleted)</div>';
+  else if (file.isBinary) body = '<div class="dl-note">Binary content.</div>';
+  else if (content === null) body = '<div class="dl-note">Unavailable.</div>';
+  else body = `<pre class="conflict-pre">${esc(content)}</pre>`;
+  return `<div class="conflict-col conflict-col-${side}">
+    <h4>${esc(label)}</h4>
+    ${body}
+  </div>`;
+}
+
+/** Paint the resolve dialog for a loaded conflict file. */
+function renderConflictDialog(file: ConflictFile): void {
+  $('#conflict-subtitle').textContent = conflictTypeLabel(file.type) + (file.isSubmodule ? ' · submodule' : '');
+  const note = file.isSubmodule
+    ? '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>'
+    : '<p class="muted hint">Choose a side to resolve, or edit the working-tree file and mark it resolved.</p>';
+  $('#conflict-body').innerHTML =
+    note +
+    `<div class="conflict-columns">
+      ${conflictColumn('Base', 'base', file)}
+      ${conflictColumn('Ours', 'ours', file)}
+      ${conflictColumn('Theirs', 'theirs', file)}
+    </div>`;
+  $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
+  $<HTMLButtonElement>('#conflict-theirs').disabled = !file.hasTheirs;
+}
+
+/** Show a gitlink change as "Subproject commit …" instead of a line diff. */
+function openSubprojectDialog(path: string): void {
+  const dlg = $<HTMLDialogElement>('#diff-dialog');
+  $('#diff-title').textContent = path;
+  $('#diff-subtitle').textContent = 'Submodule (gitlink) change';
+  $('#diff-status').textContent = '';
+  diffPatch = '';
+  $<HTMLDivElement>('#diff-body').innerHTML =
+    '<div class="dl-note">Subproject commit — the recorded gitlink changed. Liana does not diff submodule contents; open the submodule\'s History to browse it.</div>';
+  diffView = readDiffView();
+  dlg.showModal();
+}
+
+/** One graph node list (rendered as a simple table) for a submodule's history. */
+function renderSubmoduleHistory(commits: GitCommit[]): string {
+  if (commits.length === 0) return '<div class="dl-note">No commits in this submodule.</div>';
+  const rows = commits
+    .map(
+      (c) => `<div class="sub-log-row">
+        <code class="sub-log-hash">${esc(c.hash.slice(0, 8))}</code>
+        <span class="sub-log-subject" title="${esc(c.subject)}">${esc(c.subject)}</span>
+        <span class="sub-log-author">${esc(c.author)}</span>
+        <span class="sub-log-date">${isoDate(c.timestamp)}</span>
+      </div>`,
+    )
+    .join('');
+  return `<div class="sub-log">${rows}</div>`;
+}
+
+/** Open the read-only history of a submodule in a dialog. */
+async function openSubmoduleHistory(path: string): Promise<void> {
+  if (!path) return;
+  const dlg = $<HTMLDialogElement>('#submodule-log-dialog');
+  $('#submodule-log-title').textContent = `Submodule: ${path}`;
+  $('#submodule-log-subtitle').textContent = 'Loading…';
+  $('#submodule-log-body').innerHTML = '';
+  dlg.showModal();
+  try {
+    const { commits } = await api<{ commits: GitCommit[] }>('/submodule-log', { path });
+    $('#submodule-log-subtitle').textContent = `${commits.length} commit(s) · read-only`;
+    $('#submodule-log-body').innerHTML = renderSubmoduleHistory(commits);
+  } catch (err) {
+    $('#submodule-log-subtitle').textContent = '';
+    $('#submodule-log-body').innerHTML = `<div class="dl-note">${esc(String(err))}</div>`;
+  }
+}
+
 /** Lay out the sticky column header to match the SVG's computed column offsets. */
-function renderGraphHeader(m: GraphMetrics): void {
-  const header = $('#graph-header');
+function renderGraphHeader(m: GraphMetrics): void {  const header = $('#graph-header');
   header.style.width = `${m.totalW}px`;
   const labels: Array<[number, string]> = [
     [m.refX, 'Refs'],
@@ -1127,6 +1355,7 @@ async function refresh(): Promise<void> {
 
 async function runAction(btn: HTMLButtonElement): Promise<void> {
   const act = btn.dataset.act ?? '';
+  const path = btn.dataset.path ?? '';
   btn.disabled = true;
   try {
     if (act === 'stash-apply') {
@@ -1139,12 +1368,42 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
       if (!confirm('Drop this stash entry? The saved changes are discarded.')) return;
       await api('/stash-drop', { hash: selectedHash });
       selectedHash = null;
+    } else if (act === 'view-conflict') {
+      await openConflictDialog(path);
+      return;
+    } else if (act === 'take-ours') {
+      if (!confirm(`Resolve ${path} using our version?`)) return;
+      await api('/conflict-resolve', { path, resolution: 'ours' });
+    } else if (act === 'take-theirs') {
+      if (!confirm(`Resolve ${path} using their version?`)) return;
+      await api('/conflict-resolve', { path, resolution: 'theirs' });
+    } else if (act === 'mark-resolved') {
+      await api('/conflict-resolve', { path, resolution: 'resolved' });
+    } else if (act === 'op-continue') {
+      await api('/conflict-continue', {});
+    } else if (act === 'op-skip') {
+      if (!confirm('Skip this patch? Its changes are discarded.')) return;
+      await api('/conflict-skip', {});
+    } else if (act === 'op-abort') {
+      if (!confirm('Abort the in-progress operation? The working tree is restored first.')) return;
+      await api('/conflict-abort', {});
+    } else if (act === 'sub-log') {
+      await openSubmoduleHistory(path);
+      if (btn.isConnected) btn.disabled = false;
+      return;
+    } else if (act === 'sub-update') {
+      await api('/submodule-update', { init: true });
+    } else if (act === 'sub-sync') {
+      await api('/submodule-sync', {});
+    } else if (act === 'sub-deinit') {
+      if (!confirm(`Deinitialize ${path}? Its working tree is removed (the recorded commit is kept).`)) return;
+      await api('/submodule-deinit', { path, force: true });
     }
     await refresh();
   } catch (err) {
     alert(`Operation failed:\n${String(err)}`);
   } finally {
-    btn.disabled = false;
+    if (btn.isConnected) btn.disabled = false;
   }
 }
 
@@ -1411,6 +1670,37 @@ document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => 
     }
     renderDiffDialog();
   });
+});
+
+// --- Conflict resolution dialog ---
+
+/** Path the open conflict dialog refers to, so its buttons can resolve it. */
+let conflictPath = '';
+
+$('#conflict-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#conflict-dialog').close();
+});
+
+async function resolveFromDialog(resolution: 'ours' | 'theirs' | 'resolved'): Promise<void> {
+  const path = conflictPath;
+  if (!path) return;
+  try {
+    await api('/conflict-resolve', { path, resolution });
+    $<HTMLDialogElement>('#conflict-dialog').close();
+    await refresh();
+  } catch (err) {
+    $('#conflict-status').textContent = String(err);
+  }
+}
+
+$('#conflict-ours').addEventListener('click', () => void resolveFromDialog('ours'));
+$('#conflict-theirs').addEventListener('click', () => void resolveFromDialog('theirs'));
+$('#conflict-resolved').addEventListener('click', () => void resolveFromDialog('resolved'));
+
+$('#submodule-log-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#submodule-log-dialog').close();
 });
 
 // --- Toolbar "three dots" menu ---
@@ -1993,6 +2283,10 @@ $svg('#graph-svg').addEventListener('contextmenu', (ev) => {
 $('#detail-pane').addEventListener('click', (ev) => {
   const btn = (ev.target as Element).closest('button.file-row');
   if (!(btn instanceof HTMLButtonElement)) return;
+  if (btn.dataset.submodule === 'true') {
+    openSubprojectDialog(btn.dataset.path ?? '');
+    return;
+  }
   openDiffDialog(btn.dataset.path ?? '', btn.dataset.oldPath ?? '');
 });
 
@@ -2221,6 +2515,16 @@ document.addEventListener('keydown', (ev) => {
   const loginDlg = $<HTMLDialogElement>('#login-dialog');
   const aboutDlg = $<HTMLDialogElement>('#about-dialog');
   const diffDlg = $<HTMLDialogElement>('#diff-dialog');
+  const conflictDlg = $<HTMLDialogElement>('#conflict-dialog');
+  const submoduleDlg = $<HTMLDialogElement>('#submodule-log-dialog');
+  if (submoduleDlg.open) {
+    submoduleDlg.close();
+    return;
+  }
+  if (conflictDlg.open) {
+    conflictDlg.close();
+    return;
+  }
   if (diffDlg.open) {
     diffDlg.close();
     return;

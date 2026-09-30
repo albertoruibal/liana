@@ -307,6 +307,36 @@
       </menu>
     </dialog>
 
+    <dialog id="conflict-dialog">
+      <div class="dialog-head">
+        <div>
+          <h3 id="conflict-title">Resolve conflict</h3>
+          <p class="muted hint" id="conflict-subtitle"></p>
+        </div>
+      </div>
+      <div id="conflict-body" class="conflict-body"></div>
+      <div id="conflict-status" class="dialog-status"></div>
+      <menu>
+        <button class="btn" id="conflict-close" value="cancel">Close</button>
+        <button class="btn" id="conflict-ours" value="ok">Use ours</button>
+        <button class="btn" id="conflict-theirs" value="ok">Use theirs</button>
+        <button class="btn btn-primary" id="conflict-resolved" value="ok">Mark resolved</button>
+      </menu>
+    </dialog>
+
+    <dialog id="submodule-log-dialog">
+      <div class="dialog-head">
+        <div>
+          <h3 id="submodule-log-title">Submodule history</h3>
+          <p class="muted hint" id="submodule-log-subtitle"></p>
+        </div>
+      </div>
+      <div id="submodule-log-body" class="submodule-log-body"></div>
+      <menu>
+        <button class="btn btn-primary" id="submodule-log-close" value="cancel">Close</button>
+      </menu>
+    </dialog>
+
     <dialog id="about-dialog">
       <div class="dialog-head">
         <h3>About liana</h3>

@@ -3,5 +3,7 @@ dist/
 dist-electron/
 release/
 test-repo/
+test-repo-conflict/
+test-repo-conflict-submodule-src/
 *.log
 .DS_Store

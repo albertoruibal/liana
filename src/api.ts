@@ -8,13 +8,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import { parseCommitFiles } from './commit-files';
+import { parseCommitFiles, parseUnmerged } from './commit-files';
 import type {
   BranchInfo,
   CommitFile,
+  ConflictEntry,
+  ConflictFile,
   GitCommandRecord,
   GitCommit,
   GitRef,
+  MergeOperation,
   RebaseAction,
   RebaseTodoItem,
   RemoteStatus,
@@ -24,6 +27,7 @@ import type {
   ResetMode,
   StashInfo,
   StatusEntry,
+  SubmoduleInfo,
 } from './types';
 
 const UNIT = '\x1f';
@@ -101,6 +105,8 @@ function isUserInitiated(args: string[]): boolean {
   if (cmd === 'add' || cmd === 'rm') return false;
   if (cmd === 'stash' && args.includes('list')) return false;
   if (cmd === 'reset' && args.includes('--')) return false;
+  // `submodule status` is a background read; add/update/sync/deinit are user actions.
+  if (cmd === 'submodule' && args.includes('status')) return false;
   return true;
 }
 
@@ -437,17 +443,314 @@ async function cherryPick(
   return out.trim();
 }
 
+// --- Conflicts (merge / rebase / cherry-pick / revert) ---
+
+/** Resolve a possibly-relative `--git-path` result against the repo's work tree. */
+function repoAbs(repoPath: string, gitPath: string): string {
+  return path.isAbsolute(gitPath) ? gitPath : path.join(repoPath, gitPath);
+}
+
+/** True when the given git metadata path currently exists on disk. */
+async function gitPathExists(repoPath: string, name: string): Promise<boolean> {
+  try {
+    const out = (await gitRun(repoPath, ['rev-parse', '--git-path', name])).trim();
+    return fs.existsSync(repoAbs(repoPath, out));
+  } catch {
+    return false;
+  }
+}
+
+/** Read a file inside the git dir (e.g. `rebase-merge/onto`), or null when absent. */
+async function readGitPath(repoPath: string, name: string): Promise<string | null> {
+  try {
+    const out = (await gitRun(repoPath, ['rev-parse', '--git-path', name])).trim();
+    const abs = repoAbs(repoPath, out);
+    return fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merge / rebase / cherry-pick / revert state, read from git's own metadata files
+ * (never inferred). `onto` is the commit the operation applies onto when known.
+ * `conflicts` may be passed in to avoid a second `git ls-files -u`.
+ */
+async function loadMergeState(repoPath: string, conflicts?: ConflictEntry[]): Promise<MergeOperation> {
+  const [rebaseMerge, rebaseApply, mergeHead, cherryHead, revertHead, unmerged] = await Promise.all([
+    gitPathExists(repoPath, 'rebase-merge'),
+    gitPathExists(repoPath, 'rebase-apply'),
+    gitPathExists(repoPath, 'MERGE_HEAD'),
+    gitPathExists(repoPath, 'CHERRY_PICK_HEAD'),
+    gitPathExists(repoPath, 'REVERT_HEAD'),
+    conflicts ?? loadConflicts(repoPath),
+  ]);
+  let kind: MergeOperation['kind'] = 'none';
+  let onto: string | null = null;
+  if (rebaseMerge || rebaseApply) {
+    kind = 'rebase';
+    onto = await readGitPath(repoPath, 'rebase-merge/onto');
+  } else if (mergeHead) {
+    kind = 'merge';
+    onto = await readGitPath(repoPath, 'MERGE_HEAD');
+  } else if (cherryHead) {
+    kind = 'cherry-pick';
+    onto = await readGitPath(repoPath, 'CHERRY_PICK_HEAD');
+  } else if (revertHead) {
+    kind = 'revert';
+    onto = await readGitPath(repoPath, 'REVERT_HEAD');
+  }
+  return { kind, inProgress: kind !== 'none', onto, conflictCount: unmerged.length };
+}
+
+/** Unmerged index entries (`git ls-files -u`), parsed into conflict records. */
+async function loadConflicts(repoPath: string): Promise<ConflictEntry[]> {
+  const out = await gitRun(repoPath, ['ls-files', '-u', '-z']);
+  return parseUnmerged(out);
+}
+
+/** A blob or gitlink id as text, or null when the path has no such index stage. */
+async function readStage(repoPath: string, stage: number, filePath: string): Promise<string | null> {
+  try {
+    const out = await gitRun(repoPath, ['show', `:${stage}:${filePath}`]);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Heuristic for binary stage content: a NUL byte in the first 8000 chars. */
+function looksBinary(text: string): boolean {
+  return text.slice(0, 8000).includes('\0');
+}
+
+/** Base / ours / theirs contents for one conflicted path, for the resolve dialog. */
+async function loadConflictFile(repoPath: string, filePath: string): Promise<ConflictFile> {
+  const conflicts = await loadConflicts(repoPath);
+  const entry = conflicts.find((c) => c.path === filePath);
+  if (!entry) throw new GitError(`Not a conflicted path: ${filePath}`, 'Path is not unmerged', 400);
+  const [base, ours, theirs] = await Promise.all([
+    readStage(repoPath, 1, filePath),
+    readStage(repoPath, 2, filePath),
+    readStage(repoPath, 3, filePath),
+  ]);
+  const isBinary = [base, ours, theirs].some((t) => t !== null && looksBinary(t));
+  return {
+    path: filePath,
+    type: entry.type,
+    hasBase: entry.baseHash !== null,
+    hasOurs: entry.oursHash !== null,
+    hasTheirs: entry.theirsHash !== null,
+    isBinary,
+    isSubmodule: entry.isSubmodule,
+    base: isBinary && !entry.isSubmodule ? null : base,
+    ours: isBinary && !entry.isSubmodule ? null : ours,
+    theirs: isBinary && !entry.isSubmodule ? null : theirs,
+  };
+}
+
+/**
+ * Resolve one conflicted path to a side (`ours`/`theirs`) or accept the working-tree
+ * file as-is (`resolved`). Uses git's own checkout/rm/add; Liana writes no content.
+ */
+async function resolveConflict(
+  repoPath: string,
+  filePath: string,
+  resolution: 'ours' | 'theirs' | 'resolved',
+): Promise<void> {
+  if (resolution === 'resolved') {
+    await gitRun(repoPath, ['add', '--', filePath]);
+    return;
+  }
+  try {
+    await gitRun(repoPath, ['checkout', `--${resolution}`, '--', filePath]);
+    await gitRun(repoPath, ['add', '-A', '--', filePath]);
+  } catch {
+    // `git checkout --<side>` only fails when that side has no version of the path
+    // (a delete/modify conflict), so choosing it means removing the file.
+    await gitRun(repoPath, ['rm', '-f', '-q', '--', filePath]).catch(() => '');
+  }
+}
+
+/** Continue the in-progress operation without opening an editor. */
+async function continueOperation(repoPath: string): Promise<string> {
+  const { kind } = await loadMergeState(repoPath);
+  if (kind === 'none') throw new GitError('No operation to continue', '', 400);
+  if (kind === 'revert') {
+    // `git revert --continue` opens an editor; commit explicitly instead.
+    return (await gitRun(repoPath, ['commit', '--no-edit'])).trim();
+  }
+  return (await gitRun(repoPath, ['-c', 'core.editor=true', kind, '--continue'])).trim();
+}
+
+/** Abort the in-progress operation, restoring the pre-operation state. */
+async function abortOperation(repoPath: string): Promise<string> {
+  const { kind } = await loadMergeState(repoPath);
+  if (kind === 'none') throw new GitError('No operation to abort', '', 400);
+  return (await gitRun(repoPath, [kind, '--abort'])).trim();
+}
+
+/** Skip the current patch of an in-progress rebase, cherry-pick, or revert. */
+async function skipOperation(repoPath: string): Promise<string> {
+  const { kind } = await loadMergeState(repoPath);
+  if (kind === 'none') throw new GitError('No operation to skip', '', 400);
+  if (kind === 'merge') throw new GitError('Cannot skip a merge', 'Abort the merge instead', 400);
+  return (await gitRun(repoPath, [kind, '--skip'])).trim();
+}
+
+// --- Submodules ---
+
+/** Parse `.gitmodules` (`git config -f .gitmodules --get-regexp`) into per-name fields. */
+function parseGitmodules(out: string): Map<string, { path?: string; url?: string; branch?: string }> {
+  const mods = new Map<string, { path?: string; url?: string; branch?: string }>();
+  for (const line of out.split('\n')) {
+    const m = /^submodule\.(.+?)\.(path|url|branch)\s+(.*)$/.exec(line.trim());
+    if (!m) continue;
+    const name = m[1] ?? '';
+    const key = m[2] as 'path' | 'url' | 'branch';
+    const mod = mods.get(name) ?? {};
+    mod[key] = m[3] ?? '';
+    mods.set(name, mod);
+  }
+  return mods;
+}
+
+/** Configured submodules with their checked-out state (`git submodule status`). */
+async function loadSubmodules(repoPath: string): Promise<SubmoduleInfo[]> {
+  const cfgOut = await gitRun(repoPath, ['config', '-f', '.gitmodules', '--get-regexp', '.']).catch(() => '');
+  const mods = parseGitmodules(cfgOut);
+  const statusOut = await gitRun(repoPath, ['submodule', 'status', '--recursive']).catch(() => '');
+  const byPath = new Map<string, SubmoduleInfo>();
+  for (const [name, mod] of mods) {
+    if (!mod.path) continue;
+    byPath.set(mod.path, {
+      name,
+      path: mod.path,
+      url: mod.url ?? '',
+      branch: mod.branch ?? null,
+      recordedHash: null,
+      worktreeHash: null,
+      status: 'uninitialized',
+    });
+  }
+  for (const raw of statusOut.split('\n')) {
+    if (!raw.trim()) continue;
+    const prefix = raw[0] ?? ' ';
+    const rest = raw.slice(1);
+    const m = /^([0-9a-f]{7,64})\s+(\S+)/.exec(rest);
+    if (!m) continue;
+    const hash = m[1] ?? '';
+    const subPath = m[2] ?? '';
+    const entry = byPath.get(subPath) ?? {
+      name: subPath,
+      path: subPath,
+      url: '',
+      branch: null,
+      recordedHash: null,
+      worktreeHash: null,
+      status: 'untracked' as const,
+    };
+    if (prefix === '-') {
+      entry.recordedHash = hash;
+      entry.worktreeHash = null;
+      entry.status = 'uninitialized';
+    } else {
+      entry.worktreeHash = hash;
+      entry.status = prefix === '+' ? 'modified' : prefix === 'U' ? 'conflicted' : 'current';
+    }
+    byPath.set(subPath, entry);
+  }
+  for (const entry of byPath.values()) {
+    if (entry.recordedHash === null) {
+      // Recorded commit id lives in the superproject's index for the gitlink.
+      try {
+        const out = (await gitRun(repoPath, ['ls-files', '--stage', '--', entry.path])).trim();
+        const m = /^\d+\s+([0-9a-f]+)/.exec(out);
+        entry.recordedHash = m?.[1] ?? null;
+      } catch {
+        entry.recordedHash = null;
+      }
+    }
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Run a network submodule command with the same no-prompt environment as push/pull. */
+async function submoduleNetwork(repoPath: string, args: string[]): Promise<string> {
+  return (await gitRun(repoPath, ['submodule', ...args], NET_ENV)).trim();
+}
+
+/** `git submodule update`; `--init` initializes, `--remote` tracks the remote branch. */
+async function submoduleUpdate(
+  repoPath: string,
+  opts: { remote?: boolean; init?: boolean } = {},
+): Promise<string> {
+  const args = ['update'];
+  if (opts.init) args.push('--init');
+  if (opts.remote) args.push('--remote');
+  return submoduleNetwork(repoPath, args);
+}
+
+/** `git submodule sync --recursive`: update the submodule URLs from `.gitmodules`. */
+async function submoduleSync(repoPath: string): Promise<string> {
+  return submoduleNetwork(repoPath, ['sync', '--recursive']);
+}
+
+/** `git submodule add`: clone `url` into `path` (defaults to a derived directory). */
+async function submoduleAdd(
+  repoPath: string,
+  url: string,
+  dest?: string,
+  branch?: string,
+): Promise<string> {
+  const args = ['add', '-q'];
+  if (branch?.trim()) args.push('-b', branch.trim());
+  args.push(url);
+  if (dest?.trim()) args.push(dest.trim());
+  return submoduleNetwork(repoPath, args);
+}
+
+/** `git submodule deinit <path>`: unregister a submodule and clear its work tree. */
+async function submoduleDeinit(repoPath: string, dest: string, force = false): Promise<string> {
+  const args = ['deinit'];
+  if (force) args.push('-f');
+  args.push('--', dest);
+  return (await gitRun(repoPath, ['submodule', ...args])).trim();
+}
+
+/**
+ * History of a submodule, read by running the graph's `git log` inside the
+ * submodule's own repository. `subPath` is resolved under `repoPath` and must not
+ * escape it.
+ */
+async function loadSubmoduleLog(
+  repoPath: string,
+  subPath: string,
+  limit = 300,
+): Promise<GitCommit[]> {
+  const abs = path.resolve(repoPath, subPath);
+  const root = path.resolve(repoPath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    throw new GitError(`Invalid submodule path: ${subPath}`, 'Path is outside the repository', 400);
+  }
+  if (!fs.existsSync(abs)) {
+    throw new GitError(`Submodule not initialized: ${subPath}`, 'Run submodule update first', 400);
+  }
+  return loadLog(abs, limit);
+}
+
 /**
  * Files changed by a commit, with per-file line counts. Uses `--first-parent` so a
  * merge commit reports the changes it introduces relative to its mainline parent,
  * matching `git show`.
  */
 async function commitFiles(repoPath: string, hash: string): Promise<CommitFile[]> {
-  const [nameStatusOut, numstatOut] = await Promise.all([
+  const [nameStatusOut, numstatOut, rawOut] = await Promise.all([
     gitRun(repoPath, ['show', '--name-status', '-z', '--format=', '--find-renames', '--first-parent', hash]),
     gitRun(repoPath, ['show', '--numstat', '-z', '--format=', '--find-renames', '--first-parent', hash]),
+    gitRun(repoPath, ['show', '--raw', '-z', '--format=', '--find-renames', '--first-parent', hash]),
   ]);
-  return parseCommitFiles(nameStatusOut, numstatOut);
+  return parseCommitFiles(nameStatusOut, numstatOut, rawOut);
 }
 
 /** Unified diff for one file of a commit; `oldPath` included so renames diff as renames. */
@@ -947,11 +1250,20 @@ export function createApi(defaultRepo: string | null): Api {
       if (!entry) return { status: 400, body: { error: 'Unknown repository' } };
       const repoPath = entry.path;
       if (route === '/state' && method === 'GET') {
-        const [{ stashes, hidden }, { state, fingerprint: refsPrint }, status] = await Promise.all([
-          loadStashes(repoPath),
-          loadRepoRefs(repoPath),
-          loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
-        ]);
+        const [{ stashes, hidden }, { state, fingerprint: refsPrint }, status, conflicts, submodules] =
+          await Promise.all([
+            loadStashes(repoPath),
+            loadRepoRefs(repoPath),
+            loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
+            loadConflicts(repoPath).catch(() => [] as ConflictEntry[]),
+            loadSubmodules(repoPath).catch(() => [] as SubmoduleInfo[]),
+          ]);
+        let operation: MergeOperation = { kind: 'none', inProgress: false, onto: null, conflictCount: 0 };
+        try {
+          operation = await loadMergeState(repoPath, conflicts);
+        } catch {
+          // Leave the neutral operation when git metadata can't be read.
+        }
         const fingerprint = `${refsPrint}\nstash:${[...stashes.keys()].sort().join(',')}`;
         const cacheKey = repoId ?? repoPath;
         const cached = logCache.get(cacheKey);
@@ -964,11 +1276,82 @@ export function createApi(defaultRepo: string | null): Api {
         }
         return {
           status: 200,
-          body: { configured: true, repoPath, state, commits, status },
+          body: { configured: true, repoPath, state, commits, status, conflicts, operation, submodules },
         };
       }
       if (route === '/activity' && method === 'GET') {
         return { status: 200, body: repoActivity(repoPath) };
+      }
+
+      if (route === '/conflicts' && method === 'GET') {
+        const conflicts = await loadConflicts(repoPath);
+        const operation = await loadMergeState(repoPath, conflicts);
+        return { status: 200, body: { ok: true, conflicts, operation } };
+      }
+      if (route === '/conflict-file' && method === 'POST') {
+        const { path: filePath } = JSON.parse(rawBody) as { path?: string };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const file = await loadConflictFile(repoPath, filePath.trim());
+        return { status: 200, body: { ok: true, file } };
+      }
+      if (route === '/conflict-resolve' && method === 'POST') {
+        const { path: filePath, resolution } = JSON.parse(rawBody) as {
+          path?: string;
+          resolution?: 'ours' | 'theirs' | 'resolved';
+        };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        if (resolution !== 'ours' && resolution !== 'theirs' && resolution !== 'resolved') {
+          return { status: 400, body: { error: 'Invalid resolution' } };
+        }
+        await resolveConflict(repoPath, filePath.trim(), resolution);
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/conflict-continue' && method === 'POST') {
+        const out = await continueOperation(repoPath);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/conflict-abort' && method === 'POST') {
+        const out = await abortOperation(repoPath);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/conflict-skip' && method === 'POST') {
+        const out = await skipOperation(repoPath);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/submodules' && method === 'GET') {
+        const submodules = await loadSubmodules(repoPath);
+        return { status: 200, body: { ok: true, submodules } };
+      }
+      if (route === '/submodule-update' && method === 'POST') {
+        const { remote, init } = JSON.parse(rawBody) as { remote?: boolean; init?: boolean };
+        const out = await submoduleUpdate(repoPath, { remote, init });
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/submodule-sync' && method === 'POST') {
+        const out = await submoduleSync(repoPath);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/submodule-add' && method === 'POST') {
+        const { url, path: dest, branch } = JSON.parse(rawBody) as {
+          url?: string;
+          path?: string;
+          branch?: string;
+        };
+        if (!url?.trim()) return { status: 400, body: { error: 'Missing URL' } };
+        const out = await submoduleAdd(repoPath, url.trim(), dest?.trim(), branch?.trim());
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/submodule-deinit' && method === 'POST') {
+        const { path: dest, force } = JSON.parse(rawBody) as { path?: string; force?: boolean };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const out = await submoduleDeinit(repoPath, dest.trim(), force === true);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/submodule-log' && method === 'POST') {
+        const { path: subPath } = JSON.parse(rawBody) as { path?: string };
+        if (!subPath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const commits = await loadSubmoduleLog(repoPath, subPath.trim());
+        return { status: 200, body: { ok: true, commits } };
       }
 
       if (route === '/commit' && method === 'POST') {

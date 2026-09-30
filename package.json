@@ -13,6 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "fixture": "bash scripts/make-fixture-repo.sh test-repo",
+    "fixture:conflict": "bash scripts/make-conflict-fixture.sh test-repo-conflict",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json",
     "electron:compile": "node scripts/build-electron.mjs",
     "electron:dev": "node scripts/electron-dev.mjs",
