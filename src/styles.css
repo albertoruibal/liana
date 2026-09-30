@@ -1636,29 +1636,43 @@ button.file-row .file-stats {
   color: var(--fg-faint);
 }
 
-/* Side-by-side rows */
-.dl-split-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-width: max-content;
+/* Side-by-side: two independent scroll panes */
+.diff-body.is-split {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
 }
 
-.dl-split-row .dl-cell {
-  display: grid;
-  grid-template-columns: 3.5em 1fr;
+.dl-split {
+  display: flex;
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 
-.dl-split-row .dl-cell:nth-child(2) {
+.dl-split-pane {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow: auto;
+}
+
+.dl-split-pane.dl-split-new {
   border-left: 1px solid var(--border-strong);
 }
 
-.dl-split-row .dl-cell .dl-text {
+.dl-split-pane .dl-cell {
+  display: grid;
+  grid-template-columns: 3.5em 1fr;
+  width: max-content;
+  min-width: 100%;
+}
+
+.dl-split-pane .dl-cell .dl-text {
   padding: 0 12px 0 4px;
   white-space: pre;
 }
 
-.dl-split-row .dl-cell .dl-no {
+.dl-split-pane .dl-cell .dl-no {
   text-align: right;
   padding: 0 8px 0 6px;
   color: var(--fg-faint);
@@ -1666,19 +1680,19 @@ button.file-row .file-stats {
   border-right: 1px solid var(--border-soft);
 }
 
-.dl-split-row .dl-cell.dl-add { background: color-mix(in srgb, var(--add) 13%, transparent); }
-.dl-split-row .dl-cell.dl-del { background: color-mix(in srgb, var(--del) 13%, transparent); }
-.dl-split-row .dl-cell.dl-add .dl-text,
-.dl-split-row .dl-cell.dl-del .dl-text { color: var(--fg); }
-.dl-split-row .dl-cell.dl-empty { background: color-mix(in srgb, var(--fg-faint) 6%, transparent); }
+.dl-split-pane .dl-cell.dl-add { background: color-mix(in srgb, var(--add) 13%, transparent); }
+.dl-split-pane .dl-cell.dl-del { background: color-mix(in srgb, var(--del) 13%, transparent); }
+.dl-split-pane .dl-cell.dl-add .dl-text,
+.dl-split-pane .dl-cell.dl-del .dl-text { color: var(--fg); }
+.dl-split-pane .dl-cell.dl-empty { background: color-mix(in srgb, var(--fg-faint) 6%, transparent); }
 
 .diff-body .split-meta {
   padding: 0 12px;
   color: var(--fg-faint);
   background: color-mix(in srgb, var(--accent) 7%, transparent);
   white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: max-content;
+  min-width: 100%;
 }
 
 .diff-body .dl-hunk.split-meta {

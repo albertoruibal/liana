@@ -348,24 +348,33 @@ function splitCell(line: DiffLine | null, side: 'old' | 'new'): string {
   return `<div class="dl-cell dl-${line.kind}">${gutter(no)}<span class="dl-text">${esc(line.text)}</span></div>`;
 }
 
-/** Render parsed diff sections as a two-column (old | new) view. */
+/** Render parsed diff sections as two independent old | new scroll panes. */
 function renderSplit(sections: DiffSection[]): string {
-  const rows: string[] = [];
+  const oldRows: string[] = [];
+  const newRows: string[] = [];
   for (const section of sections) {
     for (const line of section.meta) {
-      rows.push(`<div class="dl-meta split-meta">${esc(line.text)}</div>`);
+      const html = `<div class="dl-meta split-meta">${esc(line.text)}</div>`;
+      oldRows.push(html);
+      newRows.push(html);
     }
     for (const hunk of section.hunks) {
-      rows.push(`<div class="dl-hunk split-meta">${esc(hunk.header)}</div>`);
+      const header = `<div class="dl-hunk split-meta">${esc(hunk.header)}</div>`;
+      oldRows.push(header);
+      newRows.push(header);
       const pairs: SplitRow[] = pairHunk(hunk);
       for (const [left, right] of pairs) {
-        rows.push(
-          `<div class="dl-split-row">${splitCell(left, 'old')}${splitCell(right, 'new')}</div>`,
-        );
+        oldRows.push(splitCell(left, 'old'));
+        newRows.push(splitCell(right, 'new'));
       }
     }
   }
-  return rows.join('');
+  return (
+    `<div class="dl-split">` +
+    `<div class="dl-split-pane dl-split-old">${oldRows.join('')}</div>` +
+    `<div class="dl-split-pane dl-split-new">${newRows.join('')}</div>` +
+    `</div>`
+  );
 }
 
 /** Render the dialog body for the given layout. */
@@ -721,7 +730,9 @@ let diffView: DiffView = 'unified';
 
 /** Repaint the open dialog body and sync the toggle's active state. */
 function renderDiffDialog(): void {
-  $<HTMLDivElement>('#diff-body').innerHTML = renderDiffBody(diffPatch, diffView);
+  const body = $<HTMLDivElement>('#diff-body');
+  body.classList.toggle('is-split', diffView === 'split');
+  body.innerHTML = renderDiffBody(diffPatch, diffView);
   document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.view === diffView);
     b.setAttribute('aria-pressed', String(b.dataset.view === diffView));
@@ -1683,6 +1694,23 @@ document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => 
     renderDiffDialog();
   });
 });
+
+// Keep the split panes' vertical scroll in step; horizontal stays independent.
+$<HTMLDivElement>('#diff-body').addEventListener(
+  'scroll',
+  (ev) => {
+    const source = ev.target;
+    if (!(source instanceof HTMLElement)) return;
+    if (!source.classList.contains('dl-split-pane')) return;
+    const body = $<HTMLDivElement>('#diff-body');
+    body.querySelectorAll<HTMLElement>('.dl-split-pane').forEach((pane) => {
+      if (pane !== source && pane.scrollTop !== source.scrollTop) {
+        pane.scrollTop = source.scrollTop;
+      }
+    });
+  },
+  true,
+);
 
 // --- Conflict resolution dialog ---
 
