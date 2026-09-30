@@ -458,7 +458,7 @@ function renderDetail(commits: GitCommit[], state: RepoState | undefined, status
       <span class="hint">Pick a commit in the graph to see details and actions.</span>
     </div>`;
   } else {
-    const short = commit.hash.slice(0, 7);
+    const short = commit.hash.slice(0, 8);
     html += `<div class="detail-head"><h3>${esc(commit.subject)}</h3>`;
     html += `<div class="meta-row">
       <span class="meta-chip">${avatarHtml(commit.author, true)}${esc(commit.author)}</span>
@@ -589,7 +589,7 @@ function openDiffDialog(path: string, oldPath: string): void {
   const dlg = $<HTMLDialogElement>('#diff-dialog');
   $('#diff-title').textContent = path;
   const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
-  $('#diff-subtitle').textContent = `${renamed}${path} · commit ${commit.hash.slice(0, 7)}`;
+  $('#diff-subtitle').textContent = `${renamed}${path} · commit ${commit.hash.slice(0, 8)}`;
   $('#diff-status').textContent = '';
   diffPatch = '';
   diffView = readDiffView();
@@ -789,7 +789,7 @@ function renderSearchResults(): void {
       li.innerHTML = `
         <div class="search-result-main">
           <span class="search-result-subject" title="${esc(m.commit.subject)}">${esc(m.commit.subject)}</span>
-          <code class="search-result-hash">${m.commit.hash.slice(0, 7)}</code>
+          <code class="search-result-hash">${m.commit.hash.slice(0, 8)}</code>
         </div>
         <div class="search-result-meta muted">
           <span class="search-result-author">${esc(m.commit.author)}</span>
@@ -1148,7 +1148,7 @@ function renderRebaseTodo(
             <option value="squash">squash</option>
             <option value="drop">drop</option>
           </select>
-          <code>${esc(c.hash.slice(0, 7))}</code>
+          <code>${esc(c.hash.slice(0, 8))}</code>
           <span class="rebase-subject">${esc(c.subject)}</span>
           <input class="rebase-message" type="text" placeholder="new message" />
         </li>`,
@@ -1182,7 +1182,7 @@ async function openRebaseDialog(onto: string): Promise<void> {
       alert('Nothing to rebase: HEAD is already based on this commit.');
       return;
     }
-    $('#rebase-summary').textContent = `${plan.items.length} commit(s) to replay onto ${plan.onto.slice(0, 7)} — oldest first`;
+    $('#rebase-summary').textContent = `${plan.items.length} commit(s) to replay onto ${plan.onto.slice(0, 8)} — oldest first`;
     rebaseOnto = onto;
     renderRebaseTodo(plan.items);
     dlg.showModal();
@@ -1816,9 +1816,9 @@ function menuTitle(target: ContextTarget): string {
   if (target.kind === 'empty') return 'Repository';
   if (target.kind === 'stash') return `Stash ${target.name ?? ''}`;
   if (target.hash && (lastResponse?.commits ?? []).some((c) => c.hash === target.hash && c.isStash)) {
-    return `Stash ${target.hash.slice(0, 7)}`;
+    return `Stash ${target.hash.slice(0, 8)}`;
   }
-  if (target.kind === 'commit' || target.hash === null) return `Commit ${target.hash?.slice(0, 7) ?? ''}`;
+  if (target.kind === 'commit' || target.hash === null) return `Commit ${target.hash?.slice(0, 8) ?? ''}`;
   return `${target.kind} ${target.name ?? ''}`;
 }
 
@@ -1854,7 +1854,7 @@ function buildMenu(target: ContextTarget): MenuItem[] {
   const isHeadTip = target.isHead ?? commit?.refs.some((r) => r.kind === 'head') ?? false;
   if (hash && currentBranch && !detached && !isHeadTip) {
     items.push({ separator: true });
-    const short = hash.slice(0, 7);
+    const short = hash.slice(0, 8);
     if (commit && commit.parents.length >= 2) {
       commit.parents.forEach((_p, i) => {
         items.push({
@@ -2006,7 +2006,7 @@ async function rebaseOntoBranch(name: string): Promise<void> {
 
 async function cherryPickFromMenu(hash: string, mainline?: number, record?: boolean): Promise<void> {
   const branch = lastResponse?.state?.headBranch ?? 'the current branch';
-  const what = mainline !== undefined ? `commit ${hash.slice(0, 7)} (-m ${mainline})` : `commit ${hash.slice(0, 7)}`;
+  const what = mainline !== undefined ? `commit ${hash.slice(0, 8)} (-m ${mainline})` : `commit ${hash.slice(0, 8)}`;
   if (!confirm(`Cherry-pick ${what} onto ${branch}?`)) return;
   try {
     await api('/cherry-pick', { ref: hash, mainline, record });
@@ -2083,7 +2083,7 @@ async function dropStash(hash: string): Promise<void> {
 function confirmReset(mode: ResetMode, hash: string): Promise<boolean> {
   const dlg = $<HTMLDialogElement>('#reset-dialog');
   $('#reset-summary').innerHTML =
-    `Reset the checked-out branch to <code>${esc(hash.slice(0, 7))}</code> with <b>--${mode}</b>.`;
+    `Reset the checked-out branch to <code>${esc(hash.slice(0, 8))}</code> with <b>--${mode}</b>.`;
   const hardWarn = mode === 'hard';
   $('#reset-warning').hidden = !hardWarn;
   $<HTMLButtonElement>('#reset-confirm').textContent = `Reset --${mode}`;
@@ -2134,7 +2134,7 @@ function openNameDialog(mode: NameMode, ref: string): void {
   nameMode = mode;
   nameRef = ref;
   $('#name-title').textContent = mode === 'branch' ? 'Create branch' : 'Create tag';
-  $('#name-subtitle').textContent = `At commit ${ref.slice(0, 7)}`;
+  $('#name-subtitle').textContent = `At commit ${ref.slice(0, 8)}`;
   $('#name-error').textContent = '';
   const input = $<HTMLInputElement>('#name-input');
   input.value = '';

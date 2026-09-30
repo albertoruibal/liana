@@ -30,7 +30,7 @@ const SUBJECT_W = 480;
 const AVATAR = 22;
 const AUTHOR_GAP = 18;
 const DATE_W = 116;
-const HASH_W = 64;
+const HASH_W = 70;
 const META_GAP = 20;
 const META_PAD = 28;
 
@@ -567,7 +567,7 @@ export function renderGraph(
     hashText.setAttribute('y', String(cy + 4));
     hashText.setAttribute('class', 'graph-meta-label graph-hash');
     hashText.dataset.hash = n.commit.hash;
-    hashText.textContent = n.commit.hash.slice(0, 7);
+    hashText.textContent = n.commit.hash.slice(0, 8);
     svg.appendChild(hashText);
 
     // Author name (measured earlier), re-appended to paint above the bands.
