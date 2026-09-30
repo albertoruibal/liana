@@ -6,6 +6,8 @@ A minimal git GUI: an interactive commit graph with
 remote management are deliberately absent — this is a visual history surgeon, not
 a forge client.
 
+![Liana: commit graph, refs, and detail pane](docs/liana.png)
+
 ## Architecture
 
 ```
