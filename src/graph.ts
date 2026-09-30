@@ -14,7 +14,7 @@ const CHIP_H = 21;
 const ICON = 13;
 const ICON_GAP = 5;
 // Gap between stacked icons on a merged local+remote chip (tighter than ICON_GAP).
-const ICON_STACK_GAP = -1;
+const ICON_STACK_GAP = 2;
 const CHIP_PAD = 8;
 // Maximum width of the ref column, padding included. Refs that don't fit are
 // collapsed into a "+N" badge revealed on hover, so the ref column stays narrow

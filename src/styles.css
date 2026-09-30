@@ -1426,9 +1426,9 @@ button.file-row .file-stats {
   margin-right: -1px;
 }
 
-/* A merged local+remote pill stacks both icons tightly. */
+/* A merged local+remote pill leaves a little room between the two icons. */
 .ref-pill .ref-icon + .ref-icon {
-  margin-left: -3px;
+  margin-left: 2px;
 }
 
 .ref-head {
