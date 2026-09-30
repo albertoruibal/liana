@@ -783,17 +783,6 @@ main {
   font-size: 12.5px;
 }
 
-#graph-svg text.graph-day-label {
-  fill: var(--fg-faint);
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
-
-#graph-svg line.graph-day-sep {
-  stroke: var(--border-soft, #221c37);
-  stroke-width: 1;
-}
-
 #graph-svg rect.graph-row-hover {
   fill: var(--accent);
   fill-opacity: 0.08;

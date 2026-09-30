@@ -2,7 +2,6 @@
 
 import type { GraphLayout, GraphNode, RefKind, RepoState } from './types';
 import { REF_ICON_PATHS, displayRefs, type DisplayRef } from './refs';
-import { isoDate } from './dates';
 
 const ROW_H = 26;
 const TOP_PAD = 24;
@@ -254,37 +253,6 @@ export function renderGraph(
   const x = (col: number) => laneLeft + col * COL_W;
   svg.setAttribute('width', String(width));
   svg.setAttribute('height', String(height));
-
-  // Day markers: a faint right-aligned date + full-width separator whenever the
-  // local calendar day changes between consecutive rows (--date-order keeps a
-  // day's commits contiguous). Painted first so it sits behind the graph.
-  const addDayMarkers = (): void => {
-    let prevDay: string | null = null;
-    for (const n of layout.nodes) {
-      const day = isoDate(n.commit.timestamp);
-      if (day === prevDay) continue;
-      prevDay = day;
-      const sepY = y(n.row) - ROW_H / 2;
-      const line = document.createElementNS(ns, 'line');
-      line.setAttribute('x1', '0');
-      line.setAttribute('x2', String(width));
-      line.setAttribute('y1', String(sepY));
-      line.setAttribute('y2', String(sepY));
-      line.setAttribute('class', 'graph-day-sep');
-      line.setAttribute('pointer-events', 'none');
-      svg.appendChild(line);
-
-      const label = document.createElementNS(ns, 'text');
-      label.setAttribute('x', String(laneRight));
-      label.setAttribute('y', String(y(n.row) + 4));
-      label.setAttribute('text-anchor', 'end');
-      label.setAttribute('class', 'graph-day-label');
-      label.setAttribute('pointer-events', 'none');
-      label.textContent = day;
-      svg.appendChild(label);
-    }
-  };
-  addDayMarkers();
 
   // Persistent tint for the selected row, under everything else.
   if (selectedHash) {
@@ -717,8 +685,7 @@ let measureCtx: CanvasRenderingContext2D | null | undefined;
 const fontCache = new Map<string, string>();
 
 function canvasFont(el: SVGTextElement): string {
-  const key =
-    el.classList.contains('ref-chip') ? 'chip' : el.classList.contains('graph-day-label') ? 'meta' : 'label';
+  const key = el.classList.contains('ref-chip') ? 'chip' : 'label';
   const cached = fontCache.get(key);
   if (cached) return cached;
   let font = '12.5px sans-serif';
