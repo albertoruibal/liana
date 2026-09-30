@@ -44,6 +44,8 @@ interface Chip {
   kind: string;
   /** Ref name the context-menu actions expect (remote prefix preserved for remote-only refs). */
   name: string;
+  /** Display label shown in the chip (for remote-only refs this drops the "<remote>/" prefix). */
+  label: string;
   width: number;
 }
 
@@ -194,7 +196,7 @@ export function renderGraph(
       const iconW = iconBlockWidth(first.icons.length);
       const reserve = candidates.length > 1 ? badgeReserve : 0;
       const labelW = Math.max(0, stripBudget - reserve - CHIP_PAD * 2 - iconW);
-      first.text.textContent = fitText(first.text, first.name, labelW);
+      first.text.textContent = fitText(first.text, first.label, labelW);
       first.width = measureText(first.text, first.text.textContent ?? '') + CHIP_PAD * 2 + iconW;
       const title = document.createElementNS(ns, 'title');
       title.textContent = first.name;
@@ -221,7 +223,7 @@ export function renderGraph(
       badge.textContent = `+${hidden.length}`;
       svg.appendChild(badge);
       const width = measureText(badge, badge.textContent ?? '') + CHIP_PAD * 2;
-      chips.push({ text: badge, icons: [], isHead: false, kind: 'overflow', name: '', width });
+      chips.push({ text: badge, icons: [], isHead: false, kind: 'overflow', name: '', label: '', width });
       rowW += CHIP_GAP + width;
     }
     if (rowW > 0) maxChipRowW = Math.max(maxChipRowW, rowW);
@@ -664,7 +666,7 @@ function buildRefChip(ns: string, root: SVGElement, ref: DisplayRef, cy: number,
   text.appendChild(title);
   root.appendChild(text);
   const width = measureText(text, ref.name) + CHIP_PAD * 2 + iconBlockWidth(icons.length);
-  return { text, icons, isHead, kind: ref.kind, name: ref.menuName, width };
+  return { text, icons, isHead, kind: ref.kind, name: ref.menuName, label: ref.name, width };
 }
 
 /** Width of the leading icon block plus the gap before the label. */
