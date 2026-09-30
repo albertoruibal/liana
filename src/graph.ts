@@ -275,7 +275,7 @@ export function renderGraph(
       svg.appendChild(line);
 
       const label = document.createElementNS(ns, 'text');
-      label.setAttribute('x', String(width - META_PAD));
+      label.setAttribute('x', String(laneRight));
       label.setAttribute('y', String(y(n.row) + 4));
       label.setAttribute('text-anchor', 'end');
       label.setAttribute('class', 'graph-day-label');
@@ -375,21 +375,6 @@ export function renderGraph(
     row.overflow = g;
     row.overflowRight = chipX - CHIP_GAP;
   };
-
-  // Separators: ref column | lanes | commit text | author.
-  const addSep = (sx: number): void => {
-    const line = document.createElementNS(ns, 'line');
-    line.setAttribute('x1', String(sx));
-    line.setAttribute('x2', String(sx));
-    line.setAttribute('y1', '0');
-    line.setAttribute('y2', String(height));
-    line.setAttribute('stroke', 'var(--border-soft, #221c37)');
-    line.setAttribute('stroke-width', '1');
-    line.setAttribute('pointer-events', 'none');
-    svg.appendChild(line);
-  };
-  if (refColumnW > 0) addSep(laneLeft - REF_GAP / 2);
-  addSep(laneRight + COLUMN_GAP / 2);
 
   // --- Edges first (under dots) ---
   for (const e of layout.edges) {
