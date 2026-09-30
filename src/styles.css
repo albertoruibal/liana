@@ -741,6 +741,39 @@ main {
   white-space: nowrap;
 }
 
+/* Empty-repository state shown in place of the graph. */
+.graph-empty[hidden] {
+  display: none;
+}
+
+.graph-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 26px 12px;
+  text-align: center;
+  color: var(--fg-dim);
+}
+
+.graph-empty svg {
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.graph-empty strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.graph-empty .hint {
+  max-width: 320px;
+}
+
 /* ------------------------------------------------------------------ *
  * Graph SVG element styling
  * ------------------------------------------------------------------ */

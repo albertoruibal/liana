@@ -631,6 +631,16 @@ function renderGraphHeader(m: GraphMetrics): void {
 }
 
 /**
+ * Swap between the graph scroller and the empty-repository placeholder. An empty
+ * repo has no columns to align, so the sticky header must come down with it rather
+ * than pile its labels up at the left edge.
+ */
+function setGraphEmpty(empty: boolean): void {
+  $('#graph-empty').hidden = !empty;
+  $('#graph-scroll').hidden = empty;
+}
+
+/**
  * Re-paint the graph/detail from the last fetched response without touching the
  * network. Selection and search are pure client state, so a click or keystroke
  * must never re-run the git subprocesses behind `/state`.
@@ -642,6 +652,10 @@ function renderCached(): void {
 function renderAll(resp: StateResponse): void {
   lastResponse = resp;
   const commits = resp.commits ?? [];
+  const empty = commits.length === 0;
+  // Unhide the scroller before measuring, so renderGraph can size its columns to
+  // the live viewport width.
+  setGraphEmpty(empty);
   const layout = layoutGraph(commits);
   currentLayout = layout;
   const matches = runSearch(commits);
@@ -650,13 +664,15 @@ function renderAll(resp: StateResponse): void {
   const highlight: GraphHighlight | null = searchQuery.trim()
     ? { matches: new Set(matches.map((m) => m.commit.hash)), current: searchCurrent }
     : null;
-  const metrics = renderGraph(
-    $svg('#graph-svg'),
-    { name: repoName, ...resp.state } as RepoState,
-    layout,
-    selectedHash,
-    highlight,
-  );
+  const svg = $svg('#graph-svg');
+  if (empty) {
+    svg.replaceChildren();
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+  }
+  const metrics = empty
+    ? EMPTY_METRICS
+    : renderGraph(svg, { name: repoName, ...resp.state } as RepoState, layout, selectedHash, highlight);
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
   updateSyncButtons();
@@ -968,6 +984,9 @@ function renderTabs(): void {
 
 /** Render the empty state shown when no repository is open. */
 function renderNoRepo(): void {
+  // No repo means no columns: hide the scroller (and its stale header) entirely.
+  $('#graph-scroll').hidden = true;
+  $('#graph-empty').hidden = true;
   renderGraphHeader(EMPTY_METRICS);
   const svg = $svg('#graph-svg');
   svg.replaceChildren();
