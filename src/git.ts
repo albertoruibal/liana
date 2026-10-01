@@ -462,6 +462,23 @@ export async function cherryPick(
   return out.trim();
 }
 
+/**
+ * Revert `ref` on the current branch, creating the inverse commit.
+ * `--no-edit` keeps git from opening an editor; `mainline` selects the parent
+ * of a merge commit (git -m N). A conflict leaves REVERT_HEAD for the banner.
+ */
+export async function revertCommit(
+  repoPath: string,
+  ref: string,
+  opts: { mainline?: number } = {},
+): Promise<string> {
+  const args = ['revert', '--no-edit'];
+  if (opts.mainline !== undefined) args.push('-m', String(opts.mainline));
+  args.push(ref);
+  const out = await git(repoPath, args);
+  return out.trim();
+}
+
 // --- Conflicts (mirrors src/api.ts) ---
 
 /** Resolve a possibly-relative `--git-path` result against the repo's work tree. */

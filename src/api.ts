@@ -443,6 +443,23 @@ async function cherryPick(
   return out.trim();
 }
 
+/**
+ * Revert `ref` on the current branch, creating the inverse commit.
+ * `--no-edit` keeps git from opening an editor; `mainline` selects the parent
+ * of a merge commit (git -m N). A conflict leaves REVERT_HEAD for the banner.
+ */
+async function revert(
+  repoPath: string,
+  ref: string,
+  opts: { mainline?: number } = {},
+): Promise<string> {
+  const args = ['revert', '--no-edit'];
+  if (opts.mainline !== undefined) args.push('-m', String(opts.mainline));
+  args.push(ref);
+  const out = await gitRun(repoPath, args);
+  return out.trim();
+}
+
 // --- Conflicts (merge / rebase / cherry-pick / revert) ---
 
 /** Resolve a possibly-relative `--git-path` result against the repo's work tree. */
@@ -1423,6 +1440,17 @@ export function createApi(defaultRepo: string | null): Api {
         const dirty = await dirtyGuard(repoPath, 'cherry-picking');
         if (dirty) return { status: 409, body: { error: dirty } };
         const out = await cherryPick(repoPath, ref.trim(), { mainline, record });
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/revert' && method === 'POST') {
+        const { ref, mainline } = JSON.parse(rawBody) as { ref?: string; mainline?: number };
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing ref' } };
+        if (mainline !== undefined && (!Number.isInteger(mainline) || mainline < 1)) {
+          return { status: 400, body: { error: 'mainline must be a positive integer' } };
+        }
+        const dirty = await dirtyGuard(repoPath, 'reverting');
+        if (dirty) return { status: 409, body: { error: dirty } };
+        const out = await revert(repoPath, ref.trim(), { mainline });
         return { status: 200, body: { ok: true, output: out } };
       }
       if (route === '/commit-diff' && method === 'POST') {

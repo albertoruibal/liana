@@ -1,7 +1,7 @@
 # Liana
 
 A minimal git GUI: an interactive commit graph with
-**commit**, **rebase**, and **cherry-pick**, integrated **conflict resolution**,
+**commit**, **rebase**, **cherry-pick**, and **revert**, integrated **conflict resolution**,
 **submodules**, plus **push**, **pull**, and **login** for repositories that
 already live on your machine. Clone, fetch, and remote management are
 deliberately absent — this is a visual history surgeon, not a forge client.
@@ -66,6 +66,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/rebase-start` | POST | `{onto}` | List commits `onto..HEAD` (oldest first) for an interactive rebase |
 | `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |
 | `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
+| `/api/revert` | POST | `{ref, mainline?}` | Revert a commit (`git revert --no-edit`); `mainline` = `-m N` (409 if dirty) |
 | `/api/commit-diff` | POST | `{hash}` | `git show --stat` text for the commit detail pane |
 | `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
@@ -94,8 +95,9 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/submodule-log` | POST | `{path}` | Read-only history of an initialized submodule |
 
 Mutations that git refuses on a dirty tree (`/api/rebase`, `/api/rebase-execute`,
-`/api/cherry-pick`, `/api/merge`) return HTTP **409** with a human message instead
-of raw stderr; failed operations keep the graph intact. Pull is the exception: local
+`/api/cherry-pick`, `/api/revert`, `/api/merge`) return HTTP **409** with a human
+message instead of raw stderr; failed operations keep the graph intact. Pull is the
+exception: local
 changes are allowed through and git's own error is surfaced if they'd be
 overwritten. Interactive rebase ships behind `INTERACTIVE_REBASE_ENABLED` in
 `src/config.ts`.
@@ -111,8 +113,9 @@ so a missing credential fails fast with git's error instead of hanging.
 
 Right-click a commit to create a branch/tag there, cherry-pick it onto the
 checked-out branch (with an optional `-x` to record the source hash, and `-m N`
-for a merge commit's parent), or reset the checked-out branch to it (soft / mixed
-/ hard, confirmed in a dialog); right-click a branch or tag chip (in the graph or
+for a merge commit's parent), revert it (also `-m N` for a merge commit), or reset
+the checked-out branch to it (soft / mixed / hard, confirmed in a dialog);
+right-click a branch or tag chip (in the graph or
 the detail pane) to check it out, merge or rebase the checked-out branch onto it,
 or delete it. Checking out
 a remote-tracking ref creates or reuses the matching local branch tracking it — no
