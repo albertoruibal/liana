@@ -6,6 +6,11 @@ A minimal git GUI: an interactive commit graph with
 already live on your machine. Clone, fetch, and remote management are
 deliberately absent — this is a visual history surgeon, not a forge client.
 
+> ## Disclaimer
+>
+> Some git actions (force push, hard reset, branch/tag deletion, rebase, …)
+> are **destructive**. Please be sure about what you are doing.
+
 ![Liana: commit graph, refs, and detail pane](docs/liana.png)
 
 ## Architecture
