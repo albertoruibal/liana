@@ -1569,9 +1569,7 @@ function currentTheme(): string {
 function applyTheme(theme: string): void {
   const id = isThemeId(theme) ? theme : DEFAULT_THEME;
   document.documentElement.dataset.theme = id;
-  const def = THEMES.find((t) => t.id === id);
-  $('#menu-theme-label').textContent = def ? `Theme: ${def.label}` : 'Theme';
-  themeMenu.querySelectorAll<HTMLButtonElement>('.theme-option').forEach((btn) => {
+  document.querySelectorAll<HTMLButtonElement>('.theme-option').forEach((btn) => {
     btn.setAttribute('aria-checked', String(btn.dataset.themeValue === id));
   });
 }
@@ -1596,16 +1594,16 @@ function initTheme(): void {
   applyTheme(isThemeId(stored) ? stored : DEFAULT_THEME);
 }
 
-const themeMenu = $('#theme-menu');
-
-function buildThemeMenu(): void {
-  themeMenu.replaceChildren();
+/** Build the theme grid inside the settings dialog. */
+function buildThemeOptions(): void {
+  const wrap = $('#theme-options');
+  wrap.replaceChildren();
   for (const theme of THEMES) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'theme-option';
     btn.dataset.themeValue = theme.id;
-    btn.setAttribute('role', 'menuitemradio');
+    btn.setAttribute('role', 'radio');
     btn.setAttribute('aria-checked', 'false');
 
     const swatch = document.createElement('span');
@@ -1629,40 +1627,11 @@ function buildThemeMenu(): void {
     check.appendChild(tick);
 
     btn.append(swatch, label, check);
-    btn.addEventListener('click', () => {
-      selectTheme(theme.id);
-      closeThemeMenu();
-    });
-    themeMenu.appendChild(btn);
+    btn.addEventListener('click', () => selectTheme(theme.id));
+    wrap.appendChild(btn);
   }
-}
-
-function closeThemeMenu(): void {
-  themeMenu.hidden = true;
-}
-
-function positionMenuUnder(menu: HTMLElement, anchor: HTMLElement): void {
-  const rect = anchor.getBoundingClientRect();
-  menu.hidden = false;
-  const menuRect = menu.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
-  menu.style.top = `${rect.bottom + 6}px`;
-  menu.style.left = `${left}px`;
-  menu.style.right = 'auto';
-}
-
-$('#btn-theme').addEventListener('click', () => {
-  if (!themeMenu.hidden) {
-    closeThemeMenu();
-    return;
-  }
-  // Anchor to the always-visible "more" button; #btn-theme lives inside the
-  // popover that is about to close, so its rect would collapse to 0,0.
-  closeMoreMenu();
-  buildThemeMenu();
   applyTheme(currentTheme());
-  positionMenuUnder(themeMenu, $('#btn-more'));
-});
+}
 
 $('#btn-about').addEventListener('click', () => {
   $('#about-version').textContent = __APP_VERSION__;
@@ -1787,9 +1756,6 @@ document.addEventListener('pointerdown', (ev) => {
   if (!moreMenu.hidden && !moreMenu.contains(ev.target as Node) && !moreButton.contains(ev.target as Node)) {
     closeMoreMenu();
   }
-  if (!themeMenu.hidden && !themeMenu.contains(ev.target as Node) && !$('#btn-theme').contains(ev.target as Node)) {
-    closeThemeMenu();
-  }
   if (
     !statusHistory.hidden &&
     !statusHistory.contains(ev.target as Node) &&
@@ -1800,7 +1766,6 @@ document.addEventListener('pointerdown', (ev) => {
 });
 window.addEventListener('resize', () => {
   closeMoreMenu();
-  closeThemeMenu();
   closeStatusHistory();
 });
 
@@ -2045,13 +2010,13 @@ function pickRemote(subtitle: string): Promise<string | null> {
   });
 }
 
+/** Populate the Remotes settings panel from the active repo's remote status. */
 function renderLoginDialog(): void {
   const rs = remoteStatus;
   const select = $<HTMLSelectElement>('#login-remote');
   select.replaceChildren();
   const urlLine = $('#login-remote-url');
   const helperLine = $('#login-helper');
-  $('#login-status').textContent = '';
   if (!rs || rs.remotes.length === 0) {
     const opt = document.createElement('option');
     opt.textContent = 'No remote configured';
@@ -2059,10 +2024,8 @@ function renderLoginDialog(): void {
     select.appendChild(opt);
     select.disabled = true;
     urlLine.textContent = '';
-    $<HTMLButtonElement>('#login-test').disabled = true;
   } else {
     select.disabled = false;
-    $<HTMLButtonElement>('#login-test').disabled = false;
     for (const r of rs.remotes) {
       const opt = document.createElement('option');
       opt.value = r.name;
@@ -2079,38 +2042,39 @@ function renderLoginDialog(): void {
 $('#btn-push').addEventListener('click', (ev) => void doPush(ev.shiftKey));
 $('#btn-pull').addEventListener('click', () => void doPull());
 
-$('#btn-login').addEventListener('click', () => {
-  renderLoginDialog();
-  closeMoreMenu();
-  $<HTMLDialogElement>('#login-dialog').showModal();
-});
-
 $('#login-remote').addEventListener('change', (ev) => {
   const name = (ev.target as HTMLSelectElement).value;
   const r = (remoteStatus?.remotes ?? []).find((x) => x.name === name);
   $('#login-remote-url').textContent = r?.url ?? '';
-  $('#login-status').textContent = '';
 });
 
-$('#login-test').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  const remote = $<HTMLSelectElement>('#login-remote').value;
-  if (!remote) return;
-  const status = $('#login-status');
-  status.textContent = 'Testing…';
-  void (async () => {
-    try {
-      await api('/remote-test', { remote });
-      status.textContent = `Connected to ${remote}.`;
-    } catch (err) {
-      status.textContent = String(err);
-    }
-  })();
+// --- Settings dialog: remotes and theme ---
+
+function showSettingsTab(tab: string): void {
+  document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
+    p.hidden = p.dataset.panel !== tab;
+  });
+  if (tab === 'remotes') renderLoginDialog();
+  if (tab === 'theme') applyTheme(currentTheme());
+}
+
+$('#btn-settings').addEventListener('click', () => {
+  closeMoreMenu();
+  buildThemeOptions();
+  showSettingsTab('remotes');
+  $<HTMLDialogElement>('#settings-dialog').showModal();
 });
 
-$('#login-close').addEventListener('click', (ev) => {
+document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((btn) => {
+  btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'remotes'));
+});
+
+$('#settings-close').addEventListener('click', (ev) => {
   ev.preventDefault();
-  $<HTMLDialogElement>('#login-dialog').close();
+  $<HTMLDialogElement>('#settings-dialog').close();
 });
 
 // Selection: click a dot/label — any SVG element tagged with data-hash.
@@ -2593,10 +2557,6 @@ document.addEventListener('keydown', (ev) => {
     closeSearch();
     return;
   }
-  if (!themeMenu.hidden) {
-    closeThemeMenu();
-    return;
-  }
   if (!moreMenu.hidden) {
     closeMoreMenu();
     return;
@@ -2614,7 +2574,7 @@ document.addEventListener('keydown', (ev) => {
   const nameDlg = $<HTMLDialogElement>('#name-dialog');
   const resetDlg = $<HTMLDialogElement>('#reset-dialog');
   const stashDlg = $<HTMLDialogElement>('#stash-dialog');
-  const loginDlg = $<HTMLDialogElement>('#login-dialog');
+  const settingsDlg = $<HTMLDialogElement>('#settings-dialog');
   const aboutDlg = $<HTMLDialogElement>('#about-dialog');
   const diffDlg = $<HTMLDialogElement>('#diff-dialog');
   const conflictDlg = $<HTMLDialogElement>('#conflict-dialog');
@@ -2635,8 +2595,8 @@ document.addEventListener('keydown', (ev) => {
     aboutDlg.close();
     return;
   }
-  if (loginDlg.open) {
-    loginDlg.close();
+  if (settingsDlg.open) {
+    settingsDlg.close();
     return;
   }
   if (resetDlg.open) {

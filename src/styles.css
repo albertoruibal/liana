@@ -1990,7 +1990,10 @@ dialog menu {
   margin-bottom: 8px;
 }
 
-dialog input[type='text'] {
+dialog input[type='text'],
+dialog input[type='password'],
+dialog input[type='number'],
+dialog select {
   width: 100%;
   margin-top: 6px;
   background: var(--bg-input);
@@ -1999,6 +2002,20 @@ dialog input[type='text'] {
   border-radius: var(--radius-sm);
   padding: 9px 10px;
   font: inherit;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+dialog select {
+  cursor: pointer;
+}
+
+dialog input[type='text']:focus-visible,
+dialog input[type='password']:focus-visible,
+dialog input[type='number']:focus-visible,
+dialog select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
 }
 
 /* About dialog */
@@ -2106,20 +2123,45 @@ dialog input[type='text'] {
   color: var(--fg-dim);
 }
 
-/* Theme picker: a popover of palette swatches. */
-.theme-menu {
-  min-width: 226px;
+/* Theme picker: a grid of palette swatches inside the settings dialog. */
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
 }
 
-.theme-menu .theme-option {
-  justify-content: flex-start;
+.theme-options .theme-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
 
-.theme-menu .theme-option[aria-checked='true'] {
+.theme-options .theme-option:hover {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+
+.theme-options .theme-option[aria-checked='true'] {
   background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--fg);
 }
 
-.theme-menu .theme-option .theme-check {
+.theme-options .theme-option .theme-check {
   width: 14px;
   height: 14px;
   margin-left: auto;
@@ -2128,7 +2170,7 @@ dialog input[type='text'] {
   opacity: 0;
 }
 
-.theme-menu .theme-option[aria-checked='true'] .theme-check {
+.theme-options .theme-option[aria-checked='true'] .theme-check {
   opacity: 1;
 }
 
@@ -2342,10 +2384,6 @@ dialog input[type='text'] {
 
 .sync-status code {
   font-size: 0.95em;
-}
-
-#login-dialog {
-  width: min(460px, 92vw);
 }
 
 .login-section {
@@ -2563,6 +2601,65 @@ dialog input[type='text'] {
 
 .status-spinner[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Settings dialog (remotes, theme)
+ * ------------------------------------------------------------------ */
+#settings-dialog {
+  width: min(560px, 92vw);
+  height: min(560px, 88vh);
+}
+
+#settings-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Match the repository tabs: rounded pills, accent-soft when active. */
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.settings-tab:hover {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+}
+
+.settings-tab.active {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 /* ------------------------------------------------------------------ *

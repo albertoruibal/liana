@@ -2,7 +2,7 @@
 
 A minimal git GUI: an interactive commit graph with
 **commit**, **rebase**, **cherry-pick**, and **revert**, integrated **conflict resolution**,
-**submodules**, plus **push**, **pull**, and **login** for repositories that
+**submodules**, plus **push**, **pull**, and **settings** for repositories that
 already live on your machine. Clone, fetch, and remote management are
 deliberately absent — this is a visual history surgeon, not a forge client.
 
@@ -110,8 +110,9 @@ overwritten. Interactive rebase ships behind `INTERACTIVE_REBASE_ENABLED` in
 The toolbar's **Pull** and **Push** buttons sync the checked-out branch: push sets
 the upstream (`git push -u`) the first time, pull merges with `git pull`. If a push
 is rejected as non-fast-forward the UI offers a `--force-with-lease` retry, and
-shift-clicking **Push** forces directly. **Login** opens a dialog showing the
-configured remotes and credential helper; it can test a remote with `git ls-remote`.
+shift-clicking **Push** forces directly. **Settings → Remotes** shows the active
+repository's configured remotes and credential helper, and **Settings → Theme**
+picks the color scheme.
 Credentials are never stored by Liana — they come from
 git's own credential helper or SSH agent, and git runs with `GIT_TERMINAL_PROMPT=0`
 so a missing credential fails fast with git's error instead of hanging.
