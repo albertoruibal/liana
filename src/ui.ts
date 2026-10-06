@@ -2081,31 +2081,54 @@ $('#settings-close').addEventListener('click', (ev) => {
 // Clicking empty SVG space clears the selection.
 const graphScroll = $('#graph-scroll');
 
-$svg('#graph-svg').addEventListener('click', (ev) => {
-  const el = ev.target as SVGElement;
-  const hash = el.dataset?.hash ?? null;
-  // Clicking the selected row again clears the selection.
-  selectedHash = hash === selectedHash ? null : hash;
-  renderCached();
-});
-
-// Double-click a branch pill in the graph to check it out. A remote-tracking
-// ref creates or reuses its local tracking branch. Stays a no-op when the ref is
-// already the checked-out branch.
-$svg('#graph-svg').addEventListener('dblclick', (ev) => {
+/** The branch pill under a graph click, if any. Only local and remote branch
+ * pills act on a double click; head/tag/stash chips and the "+N" badge don't. */
+function branchPillTarget(ev: Event): { kind: 'local' | 'remote'; name: string } | null {
   const node = (ev.target as Element).closest('[data-kind], [data-name]') as SVGElement | null;
   const kind = node?.dataset.kind;
   const name = node?.dataset.name ?? '';
-  if (!name || (kind !== 'local' && kind !== 'remote')) return;
+  if (!name || (kind !== 'local' && kind !== 'remote')) return null;
+  return { kind, name };
+}
+
+/** Check out the branch behind a pill; a no-op when it is already checked out. */
+function checkoutBranchPill(pill: { kind: 'local' | 'remote'; name: string }): void {
   const currentBranch = lastResponse?.state?.headBranch ?? '';
-  if (kind === 'local') {
-    if (name === currentBranch) return;
-    void checkout(name);
+  if (pill.kind === 'local') {
+    if (pill.name === currentBranch) return;
+    void checkout(pill.name);
   } else {
-    const local = remoteLocalName(name);
+    const local = remoteLocalName(pill.name);
     if (!local || local === currentBranch) return;
-    void checkout(name, true);
+    void checkout(pill.name, true);
   }
+}
+
+// A double click on a branch pill checks it out. The browser never delivers the
+// native dblclick over a pill: the first click's renderCached() rebuilds the
+// whole SVG, so the two clicks of the gesture land on different elements and
+// dblclick is only dispatched when both clicks share a target. Recognize the
+// pair manually instead — same pill, within the usual double-click window.
+const DBL_CLICK_MS = 500;
+let lastPillClick: { key: string; at: number } | null = null;
+
+$svg('#graph-svg').addEventListener('click', (ev) => {
+  const el = ev.target as SVGElement;
+  const hash = el.dataset?.hash ?? null;
+  const pill = branchPillTarget(ev);
+  const now = performance.now();
+  const key = pill ? `${pill.kind}\u0000${pill.name}` : '';
+  const repeated =
+    pill !== null && lastPillClick !== null && lastPillClick.key === key && now - lastPillClick.at < DBL_CLICK_MS;
+  lastPillClick = pill ? { key, at: now } : null;
+  if (repeated && pill) {
+    lastPillClick = null; // Don't let a third fast click re-trigger the checkout.
+    checkoutBranchPill(pill);
+    return;
+  }
+  // Clicking the selected row again clears the selection.
+  selectedHash = hash === selectedHash ? null : hash;
+  renderCached();
 });
 
 // Ctrl+wheel zooms about the cursor; plain wheel keeps scrolling the pane.
