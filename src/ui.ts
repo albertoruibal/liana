@@ -1695,7 +1695,7 @@ document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => 
   });
 });
 
-// Keep the split panes' vertical scroll in step; horizontal stays independent.
+// Keep the split panes' scroll in step on both axes.
 $<HTMLDivElement>('#diff-body').addEventListener(
   'scroll',
   (ev) => {
@@ -1704,9 +1704,9 @@ $<HTMLDivElement>('#diff-body').addEventListener(
     if (!source.classList.contains('dl-split-pane')) return;
     const body = $<HTMLDivElement>('#diff-body');
     body.querySelectorAll<HTMLElement>('.dl-split-pane').forEach((pane) => {
-      if (pane !== source && pane.scrollTop !== source.scrollTop) {
-        pane.scrollTop = source.scrollTop;
-      }
+      if (pane === source) return;
+      if (pane.scrollTop !== source.scrollTop) pane.scrollTop = source.scrollTop;
+      if (pane.scrollLeft !== source.scrollLeft) pane.scrollLeft = source.scrollLeft;
     });
   },
   true,
@@ -1737,6 +1737,23 @@ async function resolveFromDialog(resolution: 'ours' | 'theirs' | 'resolved'): Pr
 $('#conflict-ours').addEventListener('click', () => void resolveFromDialog('ours'));
 $('#conflict-theirs').addEventListener('click', () => void resolveFromDialog('theirs'));
 $('#conflict-resolved').addEventListener('click', () => void resolveFromDialog('resolved'));
+
+// Keep the Base / Ours / Theirs columns' scroll in step on both axes.
+$<HTMLDivElement>('#conflict-body').addEventListener(
+  'scroll',
+  (ev) => {
+    const source = ev.target;
+    if (!(source instanceof HTMLElement)) return;
+    if (!source.classList.contains('conflict-pre')) return;
+    const body = $<HTMLDivElement>('#conflict-body');
+    body.querySelectorAll<HTMLElement>('.conflict-pre').forEach((pre) => {
+      if (pre === source) return;
+      if (pre.scrollTop !== source.scrollTop) pre.scrollTop = source.scrollTop;
+      if (pre.scrollLeft !== source.scrollLeft) pre.scrollLeft = source.scrollLeft;
+    });
+  },
+  true,
+);
 
 $('#submodule-log-close').addEventListener('click', (ev) => {
   ev.preventDefault();
