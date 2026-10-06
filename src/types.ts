@@ -90,6 +90,8 @@ export interface StatusEntry {
   /** Worktree (Y) status char: 'M', 'D', '?', or ' ' when unchanged in the worktree */
   unstagedY: string;
   path: string;
+  /** Source path for a rename/copy (R/C), else null. */
+  oldPath: string | null;
 }
 
 export interface RepoStatus {

@@ -360,12 +360,16 @@ async function loadStatus(repoPath: string): Promise<RepoStatus> {
     const xy = line.slice(0, 2);
     const p = line.slice(3);
     if (!p) continue;
-    entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path: p });
     // In -z mode rename/copy entries are `XY <to>\0<from>\0`; the extra
-    // `<from>` token is not a status line, so skip it.
-    if ((xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') && i + 1 < tokens.length) {
-      i++;
+    // `<from>` token is the rename source, not a status line.
+    let oldPath: string | null = null;
+    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') {
+      if (i + 1 < tokens.length) {
+        oldPath = tokens[i + 1] || null;
+        i++;
+      }
     }
+    entries.push({ stagedX: xy[0] ?? ' ', unstagedY: xy[1] ?? ' ', path: p, oldPath });
   }
   return { entries };
 }
@@ -790,6 +794,58 @@ async function commitPatch(
       ...paths,
     ])
   ).trim();
+}
+
+// Git's well-known empty tree object id; diffing against it works on an unborn HEAD.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * Unified diff of a working-tree path against HEAD (staged + unstaged combined).
+ * `oldPath` is included so a rename diffs as a rename. On an unborn branch the
+ * empty tree stands in for HEAD, and untracked files (which `git diff HEAD`
+ * skips) fall back to a `/dev/null` comparison.
+ */
+async function worktreePatch(
+  repoPath: string,
+  filePath: string,
+  oldPath: string | null,
+): Promise<string> {
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath];
+  const base = (await headExists(repoPath)) ? 'HEAD' : EMPTY_TREE;
+  try {
+    const out = await gitRun(repoPath, [
+      'diff',
+      '--no-color',
+      '--find-renames',
+      base,
+      '--',
+      ...paths,
+    ]);
+    if (out.trim()) return out.trim();
+  } catch {
+    // Fall through to the untracked-file check below.
+  }
+  // An empty diff means either a clean tracked path (no output) or an untracked
+  // path (`git diff HEAD` ignores untracked files). Only the latter gets the
+  // /dev/null comparison, so a clean file doesn't render as brand new.
+  try {
+    await gitRun(repoPath, ['ls-files', '--error-unmatch', '--', filePath]);
+    return '';
+  } catch {
+    // Path is untracked — compare it against /dev/null below.
+  }
+  try {
+    return (
+      await gitRun(repoPath, ['diff', '--no-color', '--no-index', '--', '/dev/null', filePath])
+    ).trim();
+  } catch (err) {
+    // `--no-index` exits 1 whenever the files differ, and gitRun surfaces that
+    // stdout through GitError.stderr. A real failure (missing path) has none.
+    if (err instanceof GitError && err.stderr.trim().startsWith('diff --git')) {
+      return err.stderr.trim();
+    }
+    return '';
+  }
 }
 
 // --- Interactive rebase (Phase 5) ---
@@ -1470,6 +1526,19 @@ export function createApi(defaultRepo: string | null): Api {
         const patch = await commitPatch(
           repoPath,
           hash.trim(),
+          filePath.trim(),
+          typeof oldPath === 'string' && oldPath ? oldPath : null,
+        );
+        return { status: 200, body: { ok: true, patch } };
+      }
+      if (route === '/worktree-file-diff' && method === 'POST') {
+        const { path: filePath, oldPath } = JSON.parse(rawBody) as {
+          path?: string;
+          oldPath?: string | null;
+        };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const patch = await worktreePatch(
+          repoPath,
           filePath.trim(),
           typeof oldPath === 'string' && oldPath ? oldPath : null,
         );

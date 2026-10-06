@@ -662,11 +662,15 @@ function renderCommitFiles(entries: StatusEntry[]): void {
     list.innerHTML = entries
       .map((e) => {
         const code = e.stagedX === '?' ? '??' : e.stagedX !== ' ' ? e.stagedX : e.unstagedY;
-        return `<li><label class="checkbox-label file-row">
-          <input type="checkbox" class="commit-file" data-path="${esc(e.path)}" checked />
-          <span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : code)}">${esc(code)}</span>
-          <span class="status-path" title="${esc(e.path)}">${esc(e.path)}</span>
-        </label></li>`;
+        const oldPath = e.oldPath ?? '';
+        return `<li class="commit-file-item">
+          <label class="checkbox-label file-row">
+            <input type="checkbox" class="commit-file" data-path="${esc(e.path)}" checked />
+            <span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : code)}">${esc(code)}</span>
+            <span class="status-path" title="${esc(e.path)}">${esc(e.path)}</span>
+          </label>
+          <button type="button" class="btn btn-sm commit-view-diff" data-path="${esc(e.path)}" data-old-path="${esc(oldPath)}">Diff</button>
+        </li>`;
       })
       .join('');
   }
@@ -757,6 +761,34 @@ function openDiffDialog(path: string, oldPath: string): void {
     try {
       const { patch } = await api<{ patch: string }>('/commit-file-diff', {
         hash: commit.hash,
+        path,
+        oldPath: oldPath || null,
+      });
+      diffPatch = patch;
+      renderDiffDialog();
+    } catch (err) {
+      diffPatch = '';
+      $<HTMLDivElement>('#diff-body').textContent = '';
+      $('#diff-status').textContent = String(err);
+    }
+  })();
+}
+
+/** Open the modal diff viewer for a working-tree file from the commit dialog. */
+function openWorktreeDiff(path: string, oldPath: string): void {
+  const dlg = $<HTMLDialogElement>('#diff-dialog');
+  $('#diff-title').textContent = path;
+  const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
+  $('#diff-subtitle').textContent = `${renamed}${path} · working tree`;
+  $('#diff-status').textContent = '';
+  diffPatch = '';
+  diffView = readDiffView();
+  renderDiffDialog();
+  $<HTMLDivElement>('#diff-body').textContent = 'Loading diff…';
+  dlg.showModal();
+  void (async () => {
+    try {
+      const { patch } = await api<{ patch: string }>('/worktree-file-diff', {
         path,
         oldPath: oldPath || null,
       });
@@ -1827,6 +1859,16 @@ $('#commit-select-all').addEventListener('change', (ev) => {
 });
 
 $('#commit-file-list').addEventListener('change', () => updateCommitSelection());
+
+// The Diff button is a sibling of the row's <label>, so clicking it doesn't hit
+// the checkbox; delegate here to open the working-tree diff.
+$('#commit-file-list').addEventListener('click', (ev) => {
+  const target = ev.target;
+  if (!(target instanceof Element)) return;
+  const btn = target.closest<HTMLButtonElement>('.commit-view-diff');
+  if (!btn) return;
+  openWorktreeDiff(btn.dataset.path ?? '', btn.dataset.oldPath ?? '');
+});
 
 // Submit (not click) so Enter on a focused control runs the commit instead of
 // implicitly activating Cancel, the first submit button.

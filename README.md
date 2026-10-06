@@ -72,7 +72,9 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/rebase-execute` | POST | `{onto, items[]}` | Run the generated interactive-rebase todo |
 | `/api/cherry-pick` | POST | `{ref, mainline?, record?}` | Cherry-pick a commit; `mainline` = `-m N`, `record` = `-x` (409 if dirty) |
 | `/api/revert` | POST | `{ref, mainline?}` | Revert a commit (`git revert --no-edit`); `mainline` = `-m N` (409 if dirty) |
-| `/api/commit-diff` | POST | `{hash}` | `git show --stat` text for the commit detail pane |
+| `/api/commit-diff` | POST | `{hash}` | Changed files of a commit (`CommitFile[]`) for the commit detail pane |
+| `/api/commit-file-diff` | POST | `{hash, path, oldPath?}` | Unified diff of one file in a commit (`oldPath` includes a rename source) |
+| `/api/worktree-file-diff` | POST | `{path, oldPath?}` | Unified diff of a working-tree file against HEAD (staged + unstaged); untracked files diff against `/dev/null` |
 | `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
 | `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |

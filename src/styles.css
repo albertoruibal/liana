@@ -1876,6 +1876,22 @@ dialog menu {
   border-top: 1px solid var(--border-soft);
 }
 
+#commit-file-list li.commit-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+#commit-file-list li.commit-file-item .file-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#commit-file-list .commit-view-diff {
+  flex: 0 0 auto;
+}
+
 #commit-file-list .file-row {
   margin-bottom: 0;
   padding: 6px 4px;
