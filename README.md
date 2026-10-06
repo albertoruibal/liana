@@ -110,9 +110,8 @@ overwritten. Interactive rebase ships behind `INTERACTIVE_REBASE_ENABLED` in
 The toolbar's **Pull** and **Push** buttons sync the checked-out branch: push sets
 the upstream (`git push -u`) the first time, pull merges with `git pull`. If a push
 is rejected as non-fast-forward the UI offers a `--force-with-lease` retry, and
-shift-clicking **Push** forces directly. **Settings → Remotes** shows the active
-repository's configured remotes and credential helper, and **Settings → Theme**
-picks the color scheme.
+shift-clicking **Push** forces directly. **Settings → Theme** picks the color
+scheme of the app.
 Credentials are never stored by Liana — they come from
 git's own credential helper or SSH agent, and git runs with `GIT_TERMINAL_PROMPT=0`
 so a missing credential fails fast with git's error instead of hanging.

@@ -2010,45 +2010,10 @@ function pickRemote(subtitle: string): Promise<string | null> {
   });
 }
 
-/** Populate the Remotes settings panel from the active repo's remote status. */
-function renderLoginDialog(): void {
-  const rs = remoteStatus;
-  const select = $<HTMLSelectElement>('#login-remote');
-  select.replaceChildren();
-  const urlLine = $('#login-remote-url');
-  const helperLine = $('#login-helper');
-  if (!rs || rs.remotes.length === 0) {
-    const opt = document.createElement('option');
-    opt.textContent = 'No remote configured';
-    opt.value = '';
-    select.appendChild(opt);
-    select.disabled = true;
-    urlLine.textContent = '';
-  } else {
-    select.disabled = false;
-    for (const r of rs.remotes) {
-      const opt = document.createElement('option');
-      opt.value = r.name;
-      opt.textContent = r.name;
-      select.appendChild(opt);
-    }
-    urlLine.textContent = rs.remotes[0]?.url ?? '';
-  }
-  helperLine.textContent = rs?.credentialHelper
-    ? rs.credentialHelper
-    : 'none — git will use the SSH agent or prompt-free helpers only';
-}
-
 $('#btn-push').addEventListener('click', (ev) => void doPush(ev.shiftKey));
 $('#btn-pull').addEventListener('click', () => void doPull());
 
-$('#login-remote').addEventListener('change', (ev) => {
-  const name = (ev.target as HTMLSelectElement).value;
-  const r = (remoteStatus?.remotes ?? []).find((x) => x.name === name);
-  $('#login-remote-url').textContent = r?.url ?? '';
-});
-
-// --- Settings dialog: remotes and theme ---
+// --- Settings dialog: theme ---
 
 function showSettingsTab(tab: string): void {
   document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((b) => {
@@ -2057,19 +2022,18 @@ function showSettingsTab(tab: string): void {
   document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
     p.hidden = p.dataset.panel !== tab;
   });
-  if (tab === 'remotes') renderLoginDialog();
   if (tab === 'theme') applyTheme(currentTheme());
 }
 
 $('#btn-settings').addEventListener('click', () => {
   closeMoreMenu();
   buildThemeOptions();
-  showSettingsTab('remotes');
+  showSettingsTab('theme');
   $<HTMLDialogElement>('#settings-dialog').showModal();
 });
 
 document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((btn) => {
-  btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'remotes'));
+  btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'theme'));
 });
 
 $('#settings-close').addEventListener('click', (ev) => {

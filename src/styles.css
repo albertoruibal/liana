@@ -2386,34 +2386,6 @@ dialog select:focus-visible {
   font-size: 0.95em;
 }
 
-.login-section {
-  margin-bottom: 14px;
-}
-
-.login-section h4 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--fg-dim);
-}
-
-.login-section select {
-  width: 100%;
-  background: var(--bg-input);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font: inherit;
-}
-
-.login-url {
-  margin: 6px 0 0;
-  font-size: 12px;
-  word-break: break-all;
-}
-
 .remote-list {
   display: flex;
   flex-direction: column;

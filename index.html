@@ -311,33 +311,15 @@
       <div class="dialog-head">
         <h3>Settings</h3>
         <p class="muted hint">
-          The active repository's remotes and credentials, and the color scheme.
-          Liana never stores git credentials.
+          The active repository's color scheme.
         </p>
       </div>
       <div class="settings-tabs" role="tablist">
-        <button type="button" class="settings-tab" data-tab="remotes" role="tab">Remotes</button>
         <button type="button" class="settings-tab" data-tab="theme" role="tab">Theme</button>
       </div>
 
       <div class="settings-body">
-        <section class="settings-panel" data-panel="remotes">
-          <div class="login-section">
-            <h4>Remote</h4>
-            <select id="login-remote"></select>
-            <p id="login-remote-url" class="muted login-url"></p>
-          </div>
-          <div class="login-section">
-            <h4>Credential helper</h4>
-            <p id="login-helper" class="muted"></p>
-          </div>
-          <p class="muted hint">
-            Liana never stores git credentials. Push and pull authenticate via git's
-            credential helper or SSH agent.
-          </p>
-        </section>
-
-        <section class="settings-panel" data-panel="theme" hidden>
+        <section class="settings-panel" data-panel="theme">
           <div id="theme-options" class="theme-options" role="radiogroup" aria-label="Theme"></div>
         </section>
       </div>
