@@ -122,7 +122,8 @@ for a merge commit's parent), revert it (also `-m N` for a merge commit), or res
 the checked-out branch to it (soft / mixed / hard, confirmed in a dialog);
 right-click a branch or tag chip (in the graph or
 the detail pane) to check it out, merge or rebase the checked-out branch onto it,
-or delete it. Checking out
+or delete it. Double-clicking a branch chip in the graph also checks it out.
+Checking out
 a remote-tracking ref creates or reuses the matching local branch tracking it — no
 fetch, purely local. Deleting a remote branch runs `git push <remote> --delete`.
 

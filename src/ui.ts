@@ -2108,6 +2108,25 @@ $svg('#graph-svg').addEventListener('click', (ev) => {
   renderCached();
 });
 
+// Double-click a branch pill in the graph to check it out. A remote-tracking
+// ref creates or reuses its local tracking branch. Stays a no-op when the ref is
+// already the checked-out branch.
+$svg('#graph-svg').addEventListener('dblclick', (ev) => {
+  const node = (ev.target as Element).closest('[data-kind], [data-name]') as SVGElement | null;
+  const kind = node?.dataset.kind;
+  const name = node?.dataset.name ?? '';
+  if (!name || (kind !== 'local' && kind !== 'remote')) return;
+  const currentBranch = lastResponse?.state?.headBranch ?? '';
+  if (kind === 'local') {
+    if (name === currentBranch) return;
+    void checkout(name);
+  } else {
+    const local = remoteLocalName(name);
+    if (!local || local === currentBranch) return;
+    void checkout(name, true);
+  }
+});
+
 // Ctrl+wheel zooms about the cursor; plain wheel keeps scrolling the pane.
 graphScroll.addEventListener(
   'wheel',
