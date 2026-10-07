@@ -221,7 +221,8 @@ controls next to the list of unmerged paths. State is read from git itself —
 `rebase-merge`/`rebase-apply`/`MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD` for
 the operation — never inferred, and continue/skip/abort map 1:1 onto git's own
 `--continue`/`--skip`/`--abort`. Resolution is **file-level**: **Compare** opens a
-side-by-side Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`) beside an
+side-by-side Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`) with each
+side's changes highlighted against Base and the conflict-marker regions tinted in the
 **editable Result** pane seeded from the working-tree file with its conflict markers
 intact — edit it in Monaco and **Save & mark resolved** writes the file and stages
 it with `git add`. **Ours** / **Theirs** run `git checkout --ours/--theirs` and stage

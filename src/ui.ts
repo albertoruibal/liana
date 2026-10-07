@@ -1,7 +1,7 @@
 // UI entry: wires the graph pane, detail pane, toolbar actions, and dialogs.
 
 import { layoutGraph } from './layout';
-import { parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow } from './diff';
+import { diffLines, parsePatch, pairHunk, type DiffLine, type DiffSection, type SplitRow, type TextDiffLine } from './diff';
 import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight, type GraphMetrics } from './graph';
 import { displayRefs, refIconHtml, remoteBranchName } from './refs';
 import { isoDate, isoDateTime } from './dates';
@@ -944,11 +944,22 @@ function conflictColumn(label: string, side: 'base' | 'ours' | 'theirs', file: C
   if (!present) body = '<div class="dl-note">(deleted)</div>';
   else if (file.isBinary) body = '<div class="dl-note">Binary content.</div>';
   else if (content === null) body = '<div class="dl-note">Unavailable.</div>';
-  else body = `<pre class="conflict-pre">${esc(content)}</pre>`;
+  else if (side === 'base' || file.base === null) body = `<pre class="conflict-pre">${esc(content)}</pre>`;
+  else body = `<pre class="conflict-pre">${conflictLinesHtml(diffLines(file.base, content))}</pre>`;
   return `<div class="conflict-col conflict-col-${side}">
     <h4>${esc(label)}</h4>
     ${body}
   </div>`;
+}
+
+/** Render diff lines as preformatted rows, tinting added / deleted lines. */
+function conflictLinesHtml(lines: TextDiffLine[]): string {
+  return lines
+    .map((line) => {
+      const cls = line.kind === 'add' ? 'dl-add' : line.kind === 'del' ? 'dl-del' : '';
+      return `<span class="cl${cls ? ` ${cls}` : ''}">${esc(line.text)}</span>`;
+    })
+    .join('');
 }
 
 // Monaco editors mounted in the conflict dialog. Reference panes are read-only;
@@ -979,9 +990,9 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
       '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>';
   } else if (editable) {
     note =
-      '<p class="muted hint">Pick a side, or edit the Result below (conflict markers included) and save — saving writes the working-tree file and stages it.</p>';
+      '<p class="muted hint">Ours / Theirs highlight their changes against Base; the Result pane tints the conflict-marker regions. Pick a side, or edit the Result and save — saving writes the working-tree file and stages it.</p>';
   } else {
-    note = '<p class="muted hint">Choose a side to resolve this file.</p>';
+    note = '<p class="muted hint">Choose a side to resolve this file; the sides are highlighted against Base.</p>';
   }
 
   const cols = useMonaco
@@ -1027,7 +1038,14 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
     const host = body.querySelector<HTMLElement>(`.code-host[data-side="${side}"]`);
     if (!host) continue;
     const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
-    conflictHandles.push(code.createEditor(host, content ?? '', { path: file.path, readOnly: true }));
+    // Mark Ours / Theirs against Base with an inline read-only diff; Base is plain.
+    if (side !== 'base' && file.base !== null && content !== null) {
+      conflictHandles.push(
+        code.createDiffEditor(host, file.base, content, { path: file.path, sideBySide: false }),
+      );
+    } else {
+      conflictHandles.push(code.createEditor(host, content ?? '', { path: file.path, readOnly: true }));
+    }
   }
   if (editable) {
     const host = body.querySelector<HTMLElement>('#conflict-result-host');
@@ -1035,6 +1053,7 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
       conflictResult = code.createEditor(host, file.worktree ?? '', {
         path: file.path,
         readOnly: false,
+        conflictMarkers: true,
       });
     }
   }

@@ -1721,6 +1721,30 @@ ul.branch-list li:hover {
 .conflict-col-ours h4 { color: var(--ok, var(--accent)); }
 .conflict-col-theirs h4 { color: var(--warn, var(--accent-2)); }
 
+/* No-Monaco fallback: tint a side's added / deleted lines against Base. */
+.conflict-pre .cl {
+  display: block;
+  margin: 0 -8px;
+  padding: 0 8px;
+}
+.conflict-col-ours .conflict-pre .cl.dl-add,
+.conflict-col-theirs .conflict-pre .cl.dl-add {
+  background: color-mix(in srgb, var(--add) 15%, transparent);
+}
+.conflict-col-ours .conflict-pre .cl.dl-del,
+.conflict-col-theirs .conflict-pre .cl.dl-del {
+  background: color-mix(in srgb, var(--del) 15%, transparent);
+}
+
+/* Monaco conflict-marker decorations in the Result pane. */
+.conflict-marker-ours { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.conflict-marker-theirs { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.conflict-marker-base { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.conflict-marker-delim {
+  background: color-mix(in srgb, var(--fg-faint) 16%, transparent);
+  font-weight: 600;
+}
+
 .conflict-pre {
   flex: 1 1 auto;
   min-height: 0;

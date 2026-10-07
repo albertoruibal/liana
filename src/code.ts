@@ -145,11 +145,50 @@ export interface CodeHandle {
   dispose(): void;
 }
 
+/**
+ * Whole-line Monaco decorations marking git conflict-marker regions: the ours
+ * side (`<<<<<<<` … `=======`), the diff3 base (`|||||||` … `=======`), the
+ * theirs side (`=======` … `>>>>>>>`), and the delimiter lines themselves.
+ */
+function conflictMarkerDecorations(model: monaco.editor.ITextModel): monaco.editor.IModelDeltaDecoration[] {
+  const decorations: monaco.editor.IModelDeltaDecoration[] = [];
+  const add = (line: number, className: string): void => {
+    decorations.push({
+      range: new monaco.Range(line, 1, line, 1),
+      options: { isWholeLine: true, className, marginClassName: className },
+    });
+  };
+  let region: 'ours' | 'base' | 'theirs' | null = null;
+  for (let i = 1; i <= model.getLineCount(); i++) {
+    const line = model.getLineContent(i);
+    if (line.startsWith('<<<<<<<')) {
+      region = 'ours';
+      add(i, 'conflict-marker-delim');
+    } else if (line.startsWith('|||||||')) {
+      region = 'base';
+      add(i, 'conflict-marker-delim');
+    } else if (line.startsWith('=======')) {
+      region = region === 'ours' ? 'theirs' : null;
+      add(i, 'conflict-marker-delim');
+    } else if (line.startsWith('>>>>>>>')) {
+      region = null;
+      add(i, 'conflict-marker-delim');
+    } else if (region === 'ours') {
+      add(i, 'conflict-marker-ours');
+    } else if (region === 'base') {
+      add(i, 'conflict-marker-base');
+    } else if (region === 'theirs') {
+      add(i, 'conflict-marker-theirs');
+    }
+  }
+  return decorations;
+}
+
 /** Create a plain editor showing `value`; editable unless `readOnly` (default true). */
 export function createEditor(
   container: HTMLElement,
   value: string,
-  opts: { path?: string; readOnly?: boolean } = {},
+  opts: { path?: string; readOnly?: boolean; conflictMarkers?: boolean } = {},
 ): CodeHandle {
   const editor = monaco.editor.create(container, {
     ...commonOptions(),
@@ -158,13 +197,28 @@ export function createEditor(
     language: opts.path ? languageFor(opts.path) : 'plaintext',
     theme: ensureTheme(),
   });
+  let markerCollection: monaco.editor.IEditorDecorationsCollection | null = null;
+  let contentSub: monaco.IDisposable | null = null;
+  if (opts.conflictMarkers) {
+    const model = editor.getModel();
+    if (model) {
+      markerCollection = editor.createDecorationsCollection(conflictMarkerDecorations(model));
+      contentSub = model.onDidChangeContent(() => {
+        markerCollection?.set(conflictMarkerDecorations(model));
+      });
+    }
+  }
   return {
     kind: 'editor',
     setValue: (next) => editor.setValue(next),
     getValue: () => editor.getValue(),
     setSideBySide: () => {},
     focus: () => editor.focus(),
-    dispose: () => editor.dispose(),
+    dispose: () => {
+      contentSub?.dispose();
+      markerCollection?.clear();
+      editor.dispose();
+    },
   };
 }
 

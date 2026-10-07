@@ -81,6 +81,62 @@ export function parsePatch(patch: string): DiffSection[] {
   return sections;
 }
 
+/** One line of a plain two-text diff: unchanged, added, or deleted. */
+export interface TextDiffLine {
+  kind: 'context' | 'add' | 'del';
+  text: string;
+}
+
+/** Above this many cells, skip the LCS and mark every line as a replacement. */
+const MAX_DIFF_CELLS = 1_000_000;
+
+/**
+ * Diff two blobs line by line with a simple LCS (browser-safe, no Node). Used by
+ * the conflict dialog's no-Monaco fallback to mark a side against the base. Large
+ * inputs degrade to "all deleted, then all added" rather than allocating a huge table.
+ */
+export function diffLines(original: string, modified: string): TextDiffLine[] {
+  const a = original === '' ? [] : original.split('\n');
+  const b = modified === '' ? [] : modified.split('\n');
+  if (a.length * b.length > MAX_DIFF_CELLS) {
+    return [
+      ...a.map((text): TextDiffLine => ({ kind: 'del', text })),
+      ...b.map((text): TextDiffLine => ({ kind: 'add', text })),
+    ];
+  }
+
+  const n = a.length;
+  const m = b.length;
+  const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      const row = dp[i]!;
+      const next = dp[i + 1]!;
+      row[j] = a[i] === b[j] ? next[j + 1]! + 1 : Math.max(next[j]!, row[j + 1]!);
+    }
+  }
+
+  const out: TextDiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push({ kind: 'context', text: a[i]! });
+      i++;
+      j++;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+      out.push({ kind: 'del', text: a[i]! });
+      i++;
+    } else {
+      out.push({ kind: 'add', text: b[j]! });
+      j++;
+    }
+  }
+  while (i < n) out.push({ kind: 'del', text: a[i++]! });
+  while (j < m) out.push({ kind: 'add', text: b[j++]! });
+  return out;
+}
+
 /** One side-by-side row: the old-file cell and the new-file cell (either may be null). */
 export type SplitRow = [DiffLine | null, DiffLine | null];
 
