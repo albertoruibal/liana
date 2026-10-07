@@ -11,7 +11,7 @@ import { toast } from './toast';
 import { $ } from './dom';
 import { CodeHandle } from '../code';
 import { DiffLine, parsePatch } from '../diff';
-import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewJob, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
+import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewFile, ReviewJob, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
 import { invalidateAiConflict } from './ai-conflict';
 import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
@@ -272,46 +272,64 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
   }
 }
 
+// Signatures of the last model-log render, so a poll tick only rebuilds the
+// parts that changed (and doesn't reset the user's scroll while streaming).
+let logTraceSig = '';
+
+let logPromptsSig = '';
+
+let logOutput = '';
+
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
   $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
     job.protocol ? ` · ${job.protocol}` : ''
   }`;
   $('#review-log-trace-count').textContent = String(job.trace.length);
-  const ol = $('#review-log-trace');
-  ol.innerHTML =
-    job.trace.length === 0
-      ? '<li class="muted">No tool calls yet.</li>'
-      : job.trace
-          .map(
-            (t) =>
-              `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
-              `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-              `<span class="muted">${t.durationMs}ms</span></li>`,
-          )
-          .join('');
+  const traceSig = job.trace
+    .map((t) => `${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
+    .join('\u0001');
+  if (traceSig !== logTraceSig) {
+    logTraceSig = traceSig;
+    const ol = $('#review-log-trace');
+    ol.innerHTML =
+      job.trace.length === 0
+        ? '<li class="muted">No tool calls yet.</li>'
+        : job.trace
+            .map(
+              (t) =>
+                `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
+                `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+                `<span class="muted">${t.durationMs}ms</span></li>`,
+            )
+            .join('');
+  }
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
-  const prompts = $('#review-log-prompts');
-  // The job is polled continuously, so this runs repeatedly; keep expanded
-  // entries open and the scroll position stable across re-renders.
-  const openIdx = new Set<number>();
-  prompts.querySelectorAll<HTMLDetailsElement>('details[data-idx]').forEach((d) => {
-    if (d.open) openIdx.add(Number(d.dataset.idx));
-  });
-  const scrollTop = prompts.scrollTop;
-  prompts.innerHTML =
-    job.prompts.length === 0
-      ? '<p class="muted">No prompt sent yet.</p>'
-      : job.prompts
-          .map(
-            (p, i) =>
-              `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
-              `<pre>${esc(p.text)}</pre></details>`,
-          )
-          .join('');
-  prompts.scrollTop = scrollTop;
-  const out = $<HTMLPreElement>('#review-log-output');
-  out.textContent = job.output || '(no output captured yet)';
+  const promptsSig = job.prompts.map((p) => `${p.step}:${p.chars}:${p.truncated ? 1 : 0}`).join(',');
+  if (promptsSig !== logPromptsSig) {
+    logPromptsSig = promptsSig;
+    const prompts = $('#review-log-prompts');
+    // Keep expanded entries open across re-renders.
+    const openIdx = new Set<number>();
+    prompts.querySelectorAll<HTMLDetailsElement>('details[data-idx]').forEach((d) => {
+      if (d.open) openIdx.add(Number(d.dataset.idx));
+    });
+    prompts.innerHTML =
+      job.prompts.length === 0
+        ? '<p class="muted">No prompt sent yet.</p>'
+        : job.prompts
+            .map(
+              (p, i) =>
+                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
+                `<pre>${esc(p.text)}</pre></details>`,
+            )
+            .join('');
+  }
+  const output = job.output || '(no output captured yet)';
+  if (output !== logOutput) {
+    logOutput = output;
+    $<HTMLPreElement>('#review-log-output').textContent = output;
+  }
 }
 
 /** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
@@ -337,20 +355,54 @@ export const EXCERPT_MIN_HEIGHT = 56;
 
 export const EXCERPT_MAX_HEIGHT = 150;
 
+/** A comment's file plus its parsed diff lines, cached per `state.changes`. */
+interface ParsedCommentFile {
+  file: ReviewFile | undefined;
+  lines: DiffLine[];
+}
+
+let parsedCacheChanges: ReviewChanges | null = null;
+
+let parsedCacheByPath = new Map<string, ParsedCommentFile>();
+
+/**
+ * Parse a comment's file diff once per `state.changes`. The job is polled every
+ * 800ms while running, and `state.changes` keeps its identity across those polls,
+ * so this avoids re-parsing the whole patch for every comment on every tick.
+ */
+function parsedCommentFile(state: ReviewTabState, c: ReviewComment): ParsedCommentFile {
+  const changes = state.changes;
+  if (parsedCacheChanges !== changes) {
+    parsedCacheChanges = changes;
+    parsedCacheByPath = new Map();
+  }
+  const cached = parsedCacheByPath.get(c.filePath);
+  if (cached) return cached;
+  const file = changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
+  const lines = file ? parsePatch(file.diff).flatMap((s) => s.hunks).flatMap((h) => h.lines) : [];
+  const entry: ParsedCommentFile = { file, lines };
+  parsedCacheByPath.set(c.filePath, entry);
+  return entry;
+}
+
+/** Index of the comment's anchor line in a parsed diff, or -1 when not found. */
+function anchorIndex(lines: DiffLine[], c: ReviewComment): number {
+  if (c.newLine !== null) {
+    const i = lines.findIndex((l) => l.newNo === c.newLine);
+    if (i >= 0) return i;
+  }
+  if (c.oldLine !== null) return lines.findIndex((l) => l.oldNo === c.oldLine);
+  return -1;
+}
+
 /**
  * Locate a comment's anchor in its file diff and build a small old/new window
  * around it. Returns null when the file, its diff, or the anchor can't be found.
  */
 export function excerptWindow(state: ReviewTabState, c: ReviewComment): ExcerptWindow | null {
   if (c.oldLine === null && c.newLine === null) return null;
-  const file = state.changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
-  if (!file || !file.diff) return null;
-  const lines = parsePatch(file.diff)
-    .flatMap((s) => s.hunks)
-    .flatMap((h) => h.lines);
-  let anchor = -1;
-  if (c.newLine !== null) anchor = lines.findIndex((l) => l.newNo === c.newLine);
-  if (anchor < 0 && c.oldLine !== null) anchor = lines.findIndex((l) => l.oldNo === c.oldLine);
+  const { lines } = parsedCommentFile(state, c);
+  const anchor = anchorIndex(lines, c);
   if (anchor < 0) return null;
   const around: DiffLine[] = [];
   for (let i = anchor - 2; i <= anchor + 2; i++) {
@@ -398,11 +450,8 @@ export function excerptWindow(state: ReviewTabState, c: ReviewComment): ExcerptW
 export function commentExcerptHtml(state: ReviewTabState, c: ReviewComment): string {
   const win = excerptWindow(state, c);
   if (!win) return '';
-  const file = state.changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
-  const lines = file ? parsePatch(file.diff).flatMap((s) => s.hunks).flatMap((h) => h.lines) : [];
-  let anchor = -1;
-  if (c.newLine !== null) anchor = lines.findIndex((l) => l.newNo === c.newLine);
-  if (anchor < 0 && c.oldLine !== null) anchor = lines.findIndex((l) => l.oldNo === c.oldLine);
+  const { lines } = parsedCommentFile(state, c);
+  const anchor = anchorIndex(lines, c);
   const rows: string[] = [];
   for (let i = anchor - 2; i <= anchor + 2; i++) {
     const line = lines[i];
@@ -419,47 +468,216 @@ export function commentExcerptHtml(state: ReviewTabState, c: ReviewComment): str
   return `<div class="review-comment-excerpt diff-body" data-excerpt="${esc(c.id)}">${rows.join('')}</div>`;
 }
 
-/** Monaco diff editors mounted for the visible review excerpts. */
-export let excerptHandles: CodeHandle[] = [];
-
-/** Tear down every mounted excerpt editor (called before each queue rebuild). */
-export function disposeExcerptEditors(): void {
-  for (const handle of excerptHandles) handle.dispose();
-  excerptHandles = [];
+/** A mounted Monaco diff excerpt and the signature of its rendered contents. */
+interface MountedExcerpt {
+  handle: CodeHandle;
+  signature: string;
 }
 
 /**
- * Upgrade each rendered excerpt placeholder to an inline Monaco diff. Remounts
- * on every queue rebuild, so previous handles are disposed first. When Monaco is
- * unavailable the placeholder's hand-rolled HTML stays in place.
+ * Monaco diff editors mounted for the visible review excerpts, keyed by comment
+ * id so a poll tick can reuse the unchanged ones instead of rebuilding them all.
+ */
+export let excerptHandles = new Map<string, MountedExcerpt>();
+
+/** Tear down every mounted excerpt editor (tab close / full reset). */
+export function disposeExcerptEditors(): void {
+  for (const mounted of excerptHandles.values()) mounted.handle.dispose();
+  excerptHandles = new Map();
+}
+
+/** Everything that affects a rendered excerpt; remount only when this changes. */
+function excerptSignature(win: ExcerptWindow, c: ReviewComment): string {
+  return [
+    c.filePath,
+    c.oldLine ?? '',
+    c.newLine ?? '',
+    win.original,
+    win.modified,
+    win.originalLines.join(','),
+    win.modifiedLines.join(','),
+    win.anchors.original?.join(',') ?? '',
+    win.anchors.modified?.join(',') ?? '',
+    win.height,
+  ].join('\u0000');
+}
+
+/**
+ * Upgrade each rendered excerpt placeholder to an inline Monaco diff. Unchanged
+ * excerpts (same signature as the mounted handle) are left untouched so a poll
+ * tick no longer tears down and rebuilds every editor. When Monaco is unavailable
+ * the placeholder's hand-rolled HTML stays in place.
  */
 export async function mountExcerptEditors(state: ReviewTabState, list: HTMLElement): Promise<void> {
-  disposeExcerptEditors();
   const hosts = list.querySelectorAll<HTMLElement>('.review-comment-excerpt[data-excerpt]');
-  if (hosts.length === 0) return;
+  if (hosts.length === 0) {
+    disposeExcerptEditors();
+    return;
+  }
   const code = await loadCode();
   if (!code) return;
+  const live = new Set<string>();
   for (const host of hosts) {
     const id = host.dataset.excerpt ?? '';
     const c = state.job?.comments.find((x) => x.id === id);
     if (!c) continue;
     const win = excerptWindow(state, c);
     if (!win) continue;
+    live.add(id);
+    const signature = excerptSignature(win, c);
+    const mounted = excerptHandles.get(id);
+    if (mounted && mounted.signature === signature) continue;
+    mounted?.handle.dispose();
     host.classList.add('is-code');
     host.innerHTML = '';
     const mount = document.createElement('div');
     mount.className = 'code-host';
     mount.style.height = `${win.height}px`;
     host.appendChild(mount);
-    excerptHandles.push(
-      code.createDiffEditor(mount, win.original, win.modified, {
+    excerptHandles.set(id, {
+      signature,
+      handle: code.createDiffEditor(mount, win.original, win.modified, {
         path: c.filePath,
         sideBySide: false,
         lineNumbers: { original: win.originalLines, modified: win.modifiedLines },
         anchors: win.anchors,
       }),
-    );
+    });
   }
+  // Drop handles for comments no longer rendered (filtered/rejected/removed).
+  for (const [id, mounted] of excerptHandles) {
+    if (!live.has(id)) {
+      mounted.handle.dispose();
+      excerptHandles.delete(id);
+    }
+  }
+}
+
+/** Human label for a comment's anchor line. */
+function commentLineLabel(c: ReviewComment): string {
+  return c.newLine !== null
+    ? `new line ${c.newLine}`
+    : c.oldLine !== null
+      ? `old line ${c.oldLine}`
+      : 'general';
+}
+
+/** Fields that require rebuilding a card's markup (the excerpt lives here too). */
+function commentStructuralSig(c: ReviewComment): string {
+  return [c.severity, c.filePath, c.oldLine ?? '', c.newLine ?? '', c.stage].join('\u0000');
+}
+
+/** Fields that can be patched in place without touching the excerpt. */
+function commentMetaSig(c: ReviewComment): string {
+  return [c.status, c.body].join('\u0000');
+}
+
+/** Build a fresh comment card (with the HTML excerpt fallback) and wire it up. */
+function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement {
+  const line = commentLineLabel(c);
+  const stage = c.stage === 'pending' ? '<span class="review-stage-badge">scanning…</span>' : '';
+  const template = document.createElement('template');
+  template.innerHTML = `
+    <div class="review-comment-card${c.stage === 'pending' ? ' is-pending' : ''}" data-id="${esc(c.id)}">
+      <div class="review-comment-head">
+        <span class="severity severity-${esc(c.severity)}">${esc(c.severity)}</span>
+        <code>${esc(c.filePath)}</code>
+        <span class="muted">${esc(line)}</span>
+        ${stage}
+        <span class="review-status-badge status-${esc(c.status)}">${esc(c.status)}</span>
+      </div>
+      ${commentExcerptHtml(state, c)}
+      <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
+      <div class="review-comment-actions">
+        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Approve</button>
+        <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
+      </div>
+    </div>`;
+  const card = template.content.firstElementChild as HTMLElement;
+  const ta = card.querySelector<HTMLTextAreaElement>('.review-comment-body');
+  ta?.addEventListener('input', () => {
+    const id = ta.dataset.id ?? '';
+    const target = state.job?.comments.find((x) => x.id === id);
+    if (target) target.body = ta.value;
+    const edit = state.edits.get(id) ?? { body: '', status: 'pending' as ReviewCommentStatus };
+    edit.body = ta.value;
+    state.edits.set(id, edit);
+    window.clearTimeout(state.saveTimer);
+    state.saveTimer = window.setTimeout(() => void persistSessionEdits(state), 800);
+  });
+  card
+    .querySelector<HTMLButtonElement>('.review-comment-approve')
+    ?.addEventListener('click', (ev) => void approveComment(state, (ev.currentTarget as HTMLElement).dataset.id ?? ''));
+  card
+    .querySelector<HTMLButtonElement>('.review-comment-reject')
+    ?.addEventListener('click', (ev) => void rejectComment(state, (ev.currentTarget as HTMLElement).dataset.id ?? ''));
+  card.dataset.structural = commentStructuralSig(c);
+  card.dataset.meta = commentMetaSig(c);
+  return card;
+}
+
+/** Patch a card's status badge and body without rebuilding its excerpt. */
+function updateCommentCard(card: HTMLElement, c: ReviewComment): void {
+  card.dataset.meta = commentMetaSig(c);
+  card.classList.toggle('is-pending', c.stage === 'pending');
+  const badge = card.querySelector<HTMLElement>('.review-status-badge');
+  if (badge) {
+    badge.className = `review-status-badge status-${c.status}`;
+    badge.textContent = c.status;
+  }
+  const ta = card.querySelector<HTMLTextAreaElement>('.review-comment-body');
+  if (ta && document.activeElement !== ta && ta.value !== c.body) ta.value = c.body;
+}
+
+/**
+ * Reconcile the comment list against `visible`, keyed by comment id. Unchanged
+ * cards (and their mounted Monaco excerpts) are left alone, so the 800ms poll no
+ * longer destroys and rebuilds the whole list while a review runs.
+ */
+function reconcileCommentList(state: ReviewTabState, list: HTMLElement, visible: ReviewComment[]): void {
+  if (visible.length === 0) {
+    if (list.querySelector(':scope > .review-comment-card[data-id]')) {
+      disposeExcerptEditors();
+      list.innerHTML = '<p class="muted review-comment-empty">All comments rejected.</p>';
+    }
+    return;
+  }
+  list.querySelector(':scope > .review-comment-empty')?.remove();
+  const current = new Map<string, HTMLElement>();
+  for (const card of list.querySelectorAll<HTMLElement>(':scope > .review-comment-card[data-id]')) {
+    current.set(card.dataset.id ?? '', card);
+  }
+  const ordered: HTMLElement[] = [];
+  for (const c of visible) {
+    const structural = commentStructuralSig(c);
+    let card = current.get(c.id);
+    if (card && card.dataset.structural === structural) {
+      if (card.dataset.meta !== commentMetaSig(c)) updateCommentCard(card, c);
+    } else {
+      if (card) {
+        excerptHandles.get(c.id)?.handle.dispose();
+        excerptHandles.delete(c.id);
+      }
+      const fresh = createCommentCard(state, c);
+      if (card) card.replaceWith(fresh);
+      else list.appendChild(fresh);
+      card = fresh;
+    }
+    current.delete(c.id);
+    ordered.push(card);
+  }
+  // Drop cards for comments no longer visible, along with their excerpts.
+  for (const [id, card] of current) {
+    excerptHandles.get(id)?.handle.dispose();
+    excerptHandles.delete(id);
+    card.remove();
+  }
+  // Restore order only when it actually changed (moving a card re-lays-out Monaco).
+  let inOrder = list.children.length === ordered.length;
+  for (let i = 0; inOrder && i < ordered.length; i++) {
+    if (list.children[i] !== ordered[i]) inOrder = false;
+  }
+  if (!inOrder) for (const card of ordered) list.appendChild(card);
 }
 
 export function renderCommentQueue(state: ReviewTabState): void {
@@ -486,54 +704,7 @@ export function renderCommentQueue(state: ReviewTabState): void {
   toggle.textContent = state.showRejected ? 'Hide rejected' : `Show rejected (${rejected})`;
   const visible = job.comments.filter((c) => state.showRejected || c.status !== 'rejected');
   const list = $('#review-comment-list');
-  list.innerHTML =
-    visible.length === 0
-      ? '<p class="muted review-comment-empty">All comments rejected.</p>'
-      : visible
-          .map((c) => {
-            const line =
-              c.newLine !== null
-                ? `new line ${c.newLine}`
-                : c.oldLine !== null
-                  ? `old line ${c.oldLine}`
-                  : 'general';
-            const stage = c.stage === 'pending' ? '<span class="review-stage-badge">scanning…</span>' : '';
-            return `
-    <div class="review-comment-card${c.stage === 'pending' ? ' is-pending' : ''}" data-id="${esc(c.id)}">
-      <div class="review-comment-head">
-        <span class="severity severity-${esc(c.severity)}">${esc(c.severity)}</span>
-        <code>${esc(c.filePath)}</code>
-        <span class="muted">${esc(line)}</span>
-        ${stage}
-        <span class="review-status-badge status-${esc(c.status)}">${esc(c.status)}</span>
-      </div>
-      ${commentExcerptHtml(state, c)}
-      <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
-      <div class="review-comment-actions">
-        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Approve</button>
-        <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
-      </div>
-    </div>`;
-          })
-          .join('');
-  for (const ta of list.querySelectorAll<HTMLTextAreaElement>('.review-comment-body')) {
-    ta.addEventListener('input', () => {
-      const id = ta.dataset.id ?? '';
-      const c = state.job?.comments.find((x) => x.id === id);
-      if (c) c.body = ta.value;
-      const edit = state.edits.get(id) ?? { body: '', status: 'pending' as ReviewCommentStatus };
-      edit.body = ta.value;
-      state.edits.set(id, edit);
-      window.clearTimeout(state.saveTimer);
-      state.saveTimer = window.setTimeout(() => void persistSessionEdits(state), 800);
-    });
-  }
-  for (const btn of list.querySelectorAll<HTMLButtonElement>('.review-comment-approve')) {
-    btn.addEventListener('click', () => void approveComment(state, btn.dataset.id ?? ''));
-  }
-  for (const btn of list.querySelectorAll<HTMLButtonElement>('.review-comment-reject')) {
-    btn.addEventListener('click', () => void rejectComment(state, btn.dataset.id ?? ''));
-  }
+  reconcileCommentList(state, list, visible);
   // Upgrade the excerpt placeholders to inline Monaco diffs (no-op if unavailable).
   if (store.activeReviewId === state.repoId) void mountExcerptEditors(state, list);
 }
