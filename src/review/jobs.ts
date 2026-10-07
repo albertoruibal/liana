@@ -8,7 +8,7 @@ import {
   reviewRule,
   type StoredProvider,
 } from '../settings';
-import { forgeLabel } from '../forge';
+import { forgeLabel, hasCommit } from '../forge';
 import {
   adapterFor,
   executeTool,
@@ -545,16 +545,25 @@ async function runBatch(
   const changes = rec.changes;
   const rule = rec.rule;
   const batch = indices.map((i) => changes.files[i]).filter((f): f is ReviewFile => f !== undefined);
-  const adapter = adapterFor(protocol);
+  const headRef = changes.diffRefs.headSha.trim();
+  // The repository tools must read the MR head, never the local working tree or a
+  // stale branch. When the head commit is missing locally we cannot verify against
+  // the right code, so we drop to a diff-only review instead of reading HEAD.
+  const headAvailable = headRef !== '' && (await hasCommit(rec.repoPath, headRef).catch(() => false));
+  const effective = headAvailable ? protocol : 'none';
+  const adapter = adapterFor(effective);
   const ctx: ToolContext = {
     repoPath: rec.repoPath,
-    headRef: changes.diffRefs.headSha || 'HEAD',
+    headRef,
     files: changes.files,
     toolResultChars: provider.toolResultChars,
   };
+  if (!headAvailable && protocol !== 'none') {
+    noteHeadUnavailable(rec);
+  }
 
   const batchIndex = Math.max(0, rec.job.batchIndex - 1);
-  const base = buildSystemPrompt(rule, changes, batch, protocol);
+  const base = buildSystemPrompt(rule, changes, batch, effective);
   const fresh: ChatMessage[] = [
     { role: 'system', content: base },
     {
@@ -691,6 +700,18 @@ async function runBatch(
   }
 }
 
+/** Record once that the MR head is missing, so the run is a diff-only review. */
+function noteHeadUnavailable(rec: JobRecord): void {
+  if (rec.job.trace.some((t) => t.tool === 'repo_tools')) return;
+  rec.job.trace.push({
+    step: rec.job.trace.length + 1,
+    tool: 'repo_tools',
+    args: {},
+    resultSummary: 'MR head commit not available locally — repository tools disabled, diff-only review',
+    durationMs: 0,
+  });
+}
+
 function buildSystemPrompt(
   rule: ReviewRuleConfig,
   changes: ReviewChanges,
@@ -719,11 +740,35 @@ function buildSystemPrompt(
     'Diff:',
     diffs,
   ];
-  if (useTools && !adapter.native) {
+  if (useTools) {
+    // Same verification duty for every protocol: a comment must be substantiated
+    // by the repository at the MR head, including code the diff does not show.
     lines.push(
       '',
-      'You can read the wider repository with the tools below. Prefer inspecting ' +
-        'related code before commenting. Tools read the MR head, not the working tree.',
+      'Before writing a comment, verify the fact against the repository at the ' +
+        'merge request head — read the file and search related code, including files ' +
+        'that are not part of the diff (callers, interfaces, tests, config). Only ' +
+        'report an issue you can substantiate with a concrete file and line; if the ' +
+        'code already handles the case, do not comment.',
+    );
+    if (!adapter.native) {
+      lines.push(
+        '',
+        'You can read the wider repository with the tools below. Tools read the MR ' +
+          'head, not the working tree.',
+      );
+    } else {
+      lines.push(
+        '',
+        'Use the provided tools to read the rest of the repository at the MR head ' +
+          'before finalizing your comments.',
+      );
+    }
+  } else {
+    lines.push(
+      '',
+      'Repository tools are not available for this review. Review the provided diff ' +
+        'alone and do not speculate about code you cannot see.',
     );
   }
   let out = lines.join('\n');
@@ -731,7 +776,8 @@ function buildSystemPrompt(
   out +=
     '\n\nReturn the final result as JSON: {"comments":[{"filePath":"…","newLine":N,' +
     '"oldLine":N,"severity":"info|warning|error","body":"…"}]}. ' +
-    'newLine/oldLine are 1-based line numbers in the diff; omit whichever does not apply.';
+    'newLine/oldLine are 1-based line numbers present in the diff; omit an anchor that ' +
+    'is not in the diff rather than guessing.';
   return out;
 }
 

@@ -1,6 +1,7 @@
 // Validation and parsing of model-produced review comments. Node-only.
 
 import { matchesAnyGlob } from '../review-tools';
+import { parsePatch } from '../diff';
 import type {
   ReviewComment,
   ReviewCommentStage,
@@ -8,6 +9,43 @@ import type {
   ReviewRuleConfig,
   ReviewSeverity,
 } from '../types';
+
+/** Line numbers actually present in a file's diff, for anchor validation. */
+interface LineAnchors {
+  newLines: Set<number>;
+  oldLines: Set<number>;
+}
+
+/**
+ * Collect the old/new line numbers each changed file's diff actually touches.
+ * A line anchor outside this set does not exist in the diff and cannot be
+ * positioned on the forge. Memoized per file list: streamed previews re-validate
+ * repeatedly against the same unchanged diffs.
+ */
+const anchorCache = new WeakMap<ReviewFile[], Map<string, LineAnchors>>();
+
+function buildAnchors(files: ReviewFile[]): Map<string, LineAnchors> {
+  const cached = anchorCache.get(files);
+  if (cached) return cached;
+  const map = new Map<string, LineAnchors>();
+  for (const f of files) {
+    const newLines = new Set<number>();
+    const oldLines = new Set<number>();
+    for (const section of parsePatch(f.diff)) {
+      for (const hunk of section.hunks) {
+        for (const line of hunk.lines) {
+          if (line.newNo !== null) newLines.add(line.newNo);
+          if (line.oldNo !== null) oldLines.add(line.oldNo);
+        }
+      }
+    }
+    const anchor: LineAnchors = { newLines, oldLines };
+    if (f.newPath) map.set(f.newPath, anchor);
+    if (f.oldPath && f.oldPath !== f.newPath) map.set(f.oldPath, anchor);
+  }
+  anchorCache.set(files, map);
+  return map;
+}
 
 function coerceSeverity(v: unknown): ReviewSeverity {
   return v === 'error' || v === 'warning' || v === 'info' ? v : 'info';
@@ -22,6 +60,7 @@ function validateComment(
   rule: ReviewRuleConfig,
   id: string,
   stage: ReviewCommentStage,
+  anchors: Map<string, LineAnchors>,
 ): ReviewComment | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const c = raw as Record<string, unknown>;
@@ -32,14 +71,22 @@ function validateComment(
   if (matchesAnyGlob(filePath, rule.ignoreGlobs)) return null;
   const severity = coerceSeverity(c.severity);
   if (SEVERITY_RANK[severity] < SEVERITY_RANK[rule.severityThreshold]) return null;
-  const newLine = typeof c.newLine === 'number' && c.newLine > 0 ? Math.floor(c.newLine) : null;
-  const oldLine = typeof c.oldLine === 'number' && c.oldLine > 0 ? Math.floor(c.oldLine) : null;
+  let newLine = typeof c.newLine === 'number' && c.newLine > 0 ? Math.floor(c.newLine) : null;
+  let oldLine = typeof c.oldLine === 'number' && c.oldLine > 0 ? Math.floor(c.oldLine) : null;
   const line = typeof c.line === 'number' && c.line > 0 ? Math.floor(c.line) : null;
+  newLine = newLine ?? (oldLine === null ? line : null);
+  // An anchor that is not present in the diff cannot be positioned: drop it so
+  // the comment degrades to a general one rather than a stale line reference.
+  const a = anchors.get(filePath);
+  if (a) {
+    if (newLine !== null && !a.newLines.has(newLine)) newLine = null;
+    if (oldLine !== null && !a.oldLines.has(oldLine)) oldLine = null;
+  }
   return {
     id,
     filePath,
     oldLine,
-    newLine: newLine ?? (oldLine === null ? line : null),
+    newLine,
     severity,
     body,
     status: 'pending',
@@ -61,9 +108,10 @@ export function parseComments(
       : raw;
   if (!Array.isArray(container)) return [];
   const known = new Set(files.flatMap((f) => [f.newPath, f.oldPath]));
+  const anchors = buildAnchors(files);
   const out: ReviewComment[] = [];
   for (const item of container) {
-    const c = validateComment(item, known, rule, `c${out.length + 1}`, 'parsed');
+    const c = validateComment(item, known, rule, `c${out.length + 1}`, 'parsed', anchors);
     if (c) out.push(c);
   }
   return rule.maxComments > 0 ? out.slice(0, rule.maxComments) : out;
@@ -114,9 +162,10 @@ export function parsePartialComments(
   files: ReviewFile[],
 ): ReviewComment[] {
   const known = new Set(files.flatMap((f) => [f.newPath, f.oldPath]));
+  const anchors = buildAnchors(files);
   const out: ReviewComment[] = [];
   for (const obj of scanJsonObjects(text)) {
-    const c = validateComment(obj, known, rule, `p${out.length + 1}`, 'pending');
+    const c = validateComment(obj, known, rule, `p${out.length + 1}`, 'pending', anchors);
     if (c) out.push(c);
   }
   return rule.maxComments > 0 ? out.slice(0, rule.maxComments) : out;

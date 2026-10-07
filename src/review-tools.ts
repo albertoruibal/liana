@@ -53,7 +53,9 @@ export interface ToolContext {
 export const TOOLS: ToolDef[] = [
   {
     name: 'list_files',
-    description: 'List repository files at a ref, optionally filtered by a glob pattern.',
+    description:
+      'List repository files at a ref (the merge request head by default), optionally ' +
+      'filtered by a glob pattern. Covers the whole repository, including files not in the diff.',
     parameters: {
       type: 'object',
       properties: {
@@ -65,7 +67,9 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'read_file',
-    description: 'Read a text file at a ref, optionally a line range (1-based, inclusive).',
+    description:
+      'Read a text file at a ref (the merge request head by default), optionally a line ' +
+      'range (1-based, inclusive). Use this to verify facts in files outside the diff.',
     parameters: {
       type: 'object',
       properties: {
@@ -80,7 +84,9 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'search_code',
     description:
-      'Search tracked file contents at a ref, returning matching lines (ripgrep-like). ' +
+      'Search tracked file contents at a ref (the merge request head by default), ' +
+      'returning matching lines (ripgrep-like). Searches the whole repository, including ' +
+      'files not in the diff, so related code can be verified. ' +
       'Supports extended regex, case-insensitive, whole-word, fixed-string, context lines, and filenames-only modes.',
     parameters: {
       type: 'object',
