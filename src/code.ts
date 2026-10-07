@@ -276,6 +276,12 @@ export function createDiffEditor(
     sideBySide?: boolean;
     lineNumbers?: { original?: number[]; modified?: number[] };
     anchors?: { original?: number[]; modified?: number[] };
+    /**
+     * Whether the editor swallows wheel events even when it can't scroll
+     * (Monaco's default). Set false for inline excerpts so the wheel chains to
+     * the surrounding page once the editor has no overflow to consume.
+     */
+    consumeMouseWheel?: boolean;
   } = {},
 ): CodeHandle {
   const editor = monaco.editor.createDiffEditor(container, {
@@ -283,6 +289,7 @@ export function createDiffEditor(
     readOnly: true,
     originalEditable: false,
     renderSideBySide: opts.sideBySide ?? true,
+    scrollbar: { alwaysConsumeMouseWheel: opts.consumeMouseWheel ?? true },
     theme: ensureTheme(),
   });
   const language = opts.path ? languageFor(opts.path) : 'plaintext';

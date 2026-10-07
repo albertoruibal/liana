@@ -541,6 +541,7 @@ export async function mountExcerptEditors(state: ReviewTabState, list: HTMLEleme
         sideBySide: false,
         lineNumbers: { original: win.originalLines, modified: win.modifiedLines },
         anchors: win.anchors,
+        consumeMouseWheel: false,
       }),
     });
   }
