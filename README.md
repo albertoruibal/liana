@@ -255,7 +255,7 @@ hides the button. These are the only two places Liana writes merge content.
 requests (GitLab) or pull requests (GitHub) of the active repository. The forge is chosen per repository: an explicit
 **Forge** setting wins over `origin` auto-detection (github.com and GitHub Enterprise Server hosts → GitHub; gitlab.com
 and the configured GitLab host → GitLab), falling back to GitLab. The GitLab project is derived from `origin` (or set
-explicitly in Settings); the GitHub repo (`owner/name`) likewise. **Review with IA** fetches the selected request's
+explicitly in Settings); the GitHub repo (`owner/name`) likewise. **Review with AI** fetches the selected request's
 metadata, changed files, and diff refs, then starts a background job that asks an OpenAI-compatible model for per-line
 review comments. Selecting a request fetches its head commit into the repository — GitLab via `git fetch --no-tags
 <origin> +refs/merge-requests/<iid>/head:refs/liana/mr/<iid>`, GitHub via `+refs/pull/<n>/head:refs/liana/pr/<n>`, each
@@ -302,7 +302,7 @@ supports SSE (a plain JSON response is still handled).
 
 ### AI commit messages
 
-The **Create commit** dialog has a **Generate with IA** button: it sends the diffs of the checked files (plus recent
+The **Create commit** dialog has a **Generate with AI** button: it sends the diffs of the checked files (plus recent
 commit subjects, when enabled) to the active provider and drops the drafted message into the textarea, ready to edit. It
 is read-only — the diff is read from the working tree, nothing is staged or written, and regenerating simply overwrites
 the draft. The prompt, language, whether recent subjects are included, and the diff size cap live under **Settings →
