@@ -1592,6 +1592,14 @@ const THEMES: ThemeDef[] = [
   { id: 'gruvbox', label: 'Gruvbox', swatch: ['#d79921', '#b8bb26'], dark: true },
   { id: 'solarized', label: 'Solarized', swatch: ['#268bd2', '#2aa198'], dark: true },
   { id: 'phosphor', label: 'Phosphor', swatch: ['#35ff6d', '#7dffb0'], dark: true },
+  { id: 'tokyo-night', label: 'Tokyo Night', swatch: ['#7aa2f7', '#bb9af7'], dark: true },
+  { id: 'catppuccin', label: 'Catppuccin Mocha', swatch: ['#cba6f7', '#89dceb'], dark: true },
+  { id: 'one-dark', label: 'One Dark', swatch: ['#61afef', '#c678dd'], dark: true },
+  { id: 'monokai', label: 'Monokai', swatch: ['#f92672', '#a6e22e'], dark: true },
+  { id: 'rose-pine', label: 'Rosé Pine', swatch: ['#c4a7e7', '#ebbcba'], dark: true },
+  { id: 'everforest', label: 'Everforest', swatch: ['#a7c080', '#dbbc7f'], dark: true },
+  { id: 'synthwave', label: "Synthwave '84", swatch: ['#ff7edb', '#36f9f6'], dark: true },
+  { id: 'ayu-dark', label: 'Ayu Dark', swatch: ['#ffb454', '#39bae6'], dark: true },
   { id: 'light', label: 'Light', swatch: ['#7c3aed', '#0891b2'], dark: false },
 ];
 
