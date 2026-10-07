@@ -129,7 +129,7 @@ Checking out
 a remote-tracking ref creates or reuses the matching local branch tracking it — no
 fetch, purely local. Deleting a remote branch runs `git push <remote> --delete`.
 
-The toolbar's **Search** button (or `/`) opens a find panel that filters commits,
+The toolbar's **Search** button (or `Ctrl+F` / `Cmd+F` / `/`) opens a find panel that filters commits,
 branches, and tags case-insensitively. Every whitespace-separated token must match
 somewhere (AND) across subject, author, hash, and ref names (local/remote branch,
 tag, stash). Matching rows are tinted in the graph, the focused result gets a

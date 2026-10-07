@@ -1174,7 +1174,15 @@ document.addEventListener('pointerdown', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key !== '/' || isTypingTarget(ev.target)) return;
+  const isFind = (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f';
+  if (ev.key !== '/' && !isFind) return;
+  const input = $<HTMLInputElement>('#search-input');
+  if (isFind && document.activeElement === input && !$('#search-panel').hidden) {
+    ev.preventDefault();
+    input.select();
+    return;
+  }
+  if (isTypingTarget(ev.target)) return;
   if (document.querySelector('dialog[open]')) return;
   ev.preventDefault();
   openSearch();
