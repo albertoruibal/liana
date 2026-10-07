@@ -8,6 +8,9 @@ import pkg from './package.json';
 export default defineConfig({
   plugins: [apiPlugin(process.env.LIANA_REPO ?? null)],
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
+  // Monaco ships ESM + its own workers; let Vite's `?worker` imports handle them
+  // and keep it out of dep pre-bundling so the workers resolve to real modules.
+  optimizeDeps: { exclude: ['monaco-editor'] },
   server: { host: true, port: 5173 },
   build: { target: 'es2022', sourcemap: true },
 });

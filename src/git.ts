@@ -13,6 +13,7 @@ import type {
   CommitFile,
   ConflictEntry,
   ConflictFile,
+  FileContents,
   GitCommandRecord,
   GitCommit,
   MergeOperation,
@@ -574,6 +575,7 @@ export async function loadConflictFile(repoPath: string, filePath: string): Prom
     readStage(repoPath, 3, filePath),
   ]);
   const isBinary = [base, ours, theirs].some((t) => t !== null && looksBinary(t));
+  const worktree = readRepoFile(repoPath, filePath);
   return {
     path: filePath,
     type: entry.type,
@@ -585,7 +587,42 @@ export async function loadConflictFile(repoPath: string, filePath: string): Prom
     base: isBinary && !entry.isSubmodule ? null : base,
     ours: isBinary && !entry.isSubmodule ? null : ours,
     theirs: isBinary && !entry.isSubmodule ? null : theirs,
+    worktree: isBinary && !entry.isSubmodule ? null : worktree,
+    worktreeAvailable: worktree !== null,
   };
+}
+
+/** Resolve `filePath` beneath `repoPath`; null when the path escapes the repository. */
+function safeResolve(repoPath: string, filePath: string): string | null {
+  const root = path.resolve(repoPath);
+  const abs = path.resolve(root, filePath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  return abs;
+}
+
+/** Read a repo-relative working-tree file as UTF-8, or null when missing/unreadable. */
+function readRepoFile(repoPath: string, filePath: string): string | null {
+  const abs = safeResolve(repoPath, filePath);
+  if (!abs) return null;
+  try {
+    return fs.readFileSync(abs, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the resolved working-tree file. Traversal-guarded to stay inside the repo;
+ * used only to save a manually resolved conflict. No git operation state is touched.
+ */
+export async function writeWorkingFile(
+  repoPath: string,
+  filePath: string,
+  content: string,
+): Promise<void> {
+  const abs = safeResolve(repoPath, filePath);
+  if (!abs) throw new GitError(`Invalid path: ${filePath}`, 'Path escapes the repository', 400);
+  fs.writeFileSync(abs, content, 'utf8');
 }
 
 /**
@@ -866,6 +903,44 @@ export async function worktreePatch(
     }
     return '';
   }
+}
+
+/**
+ * Original / modified text of one file for the Monaco diff and code viewer.
+ * Commit mode (`hash` set): the parent tree (`<hash>^`, first-parent-consistent)
+ * vs. the commit tree. Worktree mode (`hash` null): HEAD vs. the on-disk file.
+ * Missing sides are null; binary sides omit their text.
+ */
+export async function fileContents(
+  repoPath: string,
+  hash: string | null,
+  filePath: string,
+  oldPath: string | null,
+): Promise<FileContents> {
+  const src = oldPath && oldPath !== filePath ? oldPath : filePath;
+  const readBlob = async (spec: string): Promise<string | null> => {
+    try {
+      return await git(repoPath, ['show', spec]);
+    } catch {
+      return null;
+    }
+  };
+  let original: string | null;
+  let modified: string | null;
+  if (hash) {
+    original = await readBlob(`${hash}^:${src}`);
+    modified = await readBlob(`${hash}:${filePath}`);
+  } else {
+    original = (await headExists(repoPath)) ? await readBlob(`HEAD:${src}`) : null;
+    modified = readRepoFile(repoPath, filePath);
+  }
+  const binary = [original, modified].some((t) => t !== null && looksBinary(t));
+  return {
+    path: filePath,
+    original: binary ? null : original,
+    modified: binary ? null : modified,
+    binary,
+  };
 }
 
 // --- Interactive rebase (mirrors dev.ts) ---

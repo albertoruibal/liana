@@ -145,6 +145,21 @@ export interface ConflictFile {
   base: string | null;
   ours: string | null;
   theirs: string | null;
+  /** Current working-tree contents (conflict markers included), or null when absent. */
+  worktree: string | null;
+  /** True when a working-tree file exists and can be edited and staged. */
+  worktreeAvailable: boolean;
+}
+
+/** Original and modified text of one file, for the read-only Monaco viewer / diff. */
+export interface FileContents {
+  path: string;
+  /** Old-side text (commit parent or HEAD), or null when the file did not exist. */
+  original: string | null;
+  /** New-side text (the commit tree or the working tree), or null when deleted. */
+  modified: string | null;
+  /** True when either side is binary (contents omitted). */
+  binary: boolean;
 }
 
 /** One file changed by a commit, as reported by `git show --numstat/--name-status`. */

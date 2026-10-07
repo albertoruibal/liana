@@ -6,7 +6,26 @@ import { EMPTY_METRICS, avatarColor, initials, renderGraph, type GraphHighlight,
 import { displayRefs, refIconHtml, remoteBranchName } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
-import type { CommitFile, ConflictEntry, ConflictFile, ConflictType, GitCommandRecord, GitCommit, GitRef, GraphLayout, MergeOperation, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry, SubmoduleInfo } from './types';
+import type { CodeHandle } from './code';
+import type { CommitFile, ConflictEntry, ConflictFile, ConflictType, FileContents, GitCommandRecord, GitCommit, GitRef, GraphLayout, MergeOperation, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry, SubmoduleInfo } from './types';
+
+/**
+ * Monaco is loaded on demand so the editor and its language workers stay out of
+ * the initial bundle. The first code view triggers the import; failures fall back
+ * to the hand-rolled HTML renderers below. `null` means "tried and unavailable".
+ */
+type CodeModule = typeof import('./code');
+let codeModule: CodeModule | null | undefined;
+
+async function loadCode(): Promise<CodeModule | null> {
+  if (codeModule !== undefined) return codeModule;
+  try {
+    codeModule = await import('./code');
+  } catch {
+    codeModule = null;
+  }
+  return codeModule;
+}
 
 interface StateResponse {
   configured: boolean;
@@ -669,6 +688,7 @@ function renderCommitFiles(entries: StatusEntry[]): void {
             <span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : code)}">${esc(code)}</span>
             <span class="status-path" title="${esc(e.path)}">${esc(e.path)}</span>
           </label>
+          <button type="button" class="btn btn-sm commit-view-file" data-path="${esc(e.path)}">View</button>
           <button type="button" class="btn btn-sm commit-view-diff" data-path="${esc(e.path)}" data-old-path="${esc(oldPath)}">Diff</button>
         </li>`;
       })
@@ -708,11 +728,16 @@ async function loadCommitFiles(hash: string): Promise<void> {
         const sub = file.isSubmodule
           ? '<span class="file-submodule" title="Submodule (gitlink)">submodule</span>'
           : '';
-        return `<button type="button" class="file-row" data-path="${esc(file.path)}" data-old-path="${esc(file.oldPath ?? '')}" data-submodule="${file.isSubmodule ? 'true' : 'false'}">
-          <span class="status-badge ${statusClass(file.status)}">${esc(file.status)}</span>
-          <span class="file-path" title="${esc(file.path)}">${rename}${esc(file.path)}</span>
-          <span class="file-stats">${sub}${fileStatHtml(file)}</span>
-        </button>`;
+        return `<div class="file-entry">
+          <button type="button" class="file-row" data-path="${esc(file.path)}" data-old-path="${esc(file.oldPath ?? '')}" data-submodule="${file.isSubmodule ? 'true' : 'false'}">
+            <span class="status-badge ${statusClass(file.status)}">${esc(file.status)}</span>
+            <span class="file-path" title="${esc(file.path)}">${rename}${esc(file.path)}</span>
+            <span class="file-stats">${sub}${fileStatHtml(file)}</span>
+          </button>
+          <button type="button" class="icon-btn view-file" data-path="${esc(file.path)}" title="View file at this commit" aria-label="View file at this commit">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8 12 12.4 8 12.4 1.6 8 1.6 8Z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+          </button>
+        </div>`;
       })
       .join('');
   } catch {
@@ -731,75 +756,165 @@ function readDiffView(): DiffView {
 /** Cached patch for the currently open file, so toggling layout needn't refetch. */
 let diffPatch = '';
 let diffView: DiffView = 'unified';
+/** Active Monaco diff handle, or null while the HTML fallback is in use. */
+let diffHandle: CodeHandle | null = null;
 
-/** Repaint the open dialog body and sync the toggle's active state. */
-function renderDiffDialog(): void {
-  const body = $<HTMLDivElement>('#diff-body');
-  body.classList.toggle('is-split', diffView === 'split');
-  body.innerHTML = renderDiffBody(diffPatch, diffView);
+/** Dispose the open Monaco diff editor, if any (called when the dialog closes). */
+function disposeDiffEditor(): void {
+  diffHandle?.dispose();
+  diffHandle = null;
+}
+
+/** Mirror `diffView` onto the toggle buttons. */
+function syncDiffToggle(): void {
   document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((b) => {
     b.classList.toggle('is-active', b.dataset.view === diffView);
     b.setAttribute('aria-pressed', String(b.dataset.view === diffView));
   });
 }
 
-/** Open the modal diff viewer for a file in the selected commit. */
+/** Repaint the open dialog body (Monaco toggles in place; HTML re-renders). */
+function renderDiffDialog(): void {
+  syncDiffToggle();
+  if (diffHandle) {
+    diffHandle.setSideBySide(diffView === 'split');
+    return;
+  }
+  const body = $<HTMLDivElement>('#diff-body');
+  body.classList.toggle('is-split', diffView === 'split');
+  body.classList.remove('is-code');
+  body.innerHTML = renderDiffBody(diffPatch, diffView);
+}
+
+/** Mount the Monaco diff editor into `#diff-body`; false when Monaco is unavailable. */
+async function mountMonacoDiff(original: string, modified: string, path: string): Promise<boolean> {
+  const code = await loadCode();
+  if (!code) return false;
+  const body = $<HTMLDivElement>('#diff-body');
+  disposeDiffEditor();
+  body.innerHTML = '';
+  body.classList.remove('is-split');
+  body.classList.add('is-code');
+  diffHandle = code.createDiffEditor(body, original, modified, {
+    path,
+    sideBySide: diffView === 'split',
+  });
+  return true;
+}
+
+/**
+ * Open the modal diff viewer for one file. Prefers Monaco (full original/modified
+ * text from `/file-content`); when Monaco can't load, falls back to the unified /
+ * split HTML renderer fed by the patch routes.
+ */
+async function openCodeDiff(opts: {
+  path: string;
+  oldPath: string;
+  hash: string | null;
+  subtitle: string;
+}): Promise<void> {
+  const dlg = $<HTMLDialogElement>('#diff-dialog');
+  const body = $<HTMLDivElement>('#diff-body');
+  $('#diff-title').textContent = opts.path;
+  $('#diff-subtitle').textContent = opts.subtitle;
+  $('#diff-status').textContent = '';
+  disposeDiffEditor();
+  diffPatch = '';
+  diffView = readDiffView();
+  body.classList.remove('is-split', 'is-code');
+  body.textContent = 'Loading diff…';
+  syncDiffToggle();
+  dlg.showModal();
+  try {
+    const contents = await api<FileContents>('/file-content', {
+      hash: opts.hash,
+      path: opts.path,
+      oldPath: opts.oldPath || null,
+    });
+    if (contents.binary) {
+      body.textContent = '';
+      body.classList.remove('is-code');
+      body.innerHTML = '<div class="dl-note">Binary content — no textual diff.</div>';
+      return;
+    }
+    const mounted = await mountMonacoDiff(contents.original ?? '', contents.modified ?? '', opts.path);
+    if (mounted) return;
+    // Monaco unavailable: fall back to the patch-based HTML renderer.
+    const { patch } = await api<{ patch: string }>(
+      opts.hash ? '/commit-file-diff' : '/worktree-file-diff',
+      opts.hash
+        ? { hash: opts.hash, path: opts.path, oldPath: opts.oldPath || null }
+        : { path: opts.path, oldPath: opts.oldPath || null },
+    );
+    diffPatch = patch;
+    renderDiffDialog();
+  } catch (err) {
+    diffPatch = '';
+    body.textContent = '';
+    $('#diff-status').textContent = String(err);
+  }
+}
+
+/** Open the diff viewer for a file in the selected commit. */
 function openDiffDialog(path: string, oldPath: string): void {
   const commit = (lastResponse?.commits ?? []).find((c) => c.hash === selectedHash);
   if (!commit) return;
-  const dlg = $<HTMLDialogElement>('#diff-dialog');
-  $('#diff-title').textContent = path;
   const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
-  $('#diff-subtitle').textContent = `${renamed}${path} · commit ${commit.hash.slice(0, 8)}`;
-  $('#diff-status').textContent = '';
-  diffPatch = '';
-  diffView = readDiffView();
-  renderDiffDialog();
-  $<HTMLDivElement>('#diff-body').textContent = 'Loading diff…';
-  dlg.showModal();
-  void (async () => {
-    try {
-      const { patch } = await api<{ patch: string }>('/commit-file-diff', {
-        hash: commit.hash,
-        path,
-        oldPath: oldPath || null,
-      });
-      diffPatch = patch;
-      renderDiffDialog();
-    } catch (err) {
-      diffPatch = '';
-      $<HTMLDivElement>('#diff-body').textContent = '';
-      $('#diff-status').textContent = String(err);
-    }
-  })();
+  void openCodeDiff({
+    path,
+    oldPath,
+    hash: commit.hash,
+    subtitle: `${renamed}${path} · commit ${commit.hash.slice(0, 8)}`,
+  });
 }
 
-/** Open the modal diff viewer for a working-tree file from the commit dialog. */
+/** Open the diff viewer for a working-tree file from the commit dialog. */
 function openWorktreeDiff(path: string, oldPath: string): void {
-  const dlg = $<HTMLDialogElement>('#diff-dialog');
-  $('#diff-title').textContent = path;
   const renamed = oldPath && oldPath !== path ? `${oldPath} → ` : '';
-  $('#diff-subtitle').textContent = `${renamed}${path} · working tree`;
-  $('#diff-status').textContent = '';
-  diffPatch = '';
-  diffView = readDiffView();
-  renderDiffDialog();
-  $<HTMLDivElement>('#diff-body').textContent = 'Loading diff…';
+  void openCodeDiff({ path, oldPath, hash: null, subtitle: `${renamed}${path} · working tree` });
+}
+
+/** Monaco handle for the read-only whole-file viewer, or null when not mounted. */
+let codeViewerHandle: CodeHandle | null = null;
+
+/** Dispose the open whole-file viewer editor, if any. */
+function disposeCodeViewer(): void {
+  codeViewerHandle?.dispose();
+  codeViewerHandle = null;
+}
+
+/** Open the read-only whole-file viewer at a commit or in the working tree. */
+async function openCodeViewer(path: string, hash: string | null): Promise<void> {
+  if (!path) return;
+  const dlg = $<HTMLDialogElement>('#code-dialog');
+  const body = $<HTMLDivElement>('#code-body');
+  $('#code-title').textContent = path;
+  $('#code-subtitle').textContent = hash
+    ? `commit ${hash.slice(0, 8)} · read-only`
+    : 'working tree · read-only';
+  $('#code-status').textContent = '';
+  disposeCodeViewer();
+  body.textContent = 'Loading file…';
   dlg.showModal();
-  void (async () => {
-    try {
-      const { patch } = await api<{ patch: string }>('/worktree-file-diff', {
-        path,
-        oldPath: oldPath || null,
-      });
-      diffPatch = patch;
-      renderDiffDialog();
-    } catch (err) {
-      diffPatch = '';
-      $<HTMLDivElement>('#diff-body').textContent = '';
-      $('#diff-status').textContent = String(err);
+  try {
+    const contents = await api<FileContents>('/file-content', { hash, path, oldPath: null });
+    if (contents.binary) {
+      body.textContent = '';
+      body.innerHTML = '<div class="dl-note">Binary file — cannot display.</div>';
+      return;
     }
-  })();
+    const code = await loadCode();
+    const value = contents.modified ?? contents.original ?? '';
+    body.textContent = '';
+    if (!code) {
+      body.innerHTML = `<pre class="conflict-pre">${esc(value)}</pre>`;
+      return;
+    }
+    codeViewerHandle = code.createEditor(body, value, { path, readOnly: true });
+  } catch (err) {
+    body.textContent = '';
+    $('#code-status').textContent = String(err);
+  }
 }
 
 /** Open the modal side-by-side conflict viewer for one unresolved path. */
@@ -814,14 +929,14 @@ async function openConflictDialog(path: string): Promise<void> {
   dlg.showModal();
   try {
     const { file } = await api<{ file: ConflictFile }>('/conflict-file', { path });
-    renderConflictDialog(file);
+    await renderConflictDialog(file);
   } catch (err) {
     $('#conflict-subtitle').textContent = '';
     $('#conflict-status').textContent = String(err);
   }
 }
 
-/** One labelled column (Base / Ours / Theirs) for the conflict viewer. */
+/** One labelled read-only column (Base / Ours / Theirs) for the conflict viewer. */
 function conflictColumn(label: string, side: 'base' | 'ours' | 'theirs', file: ConflictFile): string {
   const present = side === 'base' ? file.hasBase : side === 'ours' ? file.hasOurs : file.hasTheirs;
   const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
@@ -836,31 +951,106 @@ function conflictColumn(label: string, side: 'base' | 'ours' | 'theirs', file: C
   </div>`;
 }
 
-/** Paint the resolve dialog for a loaded conflict file. */
-function renderConflictDialog(file: ConflictFile): void {
-  $('#conflict-subtitle').textContent = conflictTypeLabel(file.type) + (file.isSubmodule ? ' · submodule' : '');
-  const note = file.isSubmodule
-    ? '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>'
-    : '<p class="muted hint">Choose a side to resolve, or edit the working-tree file and mark it resolved.</p>';
+// Monaco editors mounted in the conflict dialog. Reference panes are read-only;
+// the Result pane is editable and saved back to the working-tree file.
+let conflictHandles: CodeHandle[] = [];
+let conflictResult: CodeHandle | null = null;
+
+function disposeConflictEditors(): void {
+  for (const handle of conflictHandles) handle.dispose();
+  conflictHandles = [];
+  conflictResult = null;
+}
+
+/**
+ * Paint the resolve dialog. For textual conflicts a read-only Monaco column is
+ * shown for each side plus an editable Result pane seeded from the working-tree
+ * file (conflict markers included) whose save writes and stages the file. Binary
+ * and gitlink conflicts keep the plain-text columns and cannot be edited.
+ */
+async function renderConflictDialog(file: ConflictFile): Promise<void> {
+  $('#conflict-subtitle').textContent =
+    conflictTypeLabel(file.type) + (file.isSubmodule ? ' · submodule' : '');
+  const editable = !file.isBinary && !file.isSubmodule && file.worktreeAvailable;
+  const useMonaco = !file.isBinary && !file.isSubmodule;
+  let note: string;
+  if (file.isSubmodule) {
+    note =
+      '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>';
+  } else if (editable) {
+    note =
+      '<p class="muted hint">Pick a side, or edit the Result below (conflict markers included) and save — saving writes the working-tree file and stages it.</p>';
+  } else {
+    note = '<p class="muted hint">Choose a side to resolve this file.</p>';
+  }
+
+  const cols = useMonaco
+    ? (['base', 'ours', 'theirs'] as const)
+        .map((side) => {
+          const label = side === 'base' ? 'Base' : side === 'ours' ? 'Ours' : 'Theirs';
+          const present =
+            side === 'base' ? file.hasBase : side === 'ours' ? file.hasOurs : file.hasTheirs;
+          const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
+          const body =
+            !present || content === null
+              ? '<div class="dl-note">(deleted)</div>'
+              : `<div class="code-host" data-side="${side}"></div>`;
+          return `<div class="conflict-col conflict-col-${side}">
+            <h4>${esc(label)}</h4>
+            ${body}
+          </div>`;
+        })
+        .join('')
+    : conflictColumn('Base', 'base', file) +
+      conflictColumn('Ours', 'ours', file) +
+      conflictColumn('Theirs', 'theirs', file);
+
+  const result = editable
+    ? `<div class="conflict-result">
+        <h4>Result — edit to resolve</h4>
+        <div class="code-host" id="conflict-result-host"></div>
+      </div>`
+    : '';
+
+  disposeConflictEditors();
   $('#conflict-body').innerHTML =
-    note +
-    `<div class="conflict-columns">
-      ${conflictColumn('Base', 'base', file)}
-      ${conflictColumn('Ours', 'ours', file)}
-      ${conflictColumn('Theirs', 'theirs', file)}
-    </div>`;
+    note + `<div class="conflict-columns">${cols}</div>` + result;
   $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
   $<HTMLButtonElement>('#conflict-theirs').disabled = !file.hasTheirs;
+  $<HTMLButtonElement>('#conflict-save').disabled = !editable;
+
+  if (!useMonaco) return;
+  const code = await loadCode();
+  if (!code) return; // Monaco unavailable: plain-text columns remain (no Result editor).
+  const body = $<HTMLDivElement>('#conflict-body');
+  for (const side of ['base', 'ours', 'theirs'] as const) {
+    const host = body.querySelector<HTMLElement>(`.code-host[data-side="${side}"]`);
+    if (!host) continue;
+    const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
+    conflictHandles.push(code.createEditor(host, content ?? '', { path: file.path, readOnly: true }));
+  }
+  if (editable) {
+    const host = body.querySelector<HTMLElement>('#conflict-result-host');
+    if (host) {
+      conflictResult = code.createEditor(host, file.worktree ?? '', {
+        path: file.path,
+        readOnly: false,
+      });
+    }
+  }
 }
 
 /** Show a gitlink change as "Subproject commit …" instead of a line diff. */
 function openSubprojectDialog(path: string): void {
   const dlg = $<HTMLDialogElement>('#diff-dialog');
+  const body = $<HTMLDivElement>('#diff-body');
+  disposeDiffEditor();
   $('#diff-title').textContent = path;
   $('#diff-subtitle').textContent = 'Submodule (gitlink) change';
   $('#diff-status').textContent = '';
   diffPatch = '';
-  $<HTMLDivElement>('#diff-body').innerHTML =
+  body.classList.remove('is-split', 'is-code');
+  body.innerHTML =
     '<div class="dl-note">Subproject commit — the recorded gitlink changed. Liana does not diff submodule contents; open the submodule\'s History to browse it.</div>';
   diffView = readDiffView();
   dlg.showModal();
@@ -1620,6 +1810,8 @@ function applyTheme(theme: string): void {
   document.querySelectorAll<HTMLButtonElement>('.theme-option').forEach((btn) => {
     btn.setAttribute('aria-checked', String(btn.dataset.themeValue === id));
   });
+  // Keep any mounted Monaco editors in step with the theme.
+  if (codeModule) codeModule.applyTheme();
 }
 
 function selectTheme(theme: string): void {
@@ -1694,8 +1886,20 @@ $('#about-close').addEventListener('click', (ev) => {
 
 $('#diff-close').addEventListener('click', (ev) => {
   ev.preventDefault();
+  disposeDiffEditor();
   $<HTMLDialogElement>('#diff-dialog').close();
 });
+
+$('#code-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  disposeCodeViewer();
+  $<HTMLDialogElement>('#code-dialog').close();
+});
+
+// Dispose Monaco editors on any close path (button or Escape's native cancel).
+$<HTMLDialogElement>('#diff-dialog').addEventListener('close', () => disposeDiffEditor());
+$<HTMLDialogElement>('#code-dialog').addEventListener('close', () => disposeCodeViewer());
+$<HTMLDialogElement>('#conflict-dialog').addEventListener('close', () => disposeConflictEditors());
 
 // Unified / split layout toggle; the choice persists across opens.
 document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => {
@@ -1736,14 +1940,30 @@ let conflictPath = '';
 
 $('#conflict-close').addEventListener('click', (ev) => {
   ev.preventDefault();
+  disposeConflictEditors();
   $<HTMLDialogElement>('#conflict-dialog').close();
 });
 
-async function resolveFromDialog(resolution: 'ours' | 'theirs' | 'resolved'): Promise<void> {
+async function resolveFromDialog(resolution: 'ours' | 'theirs'): Promise<void> {
   const path = conflictPath;
   if (!path) return;
   try {
     await api('/conflict-resolve', { path, resolution });
+    disposeConflictEditors();
+    $<HTMLDialogElement>('#conflict-dialog').close();
+    await refresh();
+  } catch (err) {
+    $('#conflict-status').textContent = String(err);
+  }
+}
+
+/** Save the edited Result pane back to the working-tree file and stage it. */
+async function saveConflictFromDialog(): Promise<void> {
+  const path = conflictPath;
+  if (!path || !conflictResult) return;
+  try {
+    await api('/conflict-save', { path, content: conflictResult.getValue() });
+    disposeConflictEditors();
     $<HTMLDialogElement>('#conflict-dialog').close();
     await refresh();
   } catch (err) {
@@ -1753,7 +1973,7 @@ async function resolveFromDialog(resolution: 'ours' | 'theirs' | 'resolved'): Pr
 
 $('#conflict-ours').addEventListener('click', () => void resolveFromDialog('ours'));
 $('#conflict-theirs').addEventListener('click', () => void resolveFromDialog('theirs'));
-$('#conflict-resolved').addEventListener('click', () => void resolveFromDialog('resolved'));
+$('#conflict-save').addEventListener('click', () => void saveConflictFromDialog());
 
 // Keep the Base / Ours / Theirs columns' scroll in step on both axes.
 $<HTMLDivElement>('#conflict-body').addEventListener(
@@ -1882,8 +2102,12 @@ $('#commit-file-list').addEventListener('click', (ev) => {
   const target = ev.target;
   if (!(target instanceof Element)) return;
   const btn = target.closest<HTMLButtonElement>('.commit-view-diff');
-  if (!btn) return;
-  openWorktreeDiff(btn.dataset.path ?? '', btn.dataset.oldPath ?? '');
+  if (btn) {
+    openWorktreeDiff(btn.dataset.path ?? '', btn.dataset.oldPath ?? '');
+    return;
+  }
+  const view = target.closest<HTMLButtonElement>('.commit-view-file');
+  if (view) void openCodeViewer(view.dataset.path ?? '', null);
 });
 
 // Submit (not click) so Enter on a focused control runs the commit instead of
@@ -2380,7 +2604,14 @@ $svg('#graph-svg').addEventListener('contextmenu', (ev) => {
 // Delegated: the changed-file list is rendered after the pane's innerHTML is set,
 // so bind on the pane rather than on each row as it appears.
 $('#detail-pane').addEventListener('click', (ev) => {
-  const btn = (ev.target as Element).closest('button.file-row');
+  const target = ev.target as Element;
+  const viewBtn = target.closest('button.view-file');
+  if (viewBtn instanceof HTMLButtonElement) {
+    const commit = (lastResponse?.commits ?? []).find((c) => c.hash === selectedHash);
+    void openCodeViewer(viewBtn.dataset.path ?? '', commit?.hash ?? null);
+    return;
+  }
+  const btn = target.closest('button.file-row');
   if (!(btn instanceof HTMLButtonElement)) return;
   if (btn.dataset.submodule === 'true') {
     openSubprojectDialog(btn.dataset.path ?? '');
@@ -2624,6 +2855,11 @@ document.addEventListener('keydown', (ev) => {
   const diffDlg = $<HTMLDialogElement>('#diff-dialog');
   const conflictDlg = $<HTMLDialogElement>('#conflict-dialog');
   const submoduleDlg = $<HTMLDialogElement>('#submodule-log-dialog');
+  const codeDlg = $<HTMLDialogElement>('#code-dialog');
+  if (codeDlg.open) {
+    codeDlg.close();
+    return;
+  }
   if (submoduleDlg.open) {
     submoduleDlg.close();
     return;

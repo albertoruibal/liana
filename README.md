@@ -43,6 +43,9 @@ server for the packaged Electron app. The renderer only ever speaks `fetch('/api
 - `src/graph.ts` — SVG renderer: lanes as bezier curves, merge commits as rings,
   branch chips as rounded rects.
 - `src/ui.ts` — toolbar, repository tabs, detail pane, dialogs, API calls.
+- `src/code.ts` — Monaco integration (diff + read-only viewer + editable conflict
+  result). Dynamically imported on first use so the editor and its language workers
+  stay out of the initial bundle; the UI keeps a hand-rolled HTML fallback for diffs.
 
 ### Lane algorithm (src/layout.ts)
 
@@ -75,6 +78,7 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/commit-diff` | POST | `{hash}` | Changed files of a commit (`CommitFile[]`) for the commit detail pane |
 | `/api/commit-file-diff` | POST | `{hash, path, oldPath?}` | Unified diff of one file in a commit (`oldPath` includes a rename source) |
 | `/api/worktree-file-diff` | POST | `{path, oldPath?}` | Unified diff of a working-tree file against HEAD (staged + unstaged); untracked files diff against `/dev/null` |
+| `/api/file-content` | POST | `{hash?, path, oldPath?}` | Original + modified text of one file (`hash` set → parent vs. commit; omitted → HEAD vs. working tree), for the Monaco diff and viewer. Missing sides are null; binary sides omit text |
 | `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
 | `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |
@@ -89,8 +93,9 @@ The client sends the active tab's id on every request. Routes without the header
 | `/api/pull` | POST | `{remote?, branch?}` | `git pull` (merge); proceeds with local changes, git's error surfaced if they'd be overwritten |
 | `/api/remote-test` | POST | `{remote}` | `git ls-remote` the remote to test connectivity/auth |
 | `/api/conflicts` | GET | — | Unmerged paths (`git ls-files -u`) + in-progress operation state |
-| `/api/conflict-file` | POST | `{path}` | Base / ours / theirs contents for one conflicted path |
+| `/api/conflict-file` | POST | `{path}` | Base / ours / theirs contents plus the working-tree file (conflict markers included) for one conflicted path |
 | `/api/conflict-resolve` | POST | `{path, resolution}` | Resolve one path: `ours` / `theirs` (`git checkout --ours/--theirs` + `add`) or `resolved` (`add`) |
+| `/api/conflict-save` | POST | `{path, content}` | Write the edited working-tree file (traversal-guarded) and `git add` it |
 | `/api/conflict-continue` | POST | — | `git <rebase\|merge\|cherry-pick\|revert> --continue` (no editor) |
 | `/api/conflict-abort` | POST | — | `git <op> --abort` |
 | `/api/conflict-skip` | POST | — | `git <rebase\|cherry-pick\|revert> --skip` (not merge) |
@@ -136,11 +141,13 @@ tag, stash). Matching rows are tinted in the graph, the focused result gets a
 stronger highlight, and Enter / Shift+Enter (or the arrows) step through matches.
 
 Select a commit to list its changed files; click a file to open its diff in a
-dialog with line-number gutters and add/delete row shading. A **Unified / Split**
-toggle switches between a single-column and a side-by-side layout, and the choice
-is remembered in `localStorage`. Diffs are read from the commit via
-`git show --first-parent`, so merge commits show the changes they introduce
-against their mainline parent.
+full-screen **Monaco** diff editor (read-only, syntax-highlighted, with an inline
+or side-by-side layout). A **Unified / Split** toggle switches layouts and the
+choice is remembered in `localStorage`. The eye button beside a changed file opens
+the file's full contents at that commit in a read-only Monaco viewer. Diffs are
+read from the commit via `git show --first-parent`, so merge commits show the
+changes they introduce against their mainline parent. If Monaco cannot load, the
+dialog falls back to Liana's built-in unified/split HTML renderer.
 
 A slim status bar along the bottom shows the `git` command currently executing for
 the active tab (with a spinner) and, when idle, the most recently finished command
@@ -214,11 +221,13 @@ controls next to the list of unmerged paths. State is read from git itself —
 `rebase-merge`/`rebase-apply`/`MERGE_HEAD`/`CHERRY_PICK_HEAD`/`REVERT_HEAD` for
 the operation — never inferred, and continue/skip/abort map 1:1 onto git's own
 `--continue`/`--skip`/`--abort`. Resolution is **file-level**: **Compare** opens a
-side-by-side Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`),
-**Ours** / **Theirs** run `git checkout --ours/--theirs` and stage the result, and
-**Mark resolved** stages the working-tree file after you edit it. Liana never
-writes merge results to disk itself, and git's stderr still comes back through
-the API unchanged.
+side-by-side Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`) beside an
+**editable Result** pane seeded from the working-tree file with its conflict markers
+intact — edit it in Monaco and **Save & mark resolved** writes the file and stages
+it with `git add`. **Ours** / **Theirs** run `git checkout --ours/--theirs` and stage
+the result. Liana only ever writes the resolved working-tree file; it never invents
+a merge or touches git's own operation state, and git's stderr still comes back
+through the API unchanged.
 
 ## Submodules
 

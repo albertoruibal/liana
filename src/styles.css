@@ -1663,11 +1663,38 @@ ul.branch-list li:hover {
 
 .conflict-columns {
   display: grid;
-  flex: 1 1 auto;
+  flex: 1 1 40%;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   min-height: 0;
   margin-top: 8px;
+}
+
+.conflict-result {
+  display: flex;
+  flex: 1 1 60%;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.conflict-result h4 {
+  margin: 0;
+  padding: 5px 8px;
+  background: var(--bg-hover);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.conflict-result .code-host {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .conflict-col {
@@ -1831,6 +1858,23 @@ ul.branch-list li:hover {
   margin: 10px 0;
 }
 
+.file-entry {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.file-entry .file-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-entry .view-file {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+}
+
 button.file-row {
   display: flex;
   align-items: center;
@@ -1945,6 +1989,7 @@ button.file-row .file-stats {
 }
 
 .diff-body {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   margin: 4px 0 12px;
@@ -1956,6 +2001,38 @@ button.file-row .file-stats {
   line-height: 1.55;
   color: var(--fg-dim);
   overflow: auto;
+}
+
+/* Monaco host: fills the diff body / code dialog; the HTML renderer is the fallback. */
+.diff-body.is-code,
+.code-host {
+  overflow: hidden;
+}
+
+.code-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Read-only whole-file viewer dialog (reuses the full-screen diff-dialog shell). */
+#code-dialog {
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  overflow: hidden;
+}
+
+#code-dialog[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 /* Unified rows */

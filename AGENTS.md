@@ -29,11 +29,6 @@ server (`electron/server.ts`) in the packaged app.
 
 ## Non-negotiables
 
-- **Dependency floor.** The point is a tiny, auditable tool. `lit` and the dev
-  toolchain are the floor; don't add nodegit, isomorphic-git, d3, or a UI framework.
-  Git access = spawning the `git` CLI, nothing else. The only sanctioned additions
-  are the Electron toolchain (`electron`, `electron-builder`, `esbuild`), which exist
-  solely to wrap the same UI/backend as a desktop app.
 - **`src/git.ts` and `src/api.ts` duplicate git wrappers on purpose.** `src/api.ts`
   is Node-only and is imported by `dev.ts`, `electron/server.ts`, and nothing in the
   browser bundle; the browser must never import it (it would pull Node modules into
@@ -70,8 +65,12 @@ server (`electron/server.ts`) in the packaged app.
 ## Conflict resolution & submodules
 
 - Resolve conflicts **file-level**: the UI shows base / ours / theirs from
-  `git show :1:/:2:/:3:<path>` and offers `git checkout --ours|--theirs` plus
-  `git add`; Liana never writes merge results to disk itself.
+  `git show :1:/:2:/:3:<path>`, offers `git checkout --ours|--theirs` plus
+  `git add`, and lets the user **edit the working-tree file directly** in an
+  editor seeded with its current (marker-bearing) contents. Saving writes that
+  file and stages it with `git add`. Liana never invents a merge or touches git's
+  own operation state (`rebase-merge`/`MERGE_HEAD`/…) — only the resolved
+  working-tree file is written.
 - Merge / rebase / cherry-pick / revert state is always **read from git**
   (`git rev-parse --git-path` on `rebase-merge`/`rebase-apply`/`MERGE_HEAD`/
   `CHERRY_PICK_HEAD`/`REVERT_HEAD`), never inferred. Continue / skip / abort map
