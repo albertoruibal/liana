@@ -10,7 +10,7 @@ import { RepoTab, activeTab, saveActive, store } from './store';
 import { toast } from './toast';
 import { $ } from './dom';
 import { refresh } from './actions';
-import { loadSessionsAndMaybeRestore } from './review-view';
+import { loadReviewSessions } from './review-view';
 import { EMPTY_METRICS } from '../graph';
 
 /** Make `tab` active and restore its view state into the globals. */
@@ -265,7 +265,7 @@ export function activateReviewTab(repoId: string): void {
   paintReview(state);
   renderTabs();
   persistReviewTabs();
-  if (!state.job) void loadSessionsAndMaybeRestore(state);
+  if (!state.job) void loadReviewSessions(state);
 }
 
 /** Close a tab; adjacent tab becomes active when the closed one was active. */

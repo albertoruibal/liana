@@ -110,10 +110,11 @@ in the packaged app.
   repo tab hides the review while its background polling continues (DOM writes are guarded by `activeReviewId ===
   state.repoId`). The tab strip renders each review tab right after its repo tab. All review/forge calls go through
   `reviewApi(state, …)`, scoped to `state.repoId` rather than the active tab, so background status polling survives a
-  tab switch. `openReviewTab`/`loadSessionsAndMaybeRestore` restore the newest saved session per repo; open review tabs
-  and the active one are persisted in `localStorage` (`liana-review-tabs` / `liana-review-active`, migrating the old
-  `liana-review-repo`) so they reopen after a reload. Sessions are already keyed by absolute repo path server-side, so
-  no backend change is needed for this.
+  tab switch. The Saved-review picker defaults to none; choosing a session calls `restoreSession`, which applies both
+  its MR (`state.mrIid`, pinned as a "(not open)" option when the request is no longer open) and its job, so a paused
+  session shows the resume state. Open review tabs and the active one are persisted in `localStorage`
+  (`liana-review-tabs` / `liana-review-active`, migrating the old `liana-review-repo`) so they reopen after a reload.
+  Sessions are already keyed by absolute repo path server-side, so no backend change is needed for this.
 
 ## Conflict resolution & submodules
 

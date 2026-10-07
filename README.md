@@ -269,9 +269,11 @@ switching to another repository hides it (state preserved), and it can be closed
 **Pause & resume.** A running review can be paused and continued later: **Pause** aborts the current model call at the
 nearest checkpoint, **Resume** re-issues the interrupted step and carries on. Because the checkpoint (the agent
 conversation, the batch cursor, and the negotiated protocol) is persisted, a review also survives a page reload and a
-full server/Electron restart — reopen the repo and the review tab restores the newest saved session. A **Saved review**
-picker lists the repository's sessions (newest first, up to 12 per repository) and can delete one. Pausing is not
-cancellation: cancel is terminal, pause is resumable. The resumed review keeps targeting the MR head SHA it started on.
+full server/Electron restart. A **Saved review** picker lists the repository's sessions (newest first, up to 12 per
+repository), defaults to none, and can delete one; choosing a saved review restores both its merge/pull request and its
+job — so a paused session immediately shows *Review paused — resume to continue* with **Resume** available. Pausing is
+not cancellation: cancel is terminal, pause is resumable. The resumed review keeps targeting the MR head SHA it started
+on.
 
 The model always runs as a small read-only agent against your repository: before commenting it may call `read_file`,
 `list_files`, `search_code`, `git_log`, `git_blame`, `git_diff`, `show_commit`, and `get_mr_changes`, all resolved at

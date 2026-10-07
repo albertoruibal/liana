@@ -24,7 +24,7 @@ import { initSearch } from './search';
 import { initStatusBar } from './status-bar';
 import { refresh } from './actions';
 import { api } from './api-client';
-import { REVIEW_ACTIVE_KEY, loadMergeRequests, loadSessionsAndMaybeRestore, paintReview, persistReviewTabs, readSavedReviewPaths, updateReviewVisibility } from './review-view';
+import { REVIEW_ACTIVE_KEY, loadMergeRequests, loadReviewSessions, paintReview, persistReviewTabs, readSavedReviewPaths, updateReviewVisibility } from './review-view';
 import { ReviewTabState, saveActive } from './store';
 import { ACTIVE_KEY, REPOS_KEY, RepoEntry, activateRepo, addRepo, loadTab, readSavedRepos, renderNoRepo, renderTabs } from './tabs';
 
@@ -147,7 +147,7 @@ async function bootstrap(): Promise<void> {
     };
     store.reviewTabs.set(bound.id, state);
     void loadMergeRequests(state);
-    void loadSessionsAndMaybeRestore(state);
+    void loadReviewSessions(state);
   }
   if (savedReviewActive) {
     const bound = store.tabs.find((t) => t.path === savedReviewActive);

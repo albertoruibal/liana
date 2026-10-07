@@ -139,6 +139,9 @@ export async function restoreSession(state: ReviewTabState, sessionId: string): 
 export function applySessionView(state: ReviewTabState, view: ReviewSessionView): void {
   state.changes = view.changes;
   state.job = view.job;
+  // Keep the MR picker in step with the session it belongs to, even when the
+  // request is no longer open (refreshMrSelect renders it as an extra option).
+  state.mrIid = view.changes.mr.iid;
   state.edits.clear();
   state.showRejected = false;
   for (const c of view.job.comments) {
@@ -146,6 +149,7 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   }
   if (store.activeReviewId !== state.repoId) return;
   paintForgeWording(state);
+  refreshMrSelect(state);
   $('#review-subtitle').textContent = `${requestNumber(view.changes.forge, view.changes.mr.iid)}: ${view.changes.mr.title} — ${view.changes.files.length} file(s)`;
   $('#review-approve-mr').hidden = false;
   renderJob(state, view.job);
@@ -154,14 +158,23 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
 
 export function refreshMrSelect(state: ReviewTabState): void {
   const sel = $<HTMLSelectElement>('#review-mr-select');
-  sel.innerHTML = state.mrs
-    .map(
-      (m) =>
-        `<option value="${m.iid}">${requestNumber(state.changes?.forge, m.iid)} ${esc(m.draft ? 'Draft: ' : '')}${esc(m.title)} — ${esc(m.sourceBranch)}→${esc(m.targetBranch)}</option>`,
-    )
-    .join('');
-  // Restore this tab's selection when it still exists, else keep the default.
-  if (state.mrIid > 0 && state.mrs.some((m) => m.iid === state.mrIid)) {
+  const listed = state.mrs.some((m) => m.iid === state.mrIid);
+  // A session may target a request that is no longer open (closed/merged);
+  // pin it as an extra option so the picker still reflects the restored MR.
+  const pinned =
+    state.mrIid > 0 && !listed && state.changes ? state.changes.mr : undefined;
+  sel.innerHTML =
+    (pinned
+      ? `<option value="${pinned.iid}">${requestNumber(state.changes?.forge, pinned.iid)} ${esc(pinned.title)} — (not open)</option>`
+      : '') +
+    state.mrs
+      .map(
+        (m) =>
+          `<option value="${m.iid}">${requestNumber(state.changes?.forge, m.iid)} ${esc(m.draft ? 'Draft: ' : '')}${esc(m.title)} — ${esc(m.sourceBranch)}→${esc(m.targetBranch)}</option>`,
+      )
+      .join('');
+  // Restore this tab's selection when it exists (listed or pinned), else default.
+  if (state.mrIid > 0 && (listed || pinned)) {
     sel.value = String(state.mrIid);
   } else {
     state.mrIid = Number(sel.value) || 0;
@@ -171,16 +184,17 @@ export function refreshMrSelect(state: ReviewTabState): void {
 
 export async function loadMergeRequests(state: ReviewTabState): Promise<void> {
   const status = $('#review-status');
-  if (store.activeReviewId === state.repoId) status.textContent = 'Loading requests…';
+  // Never clobber a restored session's status (e.g. "paused") with MR-list noise.
+  if (store.activeReviewId === state.repoId && !state.job) status.textContent = 'Loading requests…';
   try {
     const { mrs } = await reviewApi<{ mrs: ReviewRequest[] }>(state, '/forge/mrs');
     state.mrs = mrs;
     if (store.activeReviewId !== state.repoId) return;
     refreshMrSelect(state);
-    status.textContent = mrs.length === 0 ? 'No open requests.' : '';
+    if (!state.job) status.textContent = mrs.length === 0 ? 'No open requests.' : '';
   } catch (err) {
     if (store.activeReviewId !== state.repoId) return;
-    status.textContent = String(err);
+    if (!state.job) status.textContent = String(err);
   }
 }
 
@@ -205,6 +219,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     // A tab switch landed while this was in flight — the state is updated but
     // the DOM belongs to another review now.
     if (store.activeReviewId !== state.repoId) return true;
+    refreshSessionSelect(state);
     paintForgeWording(state);
     $('#review-subtitle').textContent = `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
     $('#review-queue-wrap').hidden = true;
@@ -660,7 +675,7 @@ export function openReviewTab(): void {
   updateReviewVisibility();
   renderTabs();
   void loadMergeRequests(state);
-  void loadSessionsAndMaybeRestore(state);
+  void loadReviewSessions(state);
 }
 
 /** Clear the review view's DOM for a fresh tab. */
@@ -692,15 +707,6 @@ export function paintReview(state: ReviewTabState): void {
   $('#review-status').textContent = '';
   $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
   if (state.job) renderJob(state, state.job);
-}
-
-/** Load saved sessions; restore the newest one so a review survives a reload. */
-export async function loadSessionsAndMaybeRestore(state: ReviewTabState): Promise<void> {
-  await loadReviewSessions(state);
-  if (state.sessions.length > 0 && !state.job) {
-    const newest = state.sessions[0];
-    if (newest) await restoreSession(state, newest.id);
-  }
 }
 
 /** Close a repository's review tab and, if it was visible, fall back to the graph. */
