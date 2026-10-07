@@ -203,7 +203,7 @@ LIANA_REPO=$PWD/test-repo npm run dev
 ```bash
 npm run electron:dev                     # Vite + Electron, HMR, "Open repo…" picker
 LIANA_REPO=$PWD/test-repo npm run electron:dev
-npm run electron:dist                    # -> release/Liana-0.2.0.AppImage, liana_0.2.0_amd64.deb
+npm run electron:dist                    # -> release/Liana-0.2.1.AppImage, liana_0.2.1_amd64.deb
 ```
 
 In dev the Electron window simply loads `http://localhost:5173`, so the Vite plugin still serves `/api`. Packaged builds
