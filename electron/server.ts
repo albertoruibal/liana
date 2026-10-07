@@ -7,7 +7,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createApi } from '../src/api';
+import { createApi } from '../src/api/index';
 
 export interface ServerOptions {
   /** Repository to open at launch, or null to start unconfigured. */

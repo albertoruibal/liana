@@ -2,7 +2,7 @@
 
 A minimal local git GUI: commit-graph visualization + commit / rebase / cherry-pick / revert, integrated conflict
 resolution, submodules, and forge-agnostic (GitLab / GitHub) AI code review with AI commit messages. Vanilla TypeScript
-plus SVG rendered by Vite. The backend is the transport-agnostic `src/api.ts` (Node, shells out to the `git` CLI), served
+plus SVG rendered by Vite. The backend is the transport-agnostic `src/api/` (Node, shells out to the `git` CLI), served
 either by the Vite dev-server plugin (`dev.ts`) in the browser or by an Electron loopback server (`electron/server.ts`)
 in the packaged app.
 
@@ -27,10 +27,14 @@ in the packaged app.
 
 ## Non-negotiables
 
-- **`src/git.ts` and `src/api.ts` duplicate git wrappers on purpose.** `src/api.ts` is Node-only and is imported by
-  `dev.ts`, `electron/server.ts`, and nothing in the browser bundle; the browser must never import it (it would pull
-  Node modules into the client). When changing a git command, mirror it in both files and keep the types in
-  `src/types.ts` identical on both sides. `npm run build` must not emit any `node:` import into `dist/assets/`.
+- **`src/git/` and `src/api/` duplicate git wrappers on purpose.** Each is split by functionality into the same
+  module names (`exec`, `paths`, `repo`, `operations`, `conflicts`, `submodules`, `diffs`, `rebase`, `branches`,
+  `remotes`, `reset`, `stash`); `src/api/index.ts` adds the router and `src/git/forge.ts` mirrors the forge routes.
+  `src/api/` is Node-only and is imported by `dev.ts`, `electron/server.ts`, and nothing in the browser bundle;
+  the browser must never import it (it would pull
+  Node modules into the client). When changing a git command, mirror it in the matching modules of both trees and keep
+  the types in `src/types.ts` identical on both sides. `npm run build` must not emit any `node:` import into
+  `dist/assets/`.
 - **Network operations are limited to push / pull / login / submodules, the code-review integrations, the AI conflict
   fix, fetching an MR head for review, and AI commit-message generation.** Clone and remote *management*
   (add/rename/set-url) stay out of scope. Push/pull/login and submodule `init`/`update`/`sync`/`add` are sanctioned; so
@@ -62,9 +66,10 @@ in the packaged app.
 
 ## Code review, AI, GitLab & GitHub
 
-- Review backends are **Node-only**: `src/settings.ts`, `src/review.ts`, `src/review-tools.ts`, `src/conflict-fix.ts`,
+- Review backends are **Node-only**: `src/settings.ts`, `src/review/` (split into `ai.ts`, `commit-message.ts`,
+  `comments.ts`, `jobs.ts`, `delegations.ts` behind `index.ts`), `src/review-tools.ts`, `src/conflict-fix.ts`,
   `src/forge.ts`, `src/forges.ts`, `src/gitlab.ts`, `src/github.ts`, and `src/sessions.ts` are imported only by
-  `src/api.ts`; the browser must never import them (same `node:`-leak rule as `src/api.ts`). Keep them listed in
+  `src/api/`; the browser must never import them (same `node:`-leak rule as `src/api/`). Keep them listed in
   `tsconfig.electron.json`.
 
 - The review feature is forge-agnostic behind `ReviewForge` (`src/forge.ts`). `src/gitlab.ts` and `src/github.ts`
@@ -72,8 +77,8 @@ in the packaged app.
   settings preference wins over the `origin` host, which wins over which token is configured; absent all of that,
   GitLab). Adding a forge means adding one module and one `forgeByKind` case — no changes to the agent loop or tools.
 - The forge is resolved **per repository** from the registered repo path, never from a global. `/api/forge/*` is the
-  neutral surface; `/api/gitlab/*` are deprecated aliases that force GitLab. Mirror every new route in `src/git.ts` with
-  identical types (the same duplication rule as `src/api.ts`).
+  neutral surface; `/api/gitlab/*` are deprecated aliases that force GitLab. Mirror every new route in `src/git/` with
+  identical types (the same duplication rule as `src/api/`).
 - Secrets: the GitLab token *and* the GitHub token live in the same `0600` config, masked to `hasToken`;
   `LIANA_GITLAB_TOKEN` / `LIANA_GITHUB_TOKEN` override them at run time.
 - GitHub anchoring: map `newLine`/`oldLine` onto `line`/`side` plus `start_line`/`start_side` for a two-sided range. A
@@ -119,7 +124,7 @@ in the packaged app.
   file is written. The one automated exception is the AI conflict fix below.
 - **AI conflict fix** (`src/conflict-fix.ts`, Node-only): a per-file, on-demand proposal. `POST /api/conflict-fix` reads
   the three index stages via `loadConflictFile` and asks the active provider (the same OpenAI-compatible endpoint as
-  reviews, through `completeText` in `src/review.ts`) for a merged file; `POST /api/conflict-apply` writes that
+  reviews, through `completeText` in `src/review/ai.ts`) for a merged file; `POST /api/conflict-apply` writes that
   **user-approved** result to the working tree and `git add`s it. `POST /api/conflict-save` is the manual counterpart
   (the editable Result pane), writing the user's edited working-tree file and staging it. These stay file-level: they
   re-check the path is still unmerged, confine it to the repo, and never touch submodule gitlinks or binary files.

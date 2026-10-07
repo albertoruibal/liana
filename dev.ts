@@ -3,7 +3,7 @@
 // Runs only under `vite dev`; production builds are static — start `npm run dev`.
 
 import type { Connect, Plugin, ViteDevServer } from 'vite';
-import { createApi } from './src/api';
+import { createApi } from './src/api/index';
 
 function sendJson(res: Connect.IncomingMessage, status: number, body: unknown): void {
   res.statusCode = status;

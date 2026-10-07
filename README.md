@@ -23,28 +23,35 @@ Renderer (lit-free vanilla TS + SVG)                Node
   └── Electron ─────► electron/server.ts            ┤
                         (127.0.0.1 loopback)        │
                                                     ▼
-                                                    src/api.ts  ──► spawn `git …`
+                                                    src/api/    ──► spawn `git …`
                                                     ▼
                                                     Your repository (working directory, on-disk refs)
 ```
 
-The backend is `src/api.ts`: a transport-agnostic, Node-only module holding every git wrapper and `/api` route behind
-`createApi(...).handle(route, method, body)`. Two thin adapters serve it — the Vite plugin for browser dev, and a
-loopback HTTP server for the packaged Electron app. The renderer only ever speaks `fetch('/api/*')`.
+The backend is `src/api/`: a transport-agnostic, Node-only package holding every git wrapper and `/api` route behind
+`createApi(...).handle(route, method, body)` (`src/api/index.ts`). Git wrappers are split by concern — `exec.ts`,
+`repo.ts`, `conflicts.ts`, `submodules.ts`, `diffs.ts`, `rebase.ts`, `branches.ts`, `remotes.ts`, `reset.ts`,
+`stash.ts`, `operations.ts` — and re-exported from the barrel. Two thin adapters serve it — the Vite plugin for browser
+dev, and a loopback HTTP server for the packaged Electron app. The renderer only ever speaks `fetch('/api/*')`.
 
-- `src/api.ts` — Node-only backend: JSON route dispatch + git CLI wrappers. Holds a registry of validated repositories
-  addressed by opaque `x-liana-repo` ids.
+- `src/api/index.ts` — Node-only backend entry: JSON route dispatch + repository registry, composing the wrapper
+  modules below. Addresses repositories by opaque `x-liana-repo` ids.
+- `src/api/*.ts` — git CLI wrappers grouped by functionality (`exec`, `repo`, `conflicts`, `submodules`, `diffs`,
+  `rebase`, `branches`, `remotes`, `reset`, `stash`, `operations`).
 - `dev.ts` — Vite plugin adapter; runs only under `vite dev`.
 - `electron/main.ts` — main process: window, native folder dialog, git-on-PATH.
 - `electron/server.ts` — packaged mode: loopback server (UI static files + `/api`).
 - `electron/preload.ts` — `contextBridge` surface (`window.liana`).
-- `src/git.ts` — browser-side mirror of the same wrappers (typed contract, kept in sync).
+- `src/git/` — browser-side mirror of the same wrappers (typed contract, kept in sync): a parallel
+  `exec`/`repo`/`conflicts`/… split, re-exported from `src/git/index.ts`.
 - `src/forge.ts` — the `ReviewForge` interface and shared forge git helpers.
 - `src/forges.ts` — forge registry + per-repo selection (`resolveForge`).
 - `src/gitlab.ts` / `src/github.ts` — the GitLab and GitHub REST clients.
 - `src/layout.ts` — lane assignment (see below). Pure function, no DOM.
 - `src/graph.ts` — SVG renderer: lanes as bezier curves, merge commits as rings, branch chips as rounded rects.
-- `src/ui.ts` — toolbar, repository tabs, detail pane, dialogs, API calls.
+- `src/ui/` — renderer entry (`index.ts`) plus one module per feature (tabs, detail, diff/code viewers, conflicts,
+  search, settings, review view, …). Cross-feature view state lives in `src/ui/store.ts`; each feature owns an
+  `initX()` that binds its own DOM.
 - `src/code.ts` — Monaco integration (diff + read-only viewer + editable conflict
   result). Dynamically imported on first use so the editor and its language workers
   stay out of the initial bundle; the UI keeps a hand-rolled HTML fallback for diffs.

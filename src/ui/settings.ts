@@ -1,0 +1,367 @@
+// Settings dialog: AI providers, review rules, and Git hosting.
+
+import { api } from './api-client';
+import { esc } from './format';
+import { buildThemeOptions } from './theme';
+import { $ } from './dom';
+import { AiProviderConfig, AppSettings } from '../types';
+import { applyTheme, currentTheme } from './theme';
+import { closeMoreMenu } from './more-menu';
+
+// --- Settings dialog: AI providers, review rules, Git hosting ---
+/** Provider list being edited; secrets stay represented by `hasKey`. */
+export let settingsProviders: AiProviderConfig[] = [];
+
+export let settingsActiveProviderId: string | null = null;
+
+/** Newly typed provider keys, keyed by provider id; sent only when non-empty. */
+export const settingsNewKeys = new Map<string, string>();
+
+export function renderProviderList(): void {
+  const ul = $('#settings-providers');
+  if (settingsProviders.length === 0) {
+    ul.innerHTML = '<li class="provider-empty muted">No providers yet. Add one below.</li>';
+    return;
+  }
+  ul.innerHTML = settingsProviders
+    .map(
+      (p, i) => `
+      <li class="provider-item" data-index="${i}">
+        <label class="provider-active">
+          <input type="radio" name="active-provider" ${p.id === settingsActiveProviderId ? 'checked' : ''} />
+          <span class="provider-active-label">active</span>
+        </label>
+        <div class="provider-fields">
+          <div class="provider-row">
+            <input type="text" class="pf-name" placeholder="Name" value="${esc(p.name)}" />
+            <input type="text" class="pf-model" placeholder="Model (e.g. qwen2.5-coder:7b)" value="${esc(p.model)}" />
+          </div>
+          <input type="text" class="pf-url" placeholder="Base URL (…/v1)" value="${esc(p.baseUrl)}" />
+          <input type="password" class="pf-key" autocomplete="off"
+            placeholder="${p.hasKey ? 'Token saved — leave blank to keep' : 'API token (optional for local models)'}" />
+          <div class="provider-row">
+            <label class="pf-small">Protocol
+              <select class="pf-protocol">
+                <option value="auto">auto</option>
+                <option value="native">native</option>
+                <option value="react">react</option>
+                <option value="json">json</option>
+                <option value="none">none</option>
+              </select>
+            </label>
+            <label class="pf-small">Context
+              <input type="number" class="pf-context" min="512" value="${p.contextWindow}" />
+            </label>
+            <label class="pf-small">Max tokens
+              <input type="number" class="pf-maxtokens" min="1" value="${p.maxTokens}" />
+            </label>
+            <label class="pf-small">Max steps
+              <input type="number" class="pf-maxsteps" min="1" value="${p.maxSteps}" />
+            </label>
+          </div>
+          <div class="provider-row">
+            <label class="pf-small">Result chars
+              <input type="number" class="pf-resultchars" min="200" value="${p.toolResultChars}" />
+            </label>
+            <label class="pf-small">Temperature
+              <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
+            </label>
+            <label class="pf-checkbox">
+              <input type="checkbox" class="pf-stream" ${p.stream ? 'checked' : ''} /> Stream
+            </label>
+            <button type="button" class="btn pf-remove">Remove</button>
+          </div>
+          <p class="muted hint pf-detected">${
+            p.detectedProtocol ? `Last successful protocol: ${esc(p.detectedProtocol)}` : ''
+          }</p>
+        </div>
+      </li>`,
+    )
+    .join('');
+
+  const selects = ul.querySelectorAll<HTMLSelectElement>('.pf-protocol');
+  settingsProviders.forEach((p, i) => {
+    const sel = selects[i];
+    if (sel) sel.value = p.toolProtocol;
+  });
+}
+
+/** Pull the current DOM values back into `settingsProviders`. */
+export function readProviderInputs(): void {
+  const items = document.querySelectorAll<HTMLLIElement>('#settings-providers .provider-item');
+  items.forEach((li) => {
+    const i = Number(li.dataset.index);
+    const p = settingsProviders[i];
+    if (!p) return;
+    const q = <T extends HTMLElement>(sel: string): T | null => li.querySelector<T>(sel);
+    p.name = q<HTMLInputElement>('.pf-name')?.value.trim() || p.name;
+    p.model = q<HTMLInputElement>('.pf-model')?.value.trim() ?? p.model;
+    p.baseUrl = q<HTMLInputElement>('.pf-url')?.value.trim() || p.baseUrl;
+    p.contextWindow = Number(q<HTMLInputElement>('.pf-context')?.value) || p.contextWindow;
+    p.maxTokens = Number(q<HTMLInputElement>('.pf-maxtokens')?.value) || p.maxTokens;
+    p.maxSteps = Number(q<HTMLInputElement>('.pf-maxsteps')?.value) || p.maxSteps;
+    p.toolResultChars =
+      Number(q<HTMLInputElement>('.pf-resultchars')?.value) || p.toolResultChars;
+    p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
+    p.stream = q<HTMLInputElement>('.pf-stream')?.checked ?? p.stream;
+    const proto = q<HTMLSelectElement>('.pf-protocol')?.value;
+    if (proto === 'auto' || proto === 'native' || proto === 'react' || proto === 'json' || proto === 'none') {
+      p.toolProtocol = proto;
+    }
+    const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
+    if (radio?.checked) settingsActiveProviderId = p.id;
+  });
+  // The key input is only sent when the user typed a new value.
+  items.forEach((li) => {
+    const i = Number(li.dataset.index);
+    const p = settingsProviders[i];
+    const key = li.querySelector<HTMLInputElement>('.pf-key')?.value.trim();
+    if (p && key) settingsNewKeys.set(p.id, key);
+  });
+}
+
+export function showSettingsTab(tab: string): void {
+  document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
+    p.hidden = p.dataset.panel !== tab;
+  });
+  // Git hosting has its own per-forge Test buttons inside the panel.
+  $('#settings-test').hidden = tab !== 'ai';
+  if (tab === 'theme') applyTheme(currentTheme());
+}
+
+export async function openSettingsDialog(): Promise<void> {
+  const dlg = $<HTMLDialogElement>('#settings-dialog');
+  const status = $('#settings-status');
+  status.textContent = '';
+  settingsNewKeys.clear();
+  try {
+    const s = await api<AppSettings>('/settings', undefined, { scoped: false });
+    settingsProviders = s.ai.providers;
+    settingsActiveProviderId = s.ai.activeProviderId;
+    renderProviderList();
+
+    $<HTMLTextAreaElement>('#settings-review-instructions').value = s.review.instructions;
+    $<HTMLSelectElement>('#settings-review-severity').value = s.review.severityThreshold;
+    $<HTMLInputElement>('#settings-review-maxcomments').value = String(s.review.maxComments);
+    $<HTMLInputElement>('#settings-review-language').value = s.review.language;
+    $<HTMLInputElement>('#settings-review-maxsteps').value = String(s.review.maxSteps);
+    $<HTMLTextAreaElement>('#settings-review-ignore').value = s.review.ignoreGlobs.join('\n');
+    $<HTMLInputElement>('#settings-review-batch').checked = s.review.batchByFile;
+
+    $<HTMLTextAreaElement>('#settings-commit-instructions').value = s.commit.instructions;
+    $<HTMLInputElement>('#settings-commit-language').value = s.commit.language;
+    $<HTMLInputElement>('#settings-commit-maxdiff').value = String(s.commit.maxDiffChars);
+    $<HTMLInputElement>('#settings-commit-history').checked = s.commit.includeHistory;
+
+    $<HTMLInputElement>('#settings-gitlab-url').value = s.gitlab.baseUrl;
+    $<HTMLInputElement>('#settings-gitlab-token').value = '';
+    $<HTMLInputElement>('#settings-gitlab-project').value = s.gitlab.projectId;
+    $('#settings-gitlab-note').textContent = s.gitlab.hasToken
+      ? 'A token is saved. Leave the field blank to keep it.'
+      : 'No token saved yet.';
+
+    $<HTMLInputElement>('#settings-github-url').value = s.github.baseUrl;
+    $<HTMLInputElement>('#settings-github-token').value = '';
+    $<HTMLInputElement>('#settings-github-repo').value = s.github.repo;
+    $('#settings-github-note').textContent = s.github.hasToken
+      ? 'A token is saved. Leave the field blank to keep it.'
+      : 'No token saved yet.';
+    $<HTMLSelectElement>('#settings-forge').value = s.forge;
+  } catch (err) {
+    status.textContent = String(err);
+  }
+  buildThemeOptions();
+  showSettingsTab('ai');
+  dlg.showModal();
+}
+
+export function collectSettingsPatch(): Record<string, unknown> {
+  readProviderInputs();
+  const tokenValue = $<HTMLInputElement>('#settings-gitlab-token').value;
+  const githubTokenValue = $<HTMLInputElement>('#settings-github-token').value;
+  const providers = settingsProviders.map((p) => {
+    const out: Record<string, unknown> = {
+      id: p.id,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      contextWindow: p.contextWindow,
+      maxTokens: p.maxTokens,
+      temperature: p.temperature,
+      toolProtocol: p.toolProtocol,
+      detectedProtocol: p.detectedProtocol,
+      toolResultChars: p.toolResultChars,
+      maxSteps: p.maxSteps,
+      stream: p.stream,
+    };
+    const key = settingsNewKeys.get(p.id);
+    if (key) out.apiKey = key;
+    return out;
+  });
+  return {
+    ai: { providers, activeProviderId: settingsActiveProviderId },
+    review: {
+      instructions: $<HTMLTextAreaElement>('#settings-review-instructions').value,
+      severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
+      maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
+      language: $<HTMLInputElement>('#settings-review-language').value.trim() || 'English',
+      maxSteps: Number($<HTMLInputElement>('#settings-review-maxsteps').value) || 8,
+      ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')
+        .value.split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      batchByFile: $<HTMLInputElement>('#settings-review-batch').checked,
+    },
+    commit: {
+      instructions: $<HTMLTextAreaElement>('#settings-commit-instructions').value,
+      language: $<HTMLInputElement>('#settings-commit-language').value.trim() || 'English',
+      includeHistory: $<HTMLInputElement>('#settings-commit-history').checked,
+      maxDiffChars: Number($<HTMLInputElement>('#settings-commit-maxdiff').value) || 12000,
+    },
+    gitlab: {
+      baseUrl: $<HTMLInputElement>('#settings-gitlab-url').value.trim(),
+      // Omit when blank so an existing token is preserved.
+      ...(tokenValue ? { token: tokenValue } : {}),
+      projectId: $<HTMLInputElement>('#settings-gitlab-project').value.trim(),
+    },
+    github: {
+      baseUrl: $<HTMLInputElement>('#settings-github-url').value.trim(),
+      ...(githubTokenValue ? { token: githubTokenValue } : {}),
+      repo: $<HTMLInputElement>('#settings-github-repo').value.trim(),
+    },
+    forge: ($<HTMLSelectElement>('#settings-forge').value as 'auto' | 'gitlab' | 'github'),
+  };
+}
+
+/** Persist the current dialog state and refresh the provider list from the reply. */
+export async function persistSettings(): Promise<void> {
+  const s = await api<AppSettings>('/settings', collectSettingsPatch(), { scoped: false });
+  settingsProviders = s.ai.providers;
+  settingsActiveProviderId = s.ai.activeProviderId;
+  renderProviderList();
+}
+
+/** Shared handler for the per-forge Test buttons: persist first, then probe. */
+export function testForgeButton(forge: 'gitlab' | 'github', route: string, label: string): () => void {
+  return () => {
+    const status = $('#settings-status');
+    void (async () => {
+      try {
+        status.textContent = `Testing ${label}…`;
+        // Persist the edited fields first so the probe uses them.
+        await persistSettings();
+        const res = await api<{ username: string }>(route, forge === 'github' ? { forge } : {}, {
+          scoped: false,
+        });
+        status.textContent = `${label} OK as ${res.username}.`;
+      } catch (err) {
+        status.textContent = String(err);
+      }
+    })();
+  };
+}
+
+export function initSettings(): void {
+  $('#btn-settings').addEventListener('click', () => {
+    closeMoreMenu();
+    void openSettingsDialog();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((btn) => {
+    btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'ai'));
+  });
+
+  $('#settings-add-provider').addEventListener('click', () => {
+    readProviderInputs();
+    const id = `p${Date.now().toString(36)}`;
+    settingsProviders.push({
+      id,
+      name: 'New provider',
+      baseUrl: 'http://localhost:11434/v1',
+      model: '',
+      hasKey: false,
+      contextWindow: 8192,
+      maxTokens: 1024,
+      temperature: 0.1,
+      toolProtocol: 'auto',
+      detectedProtocol: null,
+      toolResultChars: 2000,
+      maxSteps: 8,
+      stream: true,
+    });
+    if (!settingsActiveProviderId) settingsActiveProviderId = id;
+    renderProviderList();
+  });
+
+  $('#settings-providers').addEventListener('click', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement) || !target.classList.contains('pf-remove')) return;
+    const li = target.closest<HTMLLIElement>('.provider-item');
+    if (!li) return;
+    readProviderInputs();
+    const i = Number(li.dataset.index);
+    const removed = settingsProviders[i];
+    settingsProviders.splice(i, 1);
+    if (removed && settingsActiveProviderId === removed.id) {
+      settingsActiveProviderId = settingsProviders[0]?.id ?? null;
+    }
+    renderProviderList();
+  });
+
+  $('#settings-save').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    const status = $('#settings-status');
+    status.textContent = 'Saving…';
+    void (async () => {
+      try {
+        await persistSettings();
+        status.textContent = 'Saved.';
+      } catch (err) {
+        status.textContent = String(err);
+      }
+    })();
+  });
+
+  $('#settings-test').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    const status = $('#settings-status');
+    void (async () => {
+      try {
+        readProviderInputs();
+        const active = settingsProviders.find((p) => p.id === settingsActiveProviderId);
+        if (!active) {
+          status.textContent = 'Add a provider first.';
+          return;
+        }
+        await persistSettings();
+        status.textContent = 'Testing AI endpoint…';
+        const res = await api<{ reply: string }>(
+          '/settings/test-ai',
+          { providerId: active.id },
+          { scoped: false },
+        );
+        status.textContent = `AI OK: ${res.reply}`;
+      } catch (err) {
+        status.textContent = String(err);
+      }
+    })();
+  });
+
+  $('#settings-test-gitlab').addEventListener(
+    'click',
+    testForgeButton('gitlab', '/settings/test-gitlab', 'GitLab'),
+  );
+
+  $('#settings-test-github').addEventListener(
+    'click',
+    testForgeButton('github', '/settings/test-forge', 'GitHub'),
+  );
+
+  $('#settings-cancel').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    $<HTMLDialogElement>('#settings-dialog').close();
+  });
+}

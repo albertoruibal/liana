@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { activeProvider, providerById, type StoredProvider } from './settings';
-import { completeText } from './review';
+import { completeText } from './review/index';
 import type { AiConflictFix, ConflictFile } from './types';
 
 // Reject rather than truncate: a file silently cut in half would produce a
