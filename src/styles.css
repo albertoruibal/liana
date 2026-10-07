@@ -3634,6 +3634,23 @@ dialog select:focus-visible {
   background: var(--accent-soft-2);
 }
 
+/* Monaco-backed excerpt: fixed height from the mount, Monaco handles scrolling. */
+.review-comment-excerpt.is-code {
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
+}
+
+.review-comment-excerpt.is-code .code-host {
+  width: 100%;
+}
+
+/* Whole-line decoration marking the comment's anchor line inside the excerpt. */
+.review-excerpt-anchor {
+  background: var(--accent-soft-2);
+  outline: 1px solid var(--accent);
+}
+
 .review-comment-empty {
   margin: 4px 0;
   font-size: 12.5px;

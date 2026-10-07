@@ -3655,31 +3655,149 @@ function renderTrace(job: ReviewJob): void {
 }
 
 /** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
-function commentExcerptHtml(state: ReviewTabState, c: ReviewComment): string {
-  if (c.oldLine === null && c.newLine === null) return '';
+/** A comment's ±2-line diff window, pre-split for the inline Monaco excerpt. */
+interface ExcerptWindow {
+  /** Old-side text (context + deleted lines), newline-joined. */
+  original: string;
+  /** New-side text (context + added lines), newline-joined. */
+  modified: string;
+  /** Real file line number for each `original` model line. */
+  originalLines: number[];
+  /** Real file line number for each `modified` model line. */
+  modifiedLines: number[];
+  /** Real line numbers to highlight on each side. */
+  anchors: { original?: number[]; modified?: number[] };
+  /** Pixel height sized to the taller side. */
+  height: number;
+}
+
+const EXCERPT_LINE_HEIGHT = 19;
+const EXCERPT_MIN_HEIGHT = 56;
+const EXCERPT_MAX_HEIGHT = 150;
+
+/**
+ * Locate a comment's anchor in its file diff and build a small old/new window
+ * around it. Returns null when the file, its diff, or the anchor can't be found.
+ */
+function excerptWindow(state: ReviewTabState, c: ReviewComment): ExcerptWindow | null {
+  if (c.oldLine === null && c.newLine === null) return null;
   const file = state.changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
-  if (!file || !file.diff) return '';
+  if (!file || !file.diff) return null;
   const lines = parsePatch(file.diff)
     .flatMap((s) => s.hunks)
     .flatMap((h) => h.lines);
   let anchor = -1;
   if (c.newLine !== null) anchor = lines.findIndex((l) => l.newNo === c.newLine);
   if (anchor < 0 && c.oldLine !== null) anchor = lines.findIndex((l) => l.oldNo === c.oldLine);
-  if (anchor < 0) return '';
+  if (anchor < 0) return null;
   const around: DiffLine[] = [];
   for (let i = anchor - 2; i <= anchor + 2; i++) {
     const line = lines[i];
     if (line && line.kind !== 'nonewline') around.push(line);
   }
-  const rows = around.map((line) => {
+  const oldText: string[] = [];
+  const newText: string[] = [];
+  const originalLines: number[] = [];
+  const modifiedLines: number[] = [];
+  const anchors: ExcerptWindow['anchors'] = {};
+  for (const line of around) {
+    const isAnchor =
+      (c.newLine !== null && line.newNo === c.newLine) ||
+      (c.oldLine !== null && line.oldNo === c.oldLine);
+    if (line.kind !== 'add') {
+      oldText.push(line.text);
+      originalLines.push(line.oldNo ?? originalLines[originalLines.length - 1] ?? 1);
+      if (isAnchor && line.oldNo !== null) (anchors.original ??= []).push(line.oldNo);
+    }
+    if (line.kind !== 'del') {
+      newText.push(line.text);
+      modifiedLines.push(line.newNo ?? modifiedLines[modifiedLines.length - 1] ?? 1);
+      if (isAnchor && line.newNo !== null) (anchors.modified ??= []).push(line.newNo);
+    }
+  }
+  if (oldText.length === 0 && newText.length === 0) return null;
+  const rows = Math.max(oldText.length, newText.length);
+  const height = Math.min(EXCERPT_MAX_HEIGHT, Math.max(EXCERPT_MIN_HEIGHT, rows * EXCERPT_LINE_HEIGHT + 10));
+  return {
+    original: oldText.join('\n'),
+    modified: newText.join('\n'),
+    originalLines,
+    modifiedLines,
+    anchors,
+    height,
+  };
+}
+
+/**
+ * A short diff excerpt around a comment's anchor. Emits the hand-rolled HTML
+ * window (used verbatim when Monaco is unavailable); `mountExcerptEditors`
+ * upgrades it to an inline Monaco diff when the module has loaded.
+ */
+function commentExcerptHtml(state: ReviewTabState, c: ReviewComment): string {
+  const win = excerptWindow(state, c);
+  if (!win) return '';
+  const file = state.changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
+  const lines = file ? parsePatch(file.diff).flatMap((s) => s.hunks).flatMap((h) => h.lines) : [];
+  let anchor = -1;
+  if (c.newLine !== null) anchor = lines.findIndex((l) => l.newNo === c.newLine);
+  if (anchor < 0 && c.oldLine !== null) anchor = lines.findIndex((l) => l.oldNo === c.oldLine);
+  const rows: string[] = [];
+  for (let i = anchor - 2; i <= anchor + 2; i++) {
+    const line = lines[i];
+    if (!line || line.kind === 'nonewline') continue;
     const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
     const anchorCls =
       (c.newLine !== null && line.newNo === c.newLine) || (c.oldLine !== null && line.oldNo === c.oldLine)
         ? ' dl-anchor'
         : '';
-    return `<div class="dl-row dl-${line.kind}${anchorCls}">${gutter(line.oldNo)}${gutter(line.newNo)}<span class="dl-sign">${sign}</span><span class="dl-text">${esc(line.text)}</span></div>`;
-  });
-  return `<div class="review-comment-excerpt diff-body">${rows.join('')}</div>`;
+    rows.push(
+      `<div class="dl-row dl-${line.kind}${anchorCls}">${gutter(line.oldNo)}${gutter(line.newNo)}<span class="dl-sign">${sign}</span><span class="dl-text">${esc(line.text)}</span></div>`,
+    );
+  }
+  return `<div class="review-comment-excerpt diff-body" data-excerpt="${esc(c.id)}">${rows.join('')}</div>`;
+}
+
+/** Monaco diff editors mounted for the visible review excerpts. */
+let excerptHandles: CodeHandle[] = [];
+
+/** Tear down every mounted excerpt editor (called before each queue rebuild). */
+function disposeExcerptEditors(): void {
+  for (const handle of excerptHandles) handle.dispose();
+  excerptHandles = [];
+}
+
+/**
+ * Upgrade each rendered excerpt placeholder to an inline Monaco diff. Remounts
+ * on every queue rebuild, so previous handles are disposed first. When Monaco is
+ * unavailable the placeholder's hand-rolled HTML stays in place.
+ */
+async function mountExcerptEditors(state: ReviewTabState, list: HTMLElement): Promise<void> {
+  disposeExcerptEditors();
+  const hosts = list.querySelectorAll<HTMLElement>('.review-comment-excerpt[data-excerpt]');
+  if (hosts.length === 0) return;
+  const code = await loadCode();
+  if (!code) return;
+  for (const host of hosts) {
+    const id = host.dataset.excerpt ?? '';
+    const c = state.job?.comments.find((x) => x.id === id);
+    if (!c) continue;
+    const win = excerptWindow(state, c);
+    if (!win) continue;
+    host.classList.add('is-code');
+    host.innerHTML = '';
+    const mount = document.createElement('div');
+    mount.className = 'code-host';
+    mount.style.height = `${win.height}px`;
+    host.appendChild(mount);
+    excerptHandles.push(
+      code.createDiffEditor(mount, win.original, win.modified, {
+        path: c.filePath,
+        sideBySide: false,
+        lineNumbers: { original: win.originalLines, modified: win.modifiedLines },
+        anchors: win.anchors,
+      }),
+    );
+  }
 }
 
 function renderCommentQueue(state: ReviewTabState): void {
@@ -3752,8 +3870,10 @@ function renderCommentQueue(state: ReviewTabState): void {
     btn.addEventListener('click', () => void approveComment(state, btn.dataset.id ?? ''));
   }
   for (const btn of list.querySelectorAll<HTMLButtonElement>('.review-comment-reject')) {
-    btn.addEventListener('click', () => rejectComment(state, btn.dataset.id ?? ''));
+    btn.addEventListener('click', () => void rejectComment(state, btn.dataset.id ?? ''));
   }
+  // Upgrade the excerpt placeholders to inline Monaco diffs (no-op if unavailable).
+  if (activeReviewId === state.repoId) void mountExcerptEditors(state, list);
 }
 
 /** Record a comment's local status/body so a poll re-render preserves it. */
@@ -4007,6 +4127,8 @@ function closeReviewTab(repoId: string): void {
   if (!state) return;
   window.clearTimeout(state.poll);
   window.clearTimeout(state.saveTimer);
+  // Only the visible tab owns mounted excerpt editors; drop them on close.
+  if (activeReviewId === repoId) disposeExcerptEditors();
   reviewTabs.delete(repoId);
   if (activeReviewId === repoId) {
     activeReviewId = null;

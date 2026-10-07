@@ -222,12 +222,22 @@ export function createEditor(
   };
 }
 
-/** Create a Monaco diff editor comparing `original` against `modified` (read-only). */
+/**
+ * Create a Monaco diff editor comparing `original` against `modified` (read-only).
+ * `lineNumbers.original`/`.modified` map each model line (index 0 = first line) to
+ * the real file line number to display, for excerpts that start mid-file.
+ * `anchors` lists real line numbers to highlight on the matching side.
+ */
 export function createDiffEditor(
   container: HTMLElement,
   original: string,
   modified: string,
-  opts: { path?: string; sideBySide?: boolean } = {},
+  opts: {
+    path?: string;
+    sideBySide?: boolean;
+    lineNumbers?: { original?: number[]; modified?: number[] };
+    anchors?: { original?: number[]; modified?: number[] };
+  } = {},
 ): CodeHandle {
   const editor = monaco.editor.createDiffEditor(container, {
     ...commonOptions(),
@@ -239,7 +249,30 @@ export function createDiffEditor(
   const language = opts.path ? languageFor(opts.path) : 'plaintext';
   const originalModel = monaco.editor.createModel(original, language);
   const modifiedModel = monaco.editor.createModel(modified, language);
+  // Set the model first: assigning it clears any decorations on the sub-editors.
   editor.setModel({ original: originalModel, modified: modifiedModel });
+  // `lineNumbers` is an editor option, so map each side after the model is set.
+  if (opts.lineNumbers?.original) {
+    editor.getOriginalEditor().updateOptions({ lineNumbers: lineNumberMapper(opts.lineNumbers.original) });
+  }
+  if (opts.lineNumbers?.modified) {
+    editor.getModifiedEditor().updateOptions({ lineNumbers: lineNumberMapper(opts.lineNumbers.modified) });
+  }
+  // Highlight the anchor line(s) on each side.
+  const decorations: monaco.editor.IEditorDecorationsCollection[] = [];
+  const decorate = (side: 'original' | 'modified', lines: number[]): void => {
+    const target = side === 'original' ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    decorations.push(
+      target.createDecorationsCollection(
+        lines.map((line) => ({
+          range: new monaco.Range(line, 1, line, 1),
+          options: { isWholeLine: true, className: 'review-excerpt-anchor' },
+        })),
+      ),
+    );
+  };
+  if (opts.anchors?.original?.length) decorate('original', opts.anchors.original);
+  if (opts.anchors?.modified?.length) decorate('modified', opts.anchors.modified);
   return {
     kind: 'diff',
     setValue: () => {},
@@ -247,11 +280,17 @@ export function createDiffEditor(
     setSideBySide: (sideBySide) => editor.updateOptions({ renderSideBySide: sideBySide }),
     focus: () => editor.focus(),
     dispose: () => {
+      for (const d of decorations) d.clear();
       editor.dispose();
       originalModel.dispose();
       modifiedModel.dispose();
     },
   };
+}
+
+/** Monaco `lineNumbers` callback mapping a 1-based display index to the real line. */
+function lineNumberMapper(lines: number[]): (n: number) => string {
+  return (n) => `${lines[n - 1] ?? n}`;
 }
 
 /** Re-theme all Monaco editors after a Liana theme switch. */
