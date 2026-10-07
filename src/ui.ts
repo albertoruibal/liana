@@ -1107,6 +1107,24 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
       conflictHandles.push(code.createEditor(host, content ?? '', { path: file.path, readOnly: true }));
     }
   }
+  // Keep the Base / Ours / Theirs panes' scroll in step on both axes. The
+  // editable Result pane stays independent. The guard stops the echo when we
+  // programmatically move the sibling editors.
+  let syncing = false;
+  for (const handle of conflictHandles) {
+    handle.onDidScroll(() => {
+      if (syncing) return;
+      syncing = true;
+      try {
+        const { top, left } = handle.getScrollPosition();
+        for (const other of conflictHandles) {
+          if (other !== handle) other.setScrollPosition(top, left);
+        }
+      } finally {
+        syncing = false;
+      }
+    });
+  }
   if (editable) {
     const host = body.querySelector<HTMLElement>('#conflict-result-host');
     if (host) {

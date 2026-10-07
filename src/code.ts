@@ -142,7 +142,41 @@ export interface CodeHandle {
   setSideBySide(sideBySide: boolean): void;
   /** Focus the editor so shortcuts land inside Monaco. */
   focus(): void;
+  /** Run `cb` whenever this editor scrolls (used to sync sibling panes). */
+  onDidScroll(cb: () => void): void;
+  /** Current scroll offsets of the (modified side for a diff handle). */
+  getScrollPosition(): { top: number; left: number };
+  /** Jump to a scroll offset without animation (for syncing sibling panes). */
+  setScrollPosition(top: number, left: number): void;
   dispose(): void;
+}
+
+/** Scroll accessors shared by standalone editors and the modified side of a diff. */
+function scrollControl(editor: monaco.editor.ICodeEditor): {
+  api: Pick<CodeHandle, 'onDidScroll' | 'getScrollPosition' | 'setScrollPosition'>;
+  dispose(): void;
+} {
+  const listeners = new Set<() => void>();
+  const sub = editor.onDidScrollChange(() => {
+    for (const cb of listeners) cb();
+  });
+  return {
+    api: {
+      onDidScroll: (cb) => {
+        listeners.add(cb);
+      },
+      getScrollPosition: () => ({ top: editor.getScrollTop(), left: editor.getScrollLeft() }),
+      setScrollPosition: (top, left) => {
+        const type = monaco.editor.ScrollType.Immediate;
+        editor.setScrollTop(top, type);
+        editor.setScrollLeft(left, type);
+      },
+    },
+    dispose: () => {
+      listeners.clear();
+      sub.dispose();
+    },
+  };
 }
 
 /**
@@ -208,13 +242,18 @@ export function createEditor(
       });
     }
   }
+  const scroll = scrollControl(editor);
   return {
     kind: 'editor',
     setValue: (next) => editor.setValue(next),
     getValue: () => editor.getValue(),
     setSideBySide: () => {},
     focus: () => editor.focus(),
+    onDidScroll: (cb) => scroll.api.onDidScroll(cb),
+    getScrollPosition: () => scroll.api.getScrollPosition(),
+    setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
     dispose: () => {
+      scroll.dispose();
       contentSub?.dispose();
       markerCollection?.clear();
       editor.dispose();
@@ -273,13 +312,19 @@ export function createDiffEditor(
   };
   if (opts.anchors?.original?.length) decorate('original', opts.anchors.original);
   if (opts.anchors?.modified?.length) decorate('modified', opts.anchors.modified);
+  // Inline diffs scroll as one; the modified sub-editor is the shared viewport.
+  const scroll = scrollControl(editor.getModifiedEditor());
   return {
     kind: 'diff',
     setValue: () => {},
     getValue: () => modifiedModel.getValue(),
     setSideBySide: (sideBySide) => editor.updateOptions({ renderSideBySide: sideBySide }),
     focus: () => editor.focus(),
+    onDidScroll: (cb) => scroll.api.onDidScroll(cb),
+    getScrollPosition: () => scroll.api.getScrollPosition(),
+    setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
     dispose: () => {
+      scroll.dispose();
       for (const d of decorations) d.clear();
       editor.dispose();
       originalModel.dispose();
