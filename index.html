@@ -250,6 +250,20 @@
       </menu>
     </dialog>
 
+    <dialog id="approve-dialog">
+      <div class="dialog-head">
+        <h3 id="approve-title">Approve merge request?</h3>
+        <p class="muted hint" id="approve-summary"></p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <menu>
+        <button class="btn" id="approve-cancel" value="cancel">Cancel</button>
+        <button class="btn btn-primary" id="approve-confirm" value="ok">Approve</button>
+      </menu>
+    </dialog>
+
     <dialog id="stash-dialog">
       <form method="dialog" id="stash-form">
         <div class="dialog-head">

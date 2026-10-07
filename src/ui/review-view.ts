@@ -49,6 +49,41 @@ export function paintForgeWording(state: ReviewTabState): void {
   $('#review-approve-mr').textContent = `Approve ${short}`;
 }
 
+/** Styled confirmation before publishing a forge approval. */
+export function confirmApprove(state: ReviewTabState): Promise<boolean> {
+  const changes = state.changes;
+  if (!changes) return Promise.resolve(false);
+  const { long } = forgeLabels(changes.forge);
+  $('#approve-title').textContent = `Approve ${long}?`;
+  $('#approve-summary').textContent =
+    `${requestNumber(changes.forge, changes.mr.iid)} ${changes.mr.title} — ` +
+    `this publishes an approval on the ${long}.`;
+  const dlg = $<HTMLDialogElement>('#approve-dialog');
+  return new Promise((resolve) => {
+    const confirmBtn = $<HTMLButtonElement>('#approve-confirm');
+    const cancelBtn = $<HTMLButtonElement>('#approve-cancel');
+    const onConfirm = (): void => {
+      cleanup();
+      dlg.close();
+      resolve(true);
+    };
+    const onCancel = (): void => {
+      cleanup();
+      dlg.close();
+      resolve(false);
+    };
+    const cleanup = (): void => {
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      dlg.removeEventListener('cancel', onCancel);
+    };
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onCancel);
+    dlg.showModal();
+  });
+}
+
 /** Remember the open review store.tabs (by path) and which one was visible. */
 export function persistReviewTabs(): void {
   try {
@@ -910,16 +945,19 @@ export function initReview(): void {
     ev.preventDefault();
     const state = activeReview();
     if (!state?.changes) return;
+    const changes = state.changes;
     const status = $('#review-status');
-    status.textContent = 'Approving…';
-    void reviewApi(state, '/forge/approve', { iid: state.changes.mr.iid })
-      .then(() => {
-        const long = forgeLabels(state.changes?.forge).long;
+    void (async () => {
+      if (!(await confirmApprove(state))) return;
+      status.textContent = 'Approving…';
+      try {
+        await reviewApi(state, '/forge/approve', { iid: changes.mr.iid });
+        const long = forgeLabels(changes.forge).long;
         status.textContent = `${long.charAt(0).toUpperCase() + long.slice(1)} approved.`;
-      })
-      .catch((err) => {
+      } catch (err) {
         status.textContent = String(err);
-      });
+      }
+    })();
   });
 
   // Escape closes an open dialog, otherwise clears the selection.
@@ -945,6 +983,7 @@ export function initReview(): void {
     const rebaseDlg = $<HTMLDialogElement>('#rebase-dialog');
     const nameDlg = $<HTMLDialogElement>('#name-dialog');
     const resetDlg = $<HTMLDialogElement>('#reset-dialog');
+    const approveDlg = $<HTMLDialogElement>('#approve-dialog');
     const stashDlg = $<HTMLDialogElement>('#stash-dialog');
     const aboutDlg = $<HTMLDialogElement>('#about-dialog');
     const diffDlg = $<HTMLDialogElement>('#diff-dialog');
@@ -989,6 +1028,10 @@ export function initReview(): void {
     }
     if (resetDlg.open) {
       resetDlg.close();
+      return;
+    }
+    if (approveDlg.open) {
+      approveDlg.close();
       return;
     }
     if (stashDlg.open) {
