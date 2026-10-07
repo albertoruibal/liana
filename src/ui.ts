@@ -7,7 +7,7 @@ import { displayRefs, refIconHtml, remoteBranchName } from './refs';
 import { isoDate, isoDateTime } from './dates';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import type { CodeHandle } from './code';
-import type { CommitFile, ConflictEntry, ConflictFile, ConflictType, FileContents, GitCommandRecord, GitCommit, GitRef, GraphLayout, MergeOperation, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, StatusEntry, SubmoduleInfo } from './types';
+import type { AiConflictFix, AiProviderConfig, AppSettings, CommitFile, ConflictEntry, ConflictFile, ConflictType, FileContents, ForgeKind, GitCommandRecord, GitCommit, GitRef, ReviewRequest, ReviewChanges, GraphLayout, MergeOperation, RebaseAction, RebaseTodoItem, RemoteStatus, RepoActivity, RepoState, RepoStatus, ResetMode, ReviewComment, ReviewCommentStatus, ReviewJob, ReviewSession, ReviewSessionView, StatusEntry, SubmoduleInfo } from './types';
 
 /**
  * Monaco is loaded on demand so the editor and its language workers stay out of
@@ -131,13 +131,16 @@ function $svg(sel: string): SVGSVGElement {
 interface ApiOpts {
   /** Send the active tab's repository id. Set false for repo-management routes. */
   scoped?: boolean;
+  /** Explicit repository id to scope to (used by background review polling). */
+  repoId?: string;
 }
 
 async function api<T>(route: string, body?: unknown, opts: ApiOpts = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = window.liana?.token;
   if (token) headers['x-liana-token'] = token;
-  if (opts.scoped !== false && activeId) headers['x-liana-repo'] = activeId;
+  const scope = opts.repoId ?? activeId;
+  if (opts.scoped !== false && scope) headers['x-liana-repo'] = scope;
   const res = await fetch(`/api${route}`, {
     method: body !== undefined ? 'POST' : 'GET',
     headers,
@@ -146,6 +149,14 @@ async function api<T>(route: string, body?: unknown, opts: ApiOpts = {}): Promis
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) throw new Error(data.error ?? res.statusText);
   return data;
+}
+
+/**
+ * Review/GitLab calls are scoped to the repository a review tab is bound to,
+ * not the active tab, so background polling keeps working after a tab switch.
+ */
+function reviewApi<T>(state: ReviewTabState, route: string, body?: unknown): Promise<T> {
+  return api<T>(route, body, { repoId: state.repoId });
 }
 
 // --- Git command status bar ---
@@ -501,6 +512,7 @@ function renderConflicts(conflicts: ConflictEntry[]): string {
         <button type="button" class="btn btn-sm act" data-act="view-conflict" data-path="${esc(c.path)}">Compare</button>
         <button type="button" class="btn btn-sm act" data-act="take-ours" data-path="${esc(c.path)}">${esc(ours)}</button>
         <button type="button" class="btn btn-sm act" data-act="take-theirs" data-path="${esc(c.path)}">${esc(theirs)}</button>
+        ${c.isSubmodule ? '' : `<button type="button" class="btn btn-sm act" data-act="ai-fix-conflict" data-path="${esc(c.path)}">Fix with AI</button>`}
         <button type="button" class="btn btn-sm act" data-act="mark-resolved" data-path="${esc(c.path)}">Mark resolved</button>
       </div>
     </li>`;
@@ -710,6 +722,8 @@ function updateCommitSelection(): void {
   $('#commit-file-count').textContent =
     boxes.length === 0 ? '' : `${selected} of ${boxes.length} selected`;
   $<HTMLButtonElement>('#commit-submit').disabled = selected === 0;
+  const gen = document.querySelector<HTMLButtonElement>('#commit-generate');
+  if (gen && !gen.dataset.busy) gen.disabled = selected === 0;
 }
 
 /** Load the changed-file list for a commit into the detail pane. */
@@ -1035,6 +1049,7 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
   $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
   $<HTMLButtonElement>('#conflict-theirs').disabled = !file.hasTheirs;
   $<HTMLButtonElement>('#conflict-save').disabled = !editable;
+  $<HTMLButtonElement>('#conflict-ai-fix').disabled = file.isSubmodule || file.isBinary;
 
   if (!useMonaco) return;
   const code = await loadCode();
@@ -1062,6 +1077,92 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
         conflictMarkers: true,
       });
     }
+  }
+}
+
+// --- AI conflict resolution dialog ---
+
+/** The last model proposal, applied when the user confirms. */
+let aiConflictFix: AiConflictFix | null = null;
+/** Path the AI dialog is working on, so Regenerate can re-ask. */
+let aiConflictPath = '';
+/** Guards against a stale proposal landing after the dialog was reopened. */
+let aiConflictSeq = 0;
+
+/** Open the AI merge dialog for one conflicted path and request a proposal. */
+async function openAiConflictDialog(path: string): Promise<void> {
+  if (!path) return;
+  aiConflictPath = path;
+  $<HTMLButtonElement>('#ai-conflict-apply').disabled = true;
+  $<HTMLButtonElement>('#ai-conflict-regenerate').disabled = true;
+  $('#ai-conflict-title').textContent = path;
+  $('#ai-conflict-subtitle').textContent = '';
+  $('#ai-conflict-status').textContent = '';
+  $('#ai-conflict-body').innerHTML = '';
+  $<HTMLDialogElement>('#ai-conflict-dialog').showModal();
+  await requestAiConflictFix(path);
+}
+
+/** Ask the backend for a proposed merge and render it. */
+async function requestAiConflictFix(path: string): Promise<void> {
+  const seq = ++aiConflictSeq;
+  aiConflictFix = null;
+  const applyBtn = $<HTMLButtonElement>('#ai-conflict-apply');
+  const regenBtn = $<HTMLButtonElement>('#ai-conflict-regenerate');
+  applyBtn.disabled = true;
+  regenBtn.disabled = true;
+  $('#ai-conflict-subtitle').textContent = 'Asking the model to merge…';
+  $('#ai-conflict-body').innerHTML = '<div class="dl-note">Waiting for the model…</div>';
+  $('#ai-conflict-status').textContent = '';
+  try {
+    const { fix } = await api<{ fix: AiConflictFix }>('/conflict-fix', { path });
+    if (seq !== aiConflictSeq) return;
+    aiConflictFix = fix;
+    renderAiConflictDialog(fix);
+    applyBtn.disabled = false;
+  } catch (err) {
+    if (seq !== aiConflictSeq) return;
+    $('#ai-conflict-subtitle').textContent = '';
+    $('#ai-conflict-body').innerHTML = '';
+    $('#ai-conflict-status').textContent = String(err);
+  } finally {
+    if (seq === aiConflictSeq) regenBtn.disabled = false;
+  }
+}
+
+/** Render a proposed merge: explanation plus the merged file (or a delete note). */
+function renderAiConflictDialog(fix: AiConflictFix): void {
+  const suffix = fix.kind === 'delete' ? ' · resolves by deletion' : '';
+  $('#ai-conflict-subtitle').textContent = `Proposed by ${fix.model}${suffix}`;
+  const explanation = fix.explanation
+    ? `<p class="ai-conflict-explanation">${esc(fix.explanation)}</p>`
+    : '';
+  const body =
+    fix.kind === 'delete'
+      ? '<div class="dl-note">The model proposes removing this file.</div>'
+      : `<pre class="ai-conflict-pre">${esc(fix.content ?? '')}</pre>`;
+  $('#ai-conflict-body').innerHTML = explanation + body;
+}
+
+/** Apply the reviewed proposal: the backend writes the file and stages it. */
+async function applyAiConflictFix(): Promise<void> {
+  const fix = aiConflictFix;
+  if (!fix) return;
+  const status = $('#ai-conflict-status');
+  const applyBtn = $<HTMLButtonElement>('#ai-conflict-apply');
+  applyBtn.disabled = true;
+  const verb = fix.kind === 'delete' ? 'remove' : 'overwrite';
+  if (!confirm(`Apply the AI merge? This will ${verb} ${fix.path} and stage it.`)) {
+    applyBtn.disabled = false;
+    return;
+  }
+  try {
+    await api('/conflict-apply', { path: fix.path, kind: fix.kind, content: fix.content });
+    $<HTMLDialogElement>('#ai-conflict-dialog').close();
+    await refresh();
+  } catch (err) {
+    status.textContent = String(err);
+    applyBtn.disabled = false;
   }
 }
 
@@ -1474,6 +1575,33 @@ function renderTabs(): void {
 
     btn.addEventListener('click', () => void activateRepo(tab.id));
     strip.appendChild(btn);
+
+    // A review tab, once opened for this repository, sits right after its repo tab.
+    if (reviewTabs.has(tab.id)) {
+      const review = document.createElement('button');
+      review.type = 'button';
+      review.className = `repo-tab repo-tab-review${tab.id === activeReviewId ? ' is-active' : ''}`;
+      review.title = `Code review — ${tab.name}`;
+      review.dataset.review = tab.id;
+      review.innerHTML =
+        `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+      const name = document.createElement('span');
+      name.className = 'repo-tab-name';
+      name.textContent = `Code review · ${tab.name}`;
+      review.appendChild(name);
+      const close = document.createElement('span');
+      close.className = 'repo-tab-close';
+      close.textContent = '\u00d7';
+      close.title = `Close ${tab.name} code review`;
+      close.setAttribute('role', 'button');
+      close.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        closeReviewTab(tab.id);
+      });
+      review.appendChild(close);
+      review.addEventListener('click', () => activateReviewTab(tab.id));
+      strip.appendChild(review);
+    }
   }
 
   const add = document.createElement('button');
@@ -1565,7 +1693,18 @@ async function addRepo(path: string, activate: boolean): Promise<void> {
 
 /** Switch the active tab: paint the cached view, then refresh so its dirty dot stays accurate. */
 async function activateRepo(id: string): Promise<void> {
-  if (id === activeId) return;
+  // Selecting a repository always returns to the graph view. Any open review
+  // tabs keep their state; the one bound to this repo is just hidden.
+  if (activeReviewId !== null) {
+    activeReviewId = null;
+    updateReviewVisibility();
+    renderTabs();
+    persistReviewTabs();
+  }
+  if (id === activeId) {
+    if (lastResponse) renderAll(lastResponse);
+    return;
+  }
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   saveActive();
@@ -1574,12 +1713,41 @@ async function activateRepo(id: string): Promise<void> {
   await refresh();
 }
 
+/** Show the review tab for `repoId`, preserving its loaded MR/job state. */
+function activateReviewTab(repoId: string): void {
+  const state = reviewTabs.get(repoId);
+  if (!state) return;
+  // The review is bound to one repository; rebind it as active so subsequent
+  // review/GitLab API calls target the same repo the MR belongs to.
+  const bound = tabs.find((t) => t.id === repoId);
+  if (!bound) {
+    closeReviewTab(repoId);
+    return;
+  }
+  if (activeId !== repoId) {
+    saveActive();
+    loadTab(bound);
+    if (bound.lastResponse) renderAll(bound.lastResponse);
+    void refresh();
+  }
+  activeReviewId = repoId;
+  updateReviewVisibility();
+  paintReview(state);
+  renderTabs();
+  persistReviewTabs();
+  if (!state.job) void loadSessionsAndMaybeRestore(state);
+}
+
 /** Close a tab; adjacent tab becomes active when the closed one was active. */
 function closeTab(id: string): void {
   const idx = tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const wasActive = id === activeId;
   tabs.splice(idx, 1);
+  // Closing a repository closes its review tab too.
+  if (reviewTabs.has(id)) {
+    closeReviewTab(id);
+  }
   if (wasActive) {
     const next = tabs[idx] ?? tabs[idx - 1] ?? tabs[tabs.length - 1];
     if (next) {
@@ -1594,8 +1762,10 @@ function closeTab(id: string): void {
       renderNoRepo();
     }
   }
+  updateReviewVisibility();
   renderTabs();
   persistTabs();
+  persistReviewTabs();
 }
 
 async function refresh(): Promise<void> {
@@ -1614,11 +1784,14 @@ async function refresh(): Promise<void> {
     if (activeId !== reqId) return;
     repoName = resp.state?.name ?? tab.name;
     tab.name = repoName;
+    if (activeReviewId === tab.id) updateReviewVisibility();
     tab.lastResponse = resp;
     tab.remoteStatus = remote;
     lastResponse = resp;
     remoteStatus = remote;
-    renderAll(resp);
+    // While a review tab is shown the graph columns are hidden, so skip
+    // drawing; closing the review tab re-renders from the cached response.
+    if (activeReviewId === null) renderAll(resp);
     renderTabs();
     persistTabs();
     void refreshActivity();
@@ -1645,6 +1818,9 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
       selectedHash = null;
     } else if (act === 'view-conflict') {
       await openConflictDialog(path);
+      return;
+    } else if (act === 'ai-fix-conflict') {
+      await openAiConflictDialog(path);
       return;
     } else if (act === 'take-ours') {
       if (!confirm(`Resolve ${path} using our version?`)) return;
@@ -1999,6 +2175,18 @@ async function saveConflictFromDialog(): Promise<void> {
 $('#conflict-ours').addEventListener('click', () => void resolveFromDialog('ours'));
 $('#conflict-theirs').addEventListener('click', () => void resolveFromDialog('theirs'));
 $('#conflict-save').addEventListener('click', () => void saveConflictFromDialog());
+$('#conflict-ai-fix').addEventListener('click', () => {
+  $<HTMLDialogElement>('#conflict-dialog').close();
+  void openAiConflictDialog(conflictPath);
+});
+
+$('#ai-conflict-close').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  aiConflictSeq++;
+  $<HTMLDialogElement>('#ai-conflict-dialog').close();
+});
+$('#ai-conflict-regenerate').addEventListener('click', () => void requestAiConflictFix(aiConflictPath));
+$('#ai-conflict-apply').addEventListener('click', () => void applyAiConflictFix());
 
 // Keep the Base / Ours / Theirs columns' scroll in step on both axes.
 $<HTMLDivElement>('#conflict-body').addEventListener(
@@ -2130,6 +2318,38 @@ $('#commit-select-all').addEventListener('change', (ev) => {
 });
 
 $('#commit-file-list').addEventListener('change', () => updateCommitSelection());
+
+/** Draft a commit message for the checked files with the active AI provider. */
+async function generateCommitMessage(): Promise<void> {
+  const status = $('#commit-status');
+  const textarea = $<HTMLTextAreaElement>('#commit-message');
+  const btn = $<HTMLButtonElement>('#commit-generate');
+  const files = [...document.querySelectorAll<HTMLInputElement>('.commit-file:checked')].map(
+    (b) => b.dataset.path ?? '',
+  );
+  if (files.length === 0) {
+    status.textContent = 'Select at least one file';
+    return;
+  }
+  btn.dataset.busy = '1';
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Generating…';
+  status.textContent = '';
+  try {
+    const { message } = await api<{ message: string }>('/commit-message', { files });
+    if (message) textarea.value = message;
+    else status.textContent = 'The model returned an empty message';
+  } catch (err) {
+    status.textContent = String(err);
+  } finally {
+    delete btn.dataset.busy;
+    btn.textContent = original;
+    updateCommitSelection();
+  }
+}
+
+$('#commit-generate').addEventListener('click', () => void generateCommitMessage());
 
 // The Diff button is a sibling of the row's <label>, so clicking it doesn't hit
 // the checkbox; delegate here to open the working-tree diff.
@@ -2329,34 +2549,6 @@ function pickRemote(subtitle: string): Promise<string | null> {
 
 $('#btn-push').addEventListener('click', (ev) => void doPush(ev.shiftKey));
 $('#btn-pull').addEventListener('click', () => void doPull());
-
-// --- Settings dialog: theme ---
-
-function showSettingsTab(tab: string): void {
-  document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((b) => {
-    b.classList.toggle('active', b.dataset.tab === tab);
-  });
-  document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
-    p.hidden = p.dataset.panel !== tab;
-  });
-  if (tab === 'theme') applyTheme(currentTheme());
-}
-
-$('#btn-settings').addEventListener('click', () => {
-  closeMoreMenu();
-  buildThemeOptions();
-  showSettingsTab('theme');
-  $<HTMLDialogElement>('#settings-dialog').showModal();
-});
-
-document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((btn) => {
-  btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'theme'));
-});
-
-$('#settings-close').addEventListener('click', (ev) => {
-  ev.preventDefault();
-  $<HTMLDialogElement>('#settings-dialog').close();
-});
 
 // Selection: click a dot/label — any SVG element tagged with data-hash.
 // Clicking empty SVG space clears the selection.
@@ -2861,6 +3053,1109 @@ $('#name-cancel').addEventListener('click', () => {
   $<HTMLDialogElement>('#name-dialog').close();
 });
 
+// --- Settings dialog: AI providers, review rules, Git hosting ---
+
+/** Provider list being edited; secrets stay represented by `hasKey`. */
+let settingsProviders: AiProviderConfig[] = [];
+let settingsActiveProviderId: string | null = null;
+/** Newly typed provider keys, keyed by provider id; sent only when non-empty. */
+const settingsNewKeys = new Map<string, string>();
+
+function renderProviderList(): void {
+  const ul = $('#settings-providers');
+  if (settingsProviders.length === 0) {
+    ul.innerHTML = '<li class="provider-empty muted">No providers yet. Add one below.</li>';
+    return;
+  }
+  ul.innerHTML = settingsProviders
+    .map(
+      (p, i) => `
+      <li class="provider-item" data-index="${i}">
+        <label class="provider-active">
+          <input type="radio" name="active-provider" ${p.id === settingsActiveProviderId ? 'checked' : ''} />
+          <span class="provider-active-label">active</span>
+        </label>
+        <div class="provider-fields">
+          <div class="provider-row">
+            <input type="text" class="pf-name" placeholder="Name" value="${esc(p.name)}" />
+            <input type="text" class="pf-model" placeholder="Model (e.g. qwen2.5-coder:7b)" value="${esc(p.model)}" />
+          </div>
+          <input type="text" class="pf-url" placeholder="Base URL (…/v1)" value="${esc(p.baseUrl)}" />
+          <input type="password" class="pf-key" autocomplete="off"
+            placeholder="${p.hasKey ? 'Token saved — leave blank to keep' : 'API token (optional for local models)'}" />
+          <div class="provider-row">
+            <label class="pf-small">Protocol
+              <select class="pf-protocol">
+                <option value="auto">auto</option>
+                <option value="native">native</option>
+                <option value="react">react</option>
+                <option value="json">json</option>
+                <option value="none">none</option>
+              </select>
+            </label>
+            <label class="pf-small">Context
+              <input type="number" class="pf-context" min="512" value="${p.contextWindow}" />
+            </label>
+            <label class="pf-small">Max tokens
+              <input type="number" class="pf-maxtokens" min="1" value="${p.maxTokens}" />
+            </label>
+            <label class="pf-small">Max steps
+              <input type="number" class="pf-maxsteps" min="1" value="${p.maxSteps}" />
+            </label>
+          </div>
+          <div class="provider-row">
+            <label class="pf-small">Result chars
+              <input type="number" class="pf-resultchars" min="200" value="${p.toolResultChars}" />
+            </label>
+            <label class="pf-small">Temperature
+              <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
+            </label>
+            <label class="pf-checkbox">
+              <input type="checkbox" class="pf-stream" ${p.stream ? 'checked' : ''} /> Stream
+            </label>
+            <button type="button" class="btn pf-remove">Remove</button>
+          </div>
+          <p class="muted hint pf-detected">${
+            p.detectedProtocol ? `Last successful protocol: ${esc(p.detectedProtocol)}` : ''
+          }</p>
+        </div>
+      </li>`,
+    )
+    .join('');
+
+  const selects = ul.querySelectorAll<HTMLSelectElement>('.pf-protocol');
+  settingsProviders.forEach((p, i) => {
+    const sel = selects[i];
+    if (sel) sel.value = p.toolProtocol;
+  });
+}
+
+/** Pull the current DOM values back into `settingsProviders`. */
+function readProviderInputs(): void {
+  const items = document.querySelectorAll<HTMLLIElement>('#settings-providers .provider-item');
+  items.forEach((li) => {
+    const i = Number(li.dataset.index);
+    const p = settingsProviders[i];
+    if (!p) return;
+    const q = <T extends HTMLElement>(sel: string): T | null => li.querySelector<T>(sel);
+    p.name = q<HTMLInputElement>('.pf-name')?.value.trim() || p.name;
+    p.model = q<HTMLInputElement>('.pf-model')?.value.trim() ?? p.model;
+    p.baseUrl = q<HTMLInputElement>('.pf-url')?.value.trim() || p.baseUrl;
+    p.contextWindow = Number(q<HTMLInputElement>('.pf-context')?.value) || p.contextWindow;
+    p.maxTokens = Number(q<HTMLInputElement>('.pf-maxtokens')?.value) || p.maxTokens;
+    p.maxSteps = Number(q<HTMLInputElement>('.pf-maxsteps')?.value) || p.maxSteps;
+    p.toolResultChars =
+      Number(q<HTMLInputElement>('.pf-resultchars')?.value) || p.toolResultChars;
+    p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
+    p.stream = q<HTMLInputElement>('.pf-stream')?.checked ?? p.stream;
+    const proto = q<HTMLSelectElement>('.pf-protocol')?.value;
+    if (proto === 'auto' || proto === 'native' || proto === 'react' || proto === 'json' || proto === 'none') {
+      p.toolProtocol = proto;
+    }
+    const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
+    if (radio?.checked) settingsActiveProviderId = p.id;
+  });
+  // The key input is only sent when the user typed a new value.
+  items.forEach((li) => {
+    const i = Number(li.dataset.index);
+    const p = settingsProviders[i];
+    const key = li.querySelector<HTMLInputElement>('.pf-key')?.value.trim();
+    if (p && key) settingsNewKeys.set(p.id, key);
+  });
+}
+
+function showSettingsTab(tab: string): void {
+  document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
+    p.hidden = p.dataset.panel !== tab;
+  });
+  // Git hosting has its own per-forge Test buttons inside the panel.
+  $('#settings-test').hidden = tab !== 'ai';
+  if (tab === 'theme') applyTheme(currentTheme());
+}
+
+async function openSettingsDialog(): Promise<void> {
+  const dlg = $<HTMLDialogElement>('#settings-dialog');
+  const status = $('#settings-status');
+  status.textContent = '';
+  settingsNewKeys.clear();
+  try {
+    const s = await api<AppSettings>('/settings', undefined, { scoped: false });
+    settingsProviders = s.ai.providers;
+    settingsActiveProviderId = s.ai.activeProviderId;
+    renderProviderList();
+
+    $<HTMLTextAreaElement>('#settings-review-instructions').value = s.review.instructions;
+    $<HTMLSelectElement>('#settings-review-severity').value = s.review.severityThreshold;
+    $<HTMLInputElement>('#settings-review-maxcomments').value = String(s.review.maxComments);
+    $<HTMLInputElement>('#settings-review-language').value = s.review.language;
+    $<HTMLInputElement>('#settings-review-maxsteps').value = String(s.review.maxSteps);
+    $<HTMLTextAreaElement>('#settings-review-ignore').value = s.review.ignoreGlobs.join('\n');
+    $<HTMLInputElement>('#settings-review-batch').checked = s.review.batchByFile;
+
+    $<HTMLTextAreaElement>('#settings-commit-instructions').value = s.commit.instructions;
+    $<HTMLInputElement>('#settings-commit-language').value = s.commit.language;
+    $<HTMLInputElement>('#settings-commit-maxdiff').value = String(s.commit.maxDiffChars);
+    $<HTMLInputElement>('#settings-commit-history').checked = s.commit.includeHistory;
+
+    $<HTMLInputElement>('#settings-gitlab-url').value = s.gitlab.baseUrl;
+    $<HTMLInputElement>('#settings-gitlab-token').value = '';
+    $<HTMLInputElement>('#settings-gitlab-project').value = s.gitlab.projectId;
+    $('#settings-gitlab-note').textContent = s.gitlab.hasToken
+      ? 'A token is saved. Leave the field blank to keep it.'
+      : 'No token saved yet.';
+
+    $<HTMLInputElement>('#settings-github-url').value = s.github.baseUrl;
+    $<HTMLInputElement>('#settings-github-token').value = '';
+    $<HTMLInputElement>('#settings-github-repo').value = s.github.repo;
+    $('#settings-github-note').textContent = s.github.hasToken
+      ? 'A token is saved. Leave the field blank to keep it.'
+      : 'No token saved yet.';
+    $<HTMLSelectElement>('#settings-forge').value = s.forge;
+  } catch (err) {
+    status.textContent = String(err);
+  }
+  buildThemeOptions();
+  showSettingsTab('ai');
+  dlg.showModal();
+}
+
+function collectSettingsPatch(): Record<string, unknown> {
+  readProviderInputs();
+  const tokenValue = $<HTMLInputElement>('#settings-gitlab-token').value;
+  const githubTokenValue = $<HTMLInputElement>('#settings-github-token').value;
+  const providers = settingsProviders.map((p) => {
+    const out: Record<string, unknown> = {
+      id: p.id,
+      name: p.name,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      contextWindow: p.contextWindow,
+      maxTokens: p.maxTokens,
+      temperature: p.temperature,
+      toolProtocol: p.toolProtocol,
+      detectedProtocol: p.detectedProtocol,
+      toolResultChars: p.toolResultChars,
+      maxSteps: p.maxSteps,
+      stream: p.stream,
+    };
+    const key = settingsNewKeys.get(p.id);
+    if (key) out.apiKey = key;
+    return out;
+  });
+  return {
+    ai: { providers, activeProviderId: settingsActiveProviderId },
+    review: {
+      instructions: $<HTMLTextAreaElement>('#settings-review-instructions').value,
+      severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
+      maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
+      language: $<HTMLInputElement>('#settings-review-language').value.trim() || 'English',
+      maxSteps: Number($<HTMLInputElement>('#settings-review-maxsteps').value) || 8,
+      ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')
+        .value.split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      batchByFile: $<HTMLInputElement>('#settings-review-batch').checked,
+    },
+    commit: {
+      instructions: $<HTMLTextAreaElement>('#settings-commit-instructions').value,
+      language: $<HTMLInputElement>('#settings-commit-language').value.trim() || 'English',
+      includeHistory: $<HTMLInputElement>('#settings-commit-history').checked,
+      maxDiffChars: Number($<HTMLInputElement>('#settings-commit-maxdiff').value) || 12000,
+    },
+    gitlab: {
+      baseUrl: $<HTMLInputElement>('#settings-gitlab-url').value.trim(),
+      // Omit when blank so an existing token is preserved.
+      ...(tokenValue ? { token: tokenValue } : {}),
+      projectId: $<HTMLInputElement>('#settings-gitlab-project').value.trim(),
+    },
+    github: {
+      baseUrl: $<HTMLInputElement>('#settings-github-url').value.trim(),
+      ...(githubTokenValue ? { token: githubTokenValue } : {}),
+      repo: $<HTMLInputElement>('#settings-github-repo').value.trim(),
+    },
+    forge: ($<HTMLSelectElement>('#settings-forge').value as 'auto' | 'gitlab' | 'github'),
+  };
+}
+
+$('#btn-settings').addEventListener('click', () => {
+  closeMoreMenu();
+  void openSettingsDialog();
+});
+
+document.querySelectorAll<HTMLButtonElement>('.settings-tab').forEach((btn) => {
+  btn.addEventListener('click', () => showSettingsTab(btn.dataset.tab ?? 'ai'));
+});
+
+$('#settings-add-provider').addEventListener('click', () => {
+  readProviderInputs();
+  const id = `p${Date.now().toString(36)}`;
+  settingsProviders.push({
+    id,
+    name: 'New provider',
+    baseUrl: 'http://localhost:11434/v1',
+    model: '',
+    hasKey: false,
+    contextWindow: 8192,
+    maxTokens: 1024,
+    temperature: 0.1,
+    toolProtocol: 'auto',
+    detectedProtocol: null,
+    toolResultChars: 2000,
+    maxSteps: 8,
+    stream: true,
+  });
+  if (!settingsActiveProviderId) settingsActiveProviderId = id;
+  renderProviderList();
+});
+
+$('#settings-providers').addEventListener('click', (ev) => {
+  const target = ev.target;
+  if (!(target instanceof HTMLElement) || !target.classList.contains('pf-remove')) return;
+  const li = target.closest<HTMLLIElement>('.provider-item');
+  if (!li) return;
+  readProviderInputs();
+  const i = Number(li.dataset.index);
+  const removed = settingsProviders[i];
+  settingsProviders.splice(i, 1);
+  if (removed && settingsActiveProviderId === removed.id) {
+    settingsActiveProviderId = settingsProviders[0]?.id ?? null;
+  }
+  renderProviderList();
+});
+
+/** Persist the current dialog state and refresh the provider list from the reply. */
+async function persistSettings(): Promise<void> {
+  const s = await api<AppSettings>('/settings', collectSettingsPatch(), { scoped: false });
+  settingsProviders = s.ai.providers;
+  settingsActiveProviderId = s.ai.activeProviderId;
+  renderProviderList();
+}
+
+$('#settings-save').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const status = $('#settings-status');
+  status.textContent = 'Saving…';
+  void (async () => {
+    try {
+      await persistSettings();
+      status.textContent = 'Saved.';
+    } catch (err) {
+      status.textContent = String(err);
+    }
+  })();
+});
+
+$('#settings-test').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const status = $('#settings-status');
+  void (async () => {
+    try {
+      readProviderInputs();
+      const active = settingsProviders.find((p) => p.id === settingsActiveProviderId);
+      if (!active) {
+        status.textContent = 'Add a provider first.';
+        return;
+      }
+      await persistSettings();
+      status.textContent = 'Testing AI endpoint…';
+      const res = await api<{ reply: string }>(
+        '/settings/test-ai',
+        { providerId: active.id },
+        { scoped: false },
+      );
+      status.textContent = `AI OK: ${res.reply}`;
+    } catch (err) {
+      status.textContent = String(err);
+    }
+  })();
+});
+
+/** Shared handler for the per-forge Test buttons: persist first, then probe. */
+function testForgeButton(forge: 'gitlab' | 'github', route: string, label: string): () => void {
+  return () => {
+    const status = $('#settings-status');
+    void (async () => {
+      try {
+        status.textContent = `Testing ${label}…`;
+        // Persist the edited fields first so the probe uses them.
+        await persistSettings();
+        const res = await api<{ username: string }>(route, forge === 'github' ? { forge } : {}, {
+          scoped: false,
+        });
+        status.textContent = `${label} OK as ${res.username}.`;
+      } catch (err) {
+        status.textContent = String(err);
+      }
+    })();
+  };
+}
+
+$('#settings-test-gitlab').addEventListener(
+  'click',
+  testForgeButton('gitlab', '/settings/test-gitlab', 'GitLab'),
+);
+$('#settings-test-github').addEventListener(
+  'click',
+  testForgeButton('github', '/settings/test-forge', 'GitHub'),
+);
+
+$('#settings-cancel').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $<HTMLDialogElement>('#settings-dialog').close();
+});
+
+// --- Code review tabs (one per open repository) ---
+
+/** Per-repository review state, so several review tabs can coexist. */
+interface ReviewTabState {
+  repoId: string;
+  repoPath: string;
+  changes: ReviewChanges | null;
+  job: ReviewJob | null;
+  poll: number | undefined;
+  /** Debounce handle for persisting comment-body edits. */
+  saveTimer: number | undefined;
+  /** Local edits/approval state that must survive a poll re-render, keyed by comment id. */
+  edits: Map<string, { body: string; status: ReviewCommentStatus }>;
+  /** Open merge requests, mirrored into the picker. */
+  mrs: ReviewRequest[];
+  /** Merge request iid currently selected in the picker (0 when none). */
+  mrIid: number;
+  /** Saved sessions for this repository, mirrored into the picker. */
+  sessions: ReviewSession[];
+  /** Whether rejected comments are revealed again in the queue. */
+  showRejected: boolean;
+  /** Comment ids with a post in flight, to prevent duplicate sends. */
+  sending: Set<string>;
+}
+
+/** Review tabs keyed by the repository id they are bound to. */
+const reviewTabs = new Map<string, ReviewTabState>();
+/** Repository whose review tab is the visible view, or null for the graph view. */
+let activeReviewId: string | null = null;
+
+/** The review tab currently shown, if any. */
+function activeReview(): ReviewTabState | null {
+  return activeReviewId !== null ? reviewTabs.get(activeReviewId) ?? null : null;
+}
+
+const reviewView = $('#review-view');
+const REVIEW_TABS_KEY = 'liana-review-tabs';
+const REVIEW_ACTIVE_KEY = 'liana-review-active';
+
+/** Short/long noun for a review tab's forge; defaults to GitLab for old sessions. */
+function forgeLabels(forge: ForgeKind | undefined): { short: string; long: string; prefix: string } {
+  return forge === 'github'
+    ? { short: 'PR', long: 'pull request', prefix: '#' }
+    : { short: 'MR', long: 'merge request', prefix: '!' };
+}
+
+/** Format a request number using the forge's convention (`!123` vs `#123`). */
+function requestNumber(forge: ForgeKind | undefined, iid: number): string {
+  return `${forgeLabels(forge).prefix}${iid}`;
+}
+
+/** Update the review toolbar wording (merge request vs pull request) for a tab. */
+function paintForgeWording(state: ReviewTabState): void {
+  if (activeReviewId !== state.repoId) return;
+  const { short, long } = forgeLabels(state.changes?.forge);
+  $('#review-mr-label').textContent = long.charAt(0).toUpperCase() + long.slice(1);
+  $('#review-approve-mr').textContent = `Approve ${short}`;
+}
+
+/** Remember the open review tabs (by path) and which one was visible. */
+function persistReviewTabs(): void {
+  try {
+    const paths = tabs.filter((t) => reviewTabs.has(t.id)).map((t) => t.path);
+    localStorage.setItem(REVIEW_TABS_KEY, JSON.stringify(paths));
+    const active = activeReviewId !== null ? reviewTabs.get(activeReviewId) : undefined;
+    if (active) localStorage.setItem(REVIEW_ACTIVE_KEY, active.repoPath);
+    else localStorage.removeItem(REVIEW_ACTIVE_KEY);
+  } catch {
+    // localStorage may be unavailable (private mode); review still works in-session.
+  }
+}
+
+function readSavedReviewPaths(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REVIEW_TABS_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Best-effort flush of comment edits for every review tab when the page goes away. */
+function flushReviewEdits(): void {
+  for (const state of reviewTabs.values()) {
+    if (!state.job) continue;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-liana-repo': state.repoId,
+    };
+    const token = window.liana?.token;
+    if (token) headers['x-liana-token'] = token;
+    fetch('/api/review/session/save', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ sessionId: state.job.id, comments: state.job.comments }),
+      keepalive: true,
+    }).catch(() => {
+      // The page is unloading; nothing to recover here.
+    });
+  }
+}
+window.addEventListener('pagehide', flushReviewEdits);
+
+function refreshSessionSelect(state: ReviewTabState): void {
+  const sel = $<HTMLSelectElement>('#review-session-select');
+  const current = state.job?.id ?? '';
+  sel.innerHTML =
+    '<option value="">— Saved reviews —</option>' +
+    state.sessions
+      .map(
+        (s) =>
+          `<option value="${esc(s.id)}"${s.id === current ? ' selected' : ''}>` +
+          `${requestNumber(s.forge, s.iid)} ${esc(s.title)} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}</option>`,
+      )
+      .join('');
+  $<HTMLButtonElement>('#review-delete-session').toggleAttribute('disabled', !current);
+}
+
+async function loadReviewSessions(state: ReviewTabState): Promise<void> {
+  try {
+    const { sessions } = await reviewApi<{ sessions: ReviewSession[] }>(state, '/review/sessions');
+    state.sessions = sessions;
+    if (activeReviewId === state.repoId) refreshSessionSelect(state);
+  } catch {
+    // A failed listing leaves the previous picker contents in place.
+  }
+}
+
+/** Restore a persisted session (or a live paused job) into the review view. */
+async function restoreSession(state: ReviewTabState, sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  const status = $('#review-status');
+  if (activeReviewId === state.repoId) status.textContent = 'Restoring review…';
+  window.clearTimeout(state.poll);
+  try {
+    const view = await reviewApi<ReviewSessionView>(state, '/review/session', { sessionId });
+    applySessionView(state, view);
+    if (view.job.state === 'running') {
+      state.poll = window.setTimeout(() => void pollJob(state), 600);
+    }
+    if (activeReviewId === state.repoId) refreshSessionSelect(state);
+  } catch (err) {
+    if (activeReviewId === state.repoId) status.textContent = String(err);
+  }
+}
+
+/** Push a loaded session into the review view's state and DOM. */
+function applySessionView(state: ReviewTabState, view: ReviewSessionView): void {
+  state.changes = view.changes;
+  state.job = view.job;
+  state.edits.clear();
+  state.showRejected = false;
+  for (const c of view.job.comments) {
+    state.edits.set(c.id, { body: c.body, status: c.status });
+  }
+  if (activeReviewId !== state.repoId) return;
+  paintForgeWording(state);
+  $('#review-subtitle').textContent = `${requestNumber(view.changes.forge, view.changes.mr.iid)}: ${view.changes.mr.title} — ${view.changes.files.length} file(s)`;
+  $('#review-approve-mr').hidden = false;
+  renderJob(state, view.job);
+  if (view.job.comments.length === 0) $('#review-queue-wrap').hidden = true;
+}
+
+function refreshMrSelect(state: ReviewTabState): void {
+  const sel = $<HTMLSelectElement>('#review-mr-select');
+  sel.innerHTML = state.mrs
+    .map(
+      (m) =>
+        `<option value="${m.iid}">${requestNumber(state.changes?.forge, m.iid)} ${esc(m.draft ? 'Draft: ' : '')}${esc(m.title)} — ${esc(m.sourceBranch)}→${esc(m.targetBranch)}</option>`,
+    )
+    .join('');
+  // Restore this tab's selection when it still exists, else keep the default.
+  if (state.mrIid > 0 && state.mrs.some((m) => m.iid === state.mrIid)) {
+    sel.value = String(state.mrIid);
+  } else {
+    state.mrIid = Number(sel.value) || 0;
+  }
+  $<HTMLButtonElement>('#review-generate').toggleAttribute('disabled', state.mrs.length === 0);
+}
+
+async function loadMergeRequests(state: ReviewTabState): Promise<void> {
+  const status = $('#review-status');
+  if (activeReviewId === state.repoId) status.textContent = 'Loading requests…';
+  try {
+    const { mrs } = await reviewApi<{ mrs: ReviewRequest[] }>(state, '/forge/mrs');
+    state.mrs = mrs;
+    if (activeReviewId !== state.repoId) return;
+    refreshMrSelect(state);
+    status.textContent = mrs.length === 0 ? 'No open requests.' : '';
+  } catch (err) {
+    if (activeReviewId !== state.repoId) return;
+    status.textContent = String(err);
+  }
+}
+
+/** Fetch the selected MR's changes; returns false when there is no selection. */
+async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
+  const state = activeReview();
+  if (!state) return false;
+  const status = $('#review-status');
+  const iid = Number($<HTMLSelectElement>('#review-mr-select').value);
+  state.mrIid = iid;
+  if (!iid) return false;
+  status.textContent = fetchRefs ? 'Loading changes and request commit…' : 'Loading changes…';
+  try {
+    const { changes, fetch: fetchResult } = await reviewApi<{
+      changes: ReviewChanges;
+      fetch?: { fetched: boolean; error?: string };
+    }>(state, '/forge/mr', fetchRefs ? { iid, fetch: true } : { iid });
+    state.changes = changes;
+    state.job = null;
+    state.edits.clear();
+    state.showRejected = false;
+    // A tab switch landed while this was in flight — the state is updated but
+    // the DOM belongs to another review now.
+    if (activeReviewId !== state.repoId) return true;
+    paintForgeWording(state);
+    $('#review-subtitle').textContent = `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
+    $('#review-queue-wrap').hidden = true;
+    $('#review-trace-wrap').hidden = true;
+    $('#review-output-wrap').hidden = true;
+    $('#review-progress').hidden = true;
+    $('#review-cancel-job').hidden = true;
+    $('#review-approve-mr').hidden = false;
+    status.textContent = fetchResult?.error
+      ? `Request commit not fetched: ${fetchResult.error} — repository tools may be limited`
+      : '';
+    return true;
+  } catch (err) {
+    status.textContent = String(err);
+    return false;
+  }
+}
+
+function renderTrace(job: ReviewJob): void {
+  $('#review-trace-count').textContent = String(job.trace.length);
+  const ol = $('#review-trace');
+  ol.innerHTML = job.trace
+    .map(
+      (t) =>
+        `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
+        `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+        `<span class="muted">${t.durationMs}ms</span></li>`,
+    )
+    .join('');
+}
+
+/** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
+function commentExcerptHtml(state: ReviewTabState, c: ReviewComment): string {
+  if (c.oldLine === null && c.newLine === null) return '';
+  const file = state.changes?.files.find((f) => f.newPath === c.filePath || f.oldPath === c.filePath);
+  if (!file || !file.diff) return '';
+  const lines = parsePatch(file.diff)
+    .flatMap((s) => s.hunks)
+    .flatMap((h) => h.lines);
+  let anchor = -1;
+  if (c.newLine !== null) anchor = lines.findIndex((l) => l.newNo === c.newLine);
+  if (anchor < 0 && c.oldLine !== null) anchor = lines.findIndex((l) => l.oldNo === c.oldLine);
+  if (anchor < 0) return '';
+  const around: DiffLine[] = [];
+  for (let i = anchor - 2; i <= anchor + 2; i++) {
+    const line = lines[i];
+    if (line && line.kind !== 'nonewline') around.push(line);
+  }
+  const rows = around.map((line) => {
+    const sign = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+    const anchorCls =
+      (c.newLine !== null && line.newNo === c.newLine) || (c.oldLine !== null && line.oldNo === c.oldLine)
+        ? ' dl-anchor'
+        : '';
+    return `<div class="dl-row dl-${line.kind}${anchorCls}">${gutter(line.oldNo)}${gutter(line.newNo)}<span class="dl-sign">${sign}</span><span class="dl-text">${esc(line.text)}</span></div>`;
+  });
+  return `<div class="review-comment-excerpt diff-body">${rows.join('')}</div>`;
+}
+
+function renderCommentQueue(state: ReviewTabState): void {
+  const job = state.job;
+  if (!job || job.comments.length === 0) {
+    $('#review-queue-wrap').hidden = true;
+    return;
+  }
+  $('#review-queue-wrap').hidden = false;
+  // Re-apply local edits/approvals so a poll snapshot never clobbers typing.
+  for (const c of job.comments) {
+    const edit = state.edits.get(c.id);
+    if (edit) {
+      c.body = edit.body;
+      c.status = edit.status;
+    }
+  }
+  const total = job.comments.length;
+  const pending = job.comments.filter((c) => c.stage === 'pending').length;
+  const rejected = job.comments.filter((c) => c.status === 'rejected').length;
+  $('#review-queue-count').textContent = pending > 0 ? `(${total}, ${pending} scanning…)` : `(${total})`;
+  const toggle = $<HTMLButtonElement>('#review-toggle-rejected');
+  toggle.hidden = rejected === 0;
+  toggle.textContent = state.showRejected ? 'Hide rejected' : `Show rejected (${rejected})`;
+  const visible = job.comments.filter((c) => state.showRejected || c.status !== 'rejected');
+  const list = $('#review-comment-list');
+  list.innerHTML =
+    visible.length === 0
+      ? '<p class="muted review-comment-empty">All comments rejected.</p>'
+      : visible
+          .map((c) => {
+            const line =
+              c.newLine !== null
+                ? `new line ${c.newLine}`
+                : c.oldLine !== null
+                  ? `old line ${c.oldLine}`
+                  : 'general';
+            const stage = c.stage === 'pending' ? '<span class="review-stage-badge">scanning…</span>' : '';
+            return `
+    <div class="review-comment-card${c.stage === 'pending' ? ' is-pending' : ''}" data-id="${esc(c.id)}">
+      <div class="review-comment-head">
+        <span class="severity severity-${esc(c.severity)}">${esc(c.severity)}</span>
+        <code>${esc(c.filePath)}</code>
+        <span class="muted">${esc(line)}</span>
+        ${stage}
+        <span class="review-status-badge status-${esc(c.status)}">${esc(c.status)}</span>
+      </div>
+      ${commentExcerptHtml(state, c)}
+      <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
+      <div class="review-comment-actions">
+        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Approve</button>
+        <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
+      </div>
+    </div>`;
+          })
+          .join('');
+  for (const ta of list.querySelectorAll<HTMLTextAreaElement>('.review-comment-body')) {
+    ta.addEventListener('input', () => {
+      const id = ta.dataset.id ?? '';
+      const c = state.job?.comments.find((x) => x.id === id);
+      if (c) c.body = ta.value;
+      const edit = state.edits.get(id) ?? { body: '', status: 'pending' as ReviewCommentStatus };
+      edit.body = ta.value;
+      state.edits.set(id, edit);
+      window.clearTimeout(state.saveTimer);
+      state.saveTimer = window.setTimeout(() => void persistSessionEdits(state), 800);
+    });
+  }
+  for (const btn of list.querySelectorAll<HTMLButtonElement>('.review-comment-approve')) {
+    btn.addEventListener('click', () => void approveComment(state, btn.dataset.id ?? ''));
+  }
+  for (const btn of list.querySelectorAll<HTMLButtonElement>('.review-comment-reject')) {
+    btn.addEventListener('click', () => rejectComment(state, btn.dataset.id ?? ''));
+  }
+}
+
+/** Record a comment's local status/body so a poll re-render preserves it. */
+function setCommentStatus(state: ReviewTabState, c: ReviewComment, status: ReviewCommentStatus): void {
+  c.status = status;
+  const edit = state.edits.get(c.id) ?? { body: c.body, status };
+  edit.body = c.body;
+  edit.status = status;
+  state.edits.set(c.id, edit);
+}
+
+/** Approve a comment: mark it, then post that comment alone to the MR. */
+async function approveComment(state: ReviewTabState, id: string): Promise<void> {
+  const c = state.job?.comments.find((x) => x.id === id);
+  if (!c || c.status === 'posted' || state.sending.has(id)) return;
+  state.sending.add(id);
+  setCommentStatus(state, c, 'approved');
+  if (activeReviewId === state.repoId) renderCommentQueue(state);
+  void persistSessionEdits(state);
+  try {
+    await sendComment(state, id);
+  } finally {
+    state.sending.delete(id);
+    if (activeReviewId === state.repoId) renderCommentQueue(state);
+  }
+}
+
+/** Reject a comment: mark it and hide it from the queue. */
+function rejectComment(state: ReviewTabState, id: string): void {
+  const c = state.job?.comments.find((x) => x.id === id);
+  if (!c) return;
+  setCommentStatus(state, c, 'rejected');
+  if (activeReviewId === state.repoId) renderCommentQueue(state);
+  void persistSessionEdits(state);
+}
+
+/** Post a single approved comment and fold the result back into the queue. */
+async function sendComment(state: ReviewTabState, id: string): Promise<void> {
+  const job = state.job;
+  const changes = state.changes;
+  if (!job || !changes) return;
+  const c = job.comments.find((x) => x.id === id);
+  if (!c) return;
+  const status = $('#review-status');
+  const shown = activeReviewId === state.repoId;
+  if (shown) status.textContent = 'Posting comment…';
+  try {
+    const { results } = await reviewApi<{
+      results: Array<{ id: string; ok: boolean; discussionId?: string; error?: string }>;
+    }>(state, '/review/post', {
+      iid: changes.mr.iid,
+      comments: [c],
+      diffRefs: changes.diffRefs,
+      forge: changes.forge,
+    });
+    const r = results[0];
+    if (r) {
+      if (r.ok) {
+        c.status = 'posted';
+        c.discussionId = r.discussionId ?? null;
+      } else {
+        c.status = 'failed';
+        c.error = r.error ?? 'post failed';
+      }
+      const edit = state.edits.get(c.id);
+      if (edit) edit.status = c.status;
+    }
+    if (activeReviewId === state.repoId) {
+      renderCommentQueue(state);
+      status.textContent =
+        c.status === 'posted' ? 'Comment posted.' : `Post failed: ${c.error ?? 'unknown error'}`;
+    }
+    void persistSessionEdits(state);
+  } catch (err) {
+    if (shown) status.textContent = String(err);
+  }
+}
+
+function renderJob(state: ReviewTabState, job: ReviewJob): void {
+  $('#review-progress').hidden = job.state !== 'running';
+  $('#review-pause-job').hidden = job.state !== 'running';
+  $('#review-resume-job').hidden = job.state !== 'paused';
+  $('#review-cancel-job').hidden = job.state !== 'running' && job.state !== 'paused';
+  $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
+    job.protocol ? ` · ${job.protocol}` : ''
+  }`;
+  if (job.trace.length > 0) {
+    $('#review-trace-wrap').hidden = false;
+    renderTrace(job);
+  }
+  if (job.output) {
+    $('#review-output-wrap').hidden = false;
+    $<HTMLPreElement>('#review-output').textContent = job.output;
+  }
+  if (job.comments.length > 0) renderCommentQueue(state);
+  if (job.state === 'error') {
+    $('#review-status').textContent = `Review failed: ${job.error ?? 'unknown error'}`;
+  } else if (job.state === 'cancelled') {
+    $('#review-status').textContent = 'Review cancelled.';
+  } else if (job.state === 'paused') {
+    $('#review-status').textContent = 'Review paused — resume to continue.';
+  } else if (job.state === 'done') {
+    $('#review-status').textContent = `Review complete: ${job.comments.length} comment(s).`;
+  }
+}
+
+/**
+ * Poll a running job. A background review tab keeps polling so its state stays
+ * fresh, but only touches the DOM while it is the visible view.
+ */
+async function pollJob(state: ReviewTabState): Promise<void> {
+  if (!state.job) return;
+  try {
+    const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/status', { jobId: state.job.id });
+    state.job = job;
+    if (activeReviewId === state.repoId) renderJob(state, job);
+    if (job.state === 'running') {
+      state.poll = window.setTimeout(() => void pollJob(state), 800);
+    } else {
+      void loadReviewSessions(state);
+    }
+  } catch (err) {
+    if (activeReviewId === state.repoId) $('#review-status').textContent = String(err);
+  }
+}
+
+/** Persist local comment edits/approvals onto the stored session. */
+async function persistSessionEdits(state: ReviewTabState): Promise<void> {
+  if (!state.job) return;
+  const comments = state.job.comments;
+  try {
+    await reviewApi(state, '/review/session/save', { sessionId: state.job.id, comments });
+    void loadReviewSessions(state);
+  } catch {
+    // Persistence is best-effort; the in-memory edits are still intact.
+  }
+}
+
+/** Load the selected MR, then start a review job for it. */
+async function generateReview(): Promise<void> {
+  const state = activeReview();
+  if (!state) return;
+  if (!(await loadSelectedMr(true))) return;
+  if (!state.changes) return;
+  const status = $('#review-status');
+  status.textContent = 'Starting review…';
+  try {
+    const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/generate', {
+      iid: state.changes.mr.iid,
+    });
+    state.job = job;
+    state.edits.clear();
+    state.showRejected = false;
+    $('#review-queue-wrap').hidden = true;
+    $('#review-trace-wrap').hidden = true;
+    $('#review-output-wrap').hidden = true;
+    status.textContent = '';
+    renderJob(state, job);
+    window.clearTimeout(state.poll);
+    state.poll = window.setTimeout(() => void pollJob(state), 600);
+    void loadReviewSessions(state);
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
+/** Hide the graph/detail columns and show the review view for this repository. */
+function openReviewTab(): void {
+  // Bind to the active repository; opening review with no repo is a no-op.
+  if (!activeId) {
+    alert('Open a repository first.');
+    return;
+  }
+  // Re-opening for a repo that already has a review tab focuses it, keeping state.
+  if (reviewTabs.has(activeId)) {
+    activateReviewTab(activeId);
+    return;
+  }
+  const tab = activeTab();
+  if (!tab) return;
+  const state: ReviewTabState = {
+    repoId: activeId,
+    repoPath: tab.path,
+    changes: null,
+    job: null,
+    poll: undefined,
+    saveTimer: undefined,
+    edits: new Map(),
+    mrs: [],
+    mrIid: 0,
+    sessions: [],
+    showRejected: false,
+    sending: new Set(),
+  };
+  reviewTabs.set(activeId, state);
+  activeReviewId = activeId;
+  resetReviewDom();
+  refreshSessionSelect(state);
+  persistReviewTabs();
+  updateReviewVisibility();
+  renderTabs();
+  void loadMergeRequests(state);
+  void loadSessionsAndMaybeRestore(state);
+}
+
+/** Clear the review view's DOM for a fresh tab. */
+function resetReviewDom(): void {
+  $('#review-subtitle').textContent = 'Review an open merge/pull request with AI.';
+  $('#review-queue-wrap').hidden = true;
+  $('#review-trace-wrap').hidden = true;
+  $('#review-output-wrap').hidden = true;
+  $('#review-progress').hidden = true;
+  $('#review-pause-job').hidden = true;
+  $('#review-resume-job').hidden = true;
+  $('#review-approve-mr').hidden = true;
+}
+
+/** Repaint the review view from a tab's stored state when it becomes visible. */
+function paintReview(state: ReviewTabState): void {
+  refreshMrSelect(state);
+  refreshSessionSelect(state);
+  const changes = state.changes;
+  paintForgeWording(state);
+  $('#review-subtitle').textContent = changes
+    ? `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`
+    : 'Review an open merge/pull request with AI.';
+  $('#review-approve-mr').hidden = changes === null;
+  $('#review-queue-wrap').hidden = true;
+  $('#review-trace-wrap').hidden = true;
+  $('#review-output-wrap').hidden = true;
+  $('#review-progress').hidden = true;
+  $('#review-pause-job').hidden = true;
+  $('#review-resume-job').hidden = true;
+  $('#review-cancel-job').hidden = true;
+  $('#review-status').textContent = '';
+  if (state.job) renderJob(state, state.job);
+}
+
+/** Load saved sessions; restore the newest one so a review survives a reload. */
+async function loadSessionsAndMaybeRestore(state: ReviewTabState): Promise<void> {
+  await loadReviewSessions(state);
+  if (state.sessions.length > 0 && !state.job) {
+    const newest = state.sessions[0];
+    if (newest) await restoreSession(state, newest.id);
+  }
+}
+
+/** Close a repository's review tab and, if it was visible, fall back to the graph. */
+function closeReviewTab(repoId: string): void {
+  const state = reviewTabs.get(repoId);
+  if (!state) return;
+  window.clearTimeout(state.poll);
+  window.clearTimeout(state.saveTimer);
+  reviewTabs.delete(repoId);
+  if (activeReviewId === repoId) {
+    activeReviewId = null;
+    updateReviewVisibility();
+    renderCached();
+  }
+  renderTabs();
+  persistReviewTabs();
+}
+
+/** Toggle the columns and the review view to match `activeReviewId`. */
+function updateReviewVisibility(): void {
+  const shown = activeReviewId !== null;
+  reviewView.hidden = !shown;
+  $('#graph-wrap').hidden = shown;
+  $('#detail-resizer').hidden = shown;
+  $('#detail-pane').hidden = shown;
+  const bound = activeReviewId !== null ? tabs.find((t) => t.id === activeReviewId) : undefined;
+  $('#review-repo').textContent = bound ? ` · ${bound.name}` : '';
+}
+
+$('#btn-review').addEventListener('click', () => {
+  closeMoreMenu();
+  openReviewTab();
+});
+
+$('#review-refresh-mrs').addEventListener('click', () => {
+  const state = activeReview();
+  if (state) void loadMergeRequests(state);
+});
+$('#review-mr-select').addEventListener('change', () => {
+  const state = activeReview();
+  if (!state) return;
+  window.clearTimeout(state.poll);
+  void loadSelectedMr(true);
+});
+$('#review-generate').addEventListener('click', () => void generateReview());
+$('#review-session-select').addEventListener('change', () => {
+  const state = activeReview();
+  if (!state) return;
+  const id = $<HTMLSelectElement>('#review-session-select').value;
+  if (id) void restoreSession(state, id);
+});
+$('#review-refresh-sessions').addEventListener('click', () => {
+  const state = activeReview();
+  if (state) void loadReviewSessions(state);
+});
+$('#review-delete-session').addEventListener('click', () => {
+  const state = activeReview();
+  if (!state?.job) return;
+  const id = state.job.id;
+  void reviewApi(state, '/review/session/delete', { sessionId: id })
+    .then(() => {
+      window.clearTimeout(state.poll);
+      state.job = null;
+      state.changes = null;
+      state.edits.clear();
+      state.showRejected = false;
+      refreshSessionSelect(state);
+      $('#review-queue-wrap').hidden = true;
+      $('#review-trace-wrap').hidden = true;
+      $('#review-output-wrap').hidden = true;
+      $('#review-progress').hidden = true;
+      $('#review-pause-job').hidden = true;
+      $('#review-resume-job').hidden = true;
+      $('#review-cancel-job').hidden = true;
+      $('#review-status').textContent = 'Saved review deleted.';
+      void loadReviewSessions(state);
+    })
+    .catch((err) => {
+      $('#review-status').textContent = String(err);
+    });
+});
+
+$('#review-pause-job').addEventListener('click', () => {
+  const state = activeReview();
+  if (!state?.job) return;
+  void reviewApi<{ paused: boolean }>(state, '/review/pause', { jobId: state.job.id })
+    .then(({ paused }) => {
+      if (paused && state.job) {
+        state.job.state = 'paused';
+        window.clearTimeout(state.poll);
+        renderJob(state, state.job);
+        void loadReviewSessions(state);
+      }
+    })
+    .catch((err) => {
+      $('#review-status').textContent = String(err);
+    });
+});
+
+$('#review-resume-job').addEventListener('click', () => {
+  const state = activeReview();
+  if (!state?.job) return;
+  const status = $('#review-status');
+  status.textContent = 'Resuming…';
+  void reviewApi<{ job: ReviewJob }>(state, '/review/resume', { jobId: state.job.id })
+    .then(({ job }) => {
+      state.job = job;
+      status.textContent = '';
+      renderJob(state, job);
+      window.clearTimeout(state.poll);
+      state.poll = window.setTimeout(() => void pollJob(state), 600);
+    })
+    .catch((err) => {
+      status.textContent = String(err);
+    });
+});
+
+$('#review-cancel-job').addEventListener('click', () => {
+  const state = activeReview();
+  if (!state?.job) return;
+  void reviewApi(state, '/review/cancel', { jobId: state.job.id })
+    .then(() => {
+      window.clearTimeout(state.poll);
+      if (state.job) state.job.state = 'cancelled';
+      $('#review-progress').hidden = true;
+      $('#review-cancel-job').hidden = true;
+      $('#review-pause-job').hidden = true;
+      $('#review-status').textContent = 'Review cancelled.';
+    })
+    .catch((err) => {
+      $('#review-status').textContent = String(err);
+    });
+});
+
+$('#review-toggle-rejected').addEventListener('click', () => {
+  const state = activeReview();
+  if (!state) return;
+  state.showRejected = !state.showRejected;
+  renderCommentQueue(state);
+});
+
+$('#review-approve-mr').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const state = activeReview();
+  if (!state?.changes) return;
+  const status = $('#review-status');
+  status.textContent = 'Approving…';
+  void reviewApi(state, '/forge/approve', { iid: state.changes.mr.iid })
+    .then(() => {
+      const long = forgeLabels(state.changes?.forge).long;
+      status.textContent = `${long.charAt(0).toUpperCase() + long.slice(1)} approved.`;
+    })
+    .catch((err) => {
+      status.textContent = String(err);
+    });
+});
+
 // Escape closes an open dialog, otherwise clears the selection.
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
@@ -2885,18 +4180,28 @@ document.addEventListener('keydown', (ev) => {
   const nameDlg = $<HTMLDialogElement>('#name-dialog');
   const resetDlg = $<HTMLDialogElement>('#reset-dialog');
   const stashDlg = $<HTMLDialogElement>('#stash-dialog');
-  const settingsDlg = $<HTMLDialogElement>('#settings-dialog');
   const aboutDlg = $<HTMLDialogElement>('#about-dialog');
   const diffDlg = $<HTMLDialogElement>('#diff-dialog');
   const conflictDlg = $<HTMLDialogElement>('#conflict-dialog');
+  const aiConflictDlg = $<HTMLDialogElement>('#ai-conflict-dialog');
   const submoduleDlg = $<HTMLDialogElement>('#submodule-log-dialog');
+  const settingsDlg = $<HTMLDialogElement>('#settings-dialog');
   const codeDlg = $<HTMLDialogElement>('#code-dialog');
   if (codeDlg.open) {
     codeDlg.close();
     return;
   }
+  if (settingsDlg.open) {
+    settingsDlg.close();
+    return;
+  }
   if (submoduleDlg.open) {
     submoduleDlg.close();
+    return;
+  }
+  if (aiConflictDlg.open) {
+    aiConflictSeq++;
+    aiConflictDlg.close();
     return;
   }
   if (conflictDlg.open) {
@@ -2909,10 +4214,6 @@ document.addEventListener('keydown', (ev) => {
   }
   if (aboutDlg.open) {
     aboutDlg.close();
-    return;
-  }
-  if (settingsDlg.open) {
-    settingsDlg.close();
     return;
   }
   if (resetDlg.open) {
@@ -3027,6 +4328,64 @@ async function bootstrap(): Promise<void> {
     renderTabs();
     renderNoRepo();
   }
+
+  // Reopen the review tabs that were open before the reload, each bound to its repo.
+  let savedReviewPaths = readSavedReviewPaths();
+  let savedReviewActive: string | null = null;
+  try {
+    savedReviewActive = localStorage.getItem(REVIEW_ACTIVE_KEY);
+  } catch {
+    savedReviewActive = null;
+  }
+  // Migrate the pre-multi-review key so an existing single review tab survives.
+  try {
+    const legacy = localStorage.getItem('liana-review-repo');
+    if (legacy) {
+      if (!savedReviewPaths.includes(legacy)) savedReviewPaths.push(legacy);
+      if (!savedReviewActive) savedReviewActive = legacy;
+      localStorage.removeItem('liana-review-repo');
+    }
+  } catch {
+    // ignore
+  }
+  for (const path of savedReviewPaths) {
+    const bound = tabs.find((t) => t.path === path);
+    if (!bound) continue;
+    const state: ReviewTabState = {
+      repoId: bound.id,
+      repoPath: bound.path,
+      changes: null,
+      job: null,
+      poll: undefined,
+      saveTimer: undefined,
+      edits: new Map(),
+      mrs: [],
+      mrIid: 0,
+      sessions: [],
+      showRejected: false,
+      sending: new Set(),
+    };
+    reviewTabs.set(bound.id, state);
+    void loadMergeRequests(state);
+    void loadSessionsAndMaybeRestore(state);
+  }
+  if (savedReviewActive) {
+    const bound = tabs.find((t) => t.path === savedReviewActive);
+    const state = bound ? reviewTabs.get(bound.id) : undefined;
+    if (bound && state) {
+      activeReviewId = bound.id;
+      // Review is a per-repo view; make its repository active so it stays bound.
+      if (activeId !== bound.id) {
+        saveActive();
+        loadTab(bound);
+        void refresh();
+      }
+      updateReviewVisibility();
+      paintReview(state);
+    }
+  }
+  persistReviewTabs();
+  renderTabs();
 }
 
 void bootstrap();

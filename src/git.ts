@@ -24,6 +24,8 @@ import type {
   RepoState,
   RepoStatus,
   ResetMode,
+  ReviewChanges,
+  ReviewRequest,
   StashInfo,
   StatusEntry,
   SubmoduleInfo,
@@ -435,6 +437,50 @@ export async function createCommit(
   const hash = await git(repoPath, ['rev-parse', 'HEAD']);
   if (!out.includes('created') && !hash) throw new GitError('commit produced no hash', out);
   return hash.trim();
+}
+
+/**
+ * Generate a commit message for the given working-tree paths (mirrors
+ * `POST /api/commit-message` in src/api.ts). Read-only: reads the same diffs
+ * the commit dialog shows and the recent subjects, then asks the active
+ * provider. The browser UI calls this over `/api`; this wrapper keeps the typed
+ * contract in sync.
+ */
+export async function apiGenerateCommitMessage(
+  repoPath: string,
+  files: string[],
+  providerId?: string,
+): Promise<string> {
+  const [{ commitRule }, { generateCommitMessage }] = await Promise.all([
+    import('./settings'),
+    import('./review'),
+  ]);
+  const rule = commitRule();
+  const status = await loadStatus(repoPath);
+  const selected = new Set(files);
+  const parts: string[] = [];
+  let total = 0;
+  for (const entry of status.entries) {
+    if (!selected.has(entry.path)) continue;
+    const patch = await worktreePatch(repoPath, entry.path, entry.oldPath).catch(() => '');
+    if (!patch.trim() || patch.includes('Binary files')) continue;
+    const remaining = rule.maxDiffChars - total;
+    if (remaining <= 0) break;
+    const slice = patch.length > remaining ? `${patch.slice(0, remaining)}\n… [truncated]` : patch;
+    parts.push(slice);
+    total += slice.length;
+  }
+  let history: string[] = [];
+  if (rule.includeHistory) {
+    try {
+      history = (await git(repoPath, ['log', '-n', '20', '--format=%s']))
+        .split('\n')
+        .filter((s) => s.trim().length > 0);
+    } catch {
+      // Unborn HEAD has no history.
+    }
+  }
+  return generateCommitMessage(rule, { diff: parts.join('\n\n'), history }, providerId);
 }
 
 /** Rebase the current branch onto `onto`. Uncommitted changes are not allowed by git. */
@@ -1391,4 +1437,47 @@ export async function applyStash(repoPath: string, selector: string): Promise<st
 /** `git stash drop` a selector; removes one stash entry. */
 export async function dropStash(repoPath: string, selector: string): Promise<string> {
   return (await git(repoPath, ['stash', 'drop', selector])).trim();
+}
+// --- Review forge contract (mirrors the /api/forge/* routes in src/api.ts) ---
+//
+// Node-side mirror of the forge routes: the same operations the backend exposes
+// over HTTP, callable directly. Types come from src/types.ts and are identical on
+// both sides. The browser UI still talks to /api (see src/ui.ts).
+
+/** Open merge/pull requests for the repository's resolved forge. */
+export async function apiListRequests(repoPath: string): Promise<ReviewRequest[]> {
+  const { resolveForge } = await import('./forges');
+  return (await resolveForge(repoPath)).listRequests(repoPath);
+}
+
+/** One request plus its changed files and diff refs; `fetch` also fetches the head. */
+export async function apiGetRequestChanges(
+  repoPath: string,
+  iid: number,
+  fetch?: boolean,
+): Promise<{ changes: ReviewChanges; fetch?: { fetched: boolean; error?: string } }> {
+  const { resolveForge } = await import('./forges');
+  const forge = await resolveForge(repoPath);
+  const changes = await forge.getChanges(repoPath, iid);
+  let fetchResult: { fetched: boolean; error?: string } | undefined;
+  if (fetch) {
+    try {
+      fetchResult = await forge.ensureRefs(repoPath, changes);
+    } catch (err) {
+      fetchResult = { fetched: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  return { changes, fetch: fetchResult };
+}
+
+/** Approve a merge/pull request on the repository's resolved forge. */
+export async function apiApproveRequest(repoPath: string, iid: number): Promise<void> {
+  const { resolveForge } = await import('./forges');
+  await (await resolveForge(repoPath)).approve(repoPath, iid);
+}
+
+/** Authenticated probe for the Settings "Test" button against an explicit forge. */
+export async function apiTestForge(forge: 'gitlab' | 'github'): Promise<string> {
+  const { forgeByKind } = await import('./forges');
+  return forgeByKind(forge).test();
 }

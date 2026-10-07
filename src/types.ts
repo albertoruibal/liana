@@ -170,6 +170,19 @@ export interface FileContents {
   binary: boolean;
 }
 
+/** A model-proposed resolution for one conflicted path, for the AI merge dialog. */
+export interface AiConflictFix {
+  path: string;
+  /** `content` carries the merged file; `delete` resolves by removing the path. */
+  kind: 'content' | 'delete';
+  /** The full merged file (null when `kind` is `delete`). */
+  content: string | null;
+  /** A short natural-language explanation of the merge, shown above the result. */
+  explanation: string;
+  /** Model that produced the proposal, for display. */
+  model: string;
+}
+
 /** One file changed by a commit, as reported by `git show --numstat/--name-status`. */
 export interface CommitFile {
   /** Current path; rename/copy destination when applicable. */
@@ -261,6 +274,232 @@ export interface SubmoduleInfo {
   worktreeHash: string | null;
   /** `current` (clean), `modified` (different commit), `uninitialized`, `conflicted`, or `untracked`. */
   status: 'current' | 'modified' | 'uninitialized' | 'conflicted' | 'untracked';
+}
+
+// --- Code review, AI providers & GitLab ---
+
+/**
+ * How the review agent talks to a model about tools. `auto` probes native
+ * function calling once and falls back to a text protocol; the others force a
+ * specific protocol (mostly for small local models).
+ */
+export type ToolProtocol = 'auto' | 'native' | 'react' | 'json' | 'none';
+
+/** Severity attached to a proposed review comment. */
+export type ReviewSeverity = 'info' | 'warning' | 'error';
+
+/**
+ * A configured OpenAI-compatible endpoint. The renderer never receives the
+ * stored key — only whether one exists (`hasKey`).
+ */
+export interface AiProviderConfig {
+  id: string;
+  name: string;
+  /** Base URL up to and including the API version, e.g. `http://localhost:11434/v1`. */
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  /** Model context window in tokens (used for the chars/4 budget). */
+  contextWindow: number;
+  maxTokens: number;
+  temperature: number;
+  /** Requested protocol; `auto` negotiates at run time. */
+  toolProtocol: ToolProtocol;
+  /** Protocol that last succeeded, remembered to skip probing. */
+  detectedProtocol: Exclude<ToolProtocol, 'auto'> | null;
+  /** Output bytes kept per tool result before pruning. */
+  toolResultChars: number;
+  maxSteps: number;
+  stream: boolean;
+}
+
+/** Reviewer instructions and policy ("revision rule") applied to every review. */
+export interface ReviewRuleConfig {
+  /** Natural-language reviewer guidance prepended to the system prompt. */
+  instructions: string;
+  /** Minimum severity to keep from the model's output. */
+  severityThreshold: ReviewSeverity;
+  /** Path globs to exclude from review and from the agent's file list. */
+  ignoreGlobs: string[];
+  /** Cap on proposed comments per review (0 = unlimited). */
+  maxComments: number;
+  /** Preferred language for comment bodies. */
+  language: string;
+  maxSteps: number;
+  /** Review changed files in context-sized batches rather than one prompt. */
+  batchByFile: boolean;
+}
+
+/** Configuration for AI commit-message generation, shared by UI and backend. */
+export interface CommitMessageConfig {
+  /** Natural-language guidance prepended to the generation prompt. */
+  instructions: string;
+  /** Preferred language for the generated message. */
+  language: string;
+  /** Include recent commit subjects so the model matches the repo's style. */
+  includeHistory: boolean;
+  /** Cap on combined diff characters sent to the model. */
+  maxDiffChars: number;
+}
+
+/** Which forge a repository reviews against. */
+export type ForgeKind = 'gitlab' | 'github';
+
+/** GitLab connection settings. The token is never returned to the renderer. */
+export interface GitLabConfig {
+  baseUrl: string;
+  hasToken: boolean;
+  /** Explicit project id/path override; empty derives it from `origin`. */
+  projectId: string;
+}
+
+/** GitHub / GitHub Enterprise Server connection settings (secrets masked). */
+export interface GitHubConfig {
+  /** API base URL: `https://api.github.com` or `https://<host>/api/v3` for GHES. */
+  baseUrl: string;
+  hasToken: boolean;
+  /** Explicit `owner/name` override; empty derives it from `origin`. */
+  repo: string;
+}
+
+/** Full settings as exposed to the renderer (all secrets masked). */
+export interface AppSettings {
+  ai: {
+    providers: AiProviderConfig[];
+    activeProviderId: string | null;
+  };
+  review: ReviewRuleConfig;
+  commit: CommitMessageConfig;
+  gitlab: GitLabConfig;
+  github: GitHubConfig;
+  /** Forge selection: `auto` detects from `origin`, otherwise force one. */
+  forge: ForgeKind | 'auto';
+}
+
+/** An open merge/pull request, reduced to the fields the UI needs. */
+export interface ReviewRequest {
+  /** Merge request iid / pull request number. */
+  iid: number;
+  title: string;
+  author: string;
+  sourceBranch: string;
+  targetBranch: string;
+  state: string;
+  webUrl: string;
+  updatedAt: string;
+  draft: boolean;
+}
+
+/** One changed file in a request, with its unified diff. */
+export interface ReviewFile {
+  oldPath: string;
+  newPath: string;
+  newFile: boolean;
+  deletedFile: boolean;
+  renamedFile: boolean;
+  /** Unified diff text (may be empty for binary/too-large files). */
+  diff: string;
+}
+
+/** Diff anchors required to position a line-level review comment. */
+export interface DiffRefs {
+  baseSha: string;
+  headSha: string;
+  startSha: string;
+}
+
+/** A request plus its changed files and diff refs. */
+export interface ReviewChanges {
+  /** Forge the request came from. */
+  forge: ForgeKind;
+  mr: ReviewRequest;
+  files: ReviewFile[];
+  diffRefs: DiffRefs;
+}
+
+// Back-compat aliases: the persisted session wire shape keeps the `mr`/`iid`
+// names and GitLab-flavoured type names so existing sessions and imports keep
+// compiling. The forge field distinguishes them at runtime.
+export type GitLabMergeRequest = ReviewRequest;
+export type GitLabMrFile = ReviewFile;
+export type GitLabDiffRefs = DiffRefs;
+export type GitLabMrChanges = ReviewChanges;
+
+/** Lifecycle of a proposed comment through the approval queue. */
+export type ReviewCommentStatus = 'pending' | 'approved' | 'rejected' | 'posted' | 'failed';
+
+/**
+ * How firm a proposed comment is: `pending` was scanned from the model's
+ * streamed output and may still change; `parsed` is a validated final result.
+ */
+export type ReviewCommentStage = 'pending' | 'parsed';
+
+/** One proposed review comment, anchored to a line when possible. */
+export interface ReviewComment {
+  id: string;
+  filePath: string;
+  /** Old-side line for deletion/context anchors; null when not set. */
+  oldLine: number | null;
+  /** New-side line for added/context anchors; null when not set. */
+  newLine: number | null;
+  severity: ReviewSeverity;
+  body: string;
+  status: ReviewCommentStatus;
+  stage: ReviewCommentStage;
+  discussionId: string | null;
+  error: string | null;
+}
+
+/** One executed tool call in the agent trace, for UI transparency. */
+export interface ReviewTraceStep {
+  step: number;
+  tool: string;
+  args: Record<string, unknown>;
+  resultSummary: string;
+  durationMs: number;
+}
+
+/** Lifecycle of a review job; `paused` is resumable, `cancelled` is terminal. */
+export type ReviewJobState = 'running' | 'paused' | 'done' | 'error' | 'cancelled';
+
+/** State of an in-flight review job, polled by the UI for live progress. */
+export interface ReviewJob {
+  id: string;
+  state: ReviewJobState;
+  /** Protocol actually used, once negotiated. */
+  protocol: Exclude<ToolProtocol, 'auto'> | null;
+  batchIndex: number;
+  batchTotal: number;
+  /** Latest streamed model output (may be partial). */
+  output: string;
+  trace: ReviewTraceStep[];
+  comments: ReviewComment[];
+  error: string | null;
+}
+
+/**
+ * Listing shape for a persisted review session. Never carries the agent
+ * conversation or diffs — only what the UI needs to label and reopen it.
+ */
+export interface ReviewSession {
+  id: string;
+  iid: number;
+  title: string;
+  state: ReviewJobState;
+  updatedAt: number;
+  providerId: string | null;
+  commentCount: number;
+  batchIndex: number;
+  batchTotal: number;
+  /** Forge the session was created against (defaults to gitlab for old files). */
+  forge: ForgeKind;
+}
+
+/** A review session restored in full, ready to render in the review view. */
+export interface ReviewSessionView {
+  session: ReviewSession;
+  changes: ReviewChanges;
+  job: ReviewJob;
 }
 
 /** Current git activity for one repository, for the status bar. */

@@ -5,5 +5,19 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["electron", "src/api.ts", "src/config.ts", "src/types.ts"]
+  "include": [
+    "electron",
+    "src/api.ts",
+    "src/config.ts",
+    "src/types.ts",
+    "src/settings.ts",
+    "src/forge.ts",
+    "src/forges.ts",
+    "src/gitlab.ts",
+    "src/github.ts",
+    "src/review.ts",
+    "src/review-tools.ts",
+    "src/conflict-fix.ts",
+    "src/sessions.ts"
+  ]
 }

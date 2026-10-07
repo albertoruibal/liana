@@ -80,6 +80,10 @@
     </header>
 
     <nav id="more-menu" class="context-menu app-menu" hidden aria-label="More actions">
+      <button type="button" id="btn-review">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span>Code review</span>
+      </button>
       <button type="button" id="btn-settings">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <span>Settings</span>
@@ -127,6 +131,64 @@
       </div>
       <div id="detail-resizer" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
       <aside id="detail-pane"></aside>
+
+      <section id="review-view" class="review-view" hidden aria-label="Code review">
+        <div class="review-inner">
+          <div class="review-head">
+            <h3>Code review<span id="review-repo" class="review-repo"></span></h3>
+            <p class="muted hint" id="review-subtitle">Review an open merge/pull request with AI.</p>
+          </div>
+
+          <div class="review-toolbar">
+            <label class="review-mr-picker">
+              <span id="review-mr-label">Merge request</span>
+              <select id="review-mr-select"></select>
+            </label>
+            <button type="button" class="btn" id="review-refresh-mrs" title="Reload open merge/pull requests">↻</button>
+          </div>
+          <div class="review-toolbar">
+            <label class="review-mr-picker">
+              Saved review
+              <select id="review-session-select"></select>
+            </label>
+            <button type="button" class="btn" id="review-refresh-sessions" title="Reload saved reviews">↻</button>
+            <button type="button" class="btn" id="review-delete-session" title="Delete the selected saved review">Delete</button>
+          </div>
+          <div class="review-options">
+            <button type="button" class="btn btn-primary" id="review-generate">Review with IA</button>
+            <button type="button" class="btn" id="review-pause-job" hidden>Pause</button>
+            <button type="button" class="btn" id="review-resume-job" hidden>Resume</button>
+            <button type="button" class="btn" id="review-cancel-job" hidden>Cancel</button>
+          </div>
+
+          <div id="review-progress" class="review-progress" hidden>
+            <span class="sync-spinner" aria-hidden="true"></span>
+            <span id="review-progress-text">Working…</span>
+          </div>
+
+          <details id="review-trace-wrap" class="review-trace" hidden>
+            <summary>Agent trace (<span id="review-trace-count">0</span>)</summary>
+            <ol id="review-trace"></ol>
+          </details>
+
+          <details id="review-output-wrap" class="review-output" hidden>
+            <summary>Model output</summary>
+            <pre id="review-output"></pre>
+          </details>
+
+          <div id="review-queue-wrap" class="review-queue" hidden>
+            <div class="review-queue-head">
+              <h4>Proposed comments <span id="review-queue-count" class="muted"></span></h4>
+              <button type="button" class="btn" id="review-toggle-rejected" hidden></button>
+            </div>
+            <div id="review-comment-list" class="review-comment-list"></div>
+          </div>
+
+          <div id="review-status" class="dialog-status"></div>
+          <div class="review-actions">
+            <button class="btn" id="review-approve-mr" hidden>Approve MR</button>          </div>
+        </div>
+      </section>
     </main>
 
     <footer id="status-bar" aria-label="Git command activity">
@@ -234,6 +296,11 @@
           Commit message
           <textarea id="commit-message" rows="4" placeholder="What changed?"></textarea>
         </label>
+        <div class="commit-message-actions">
+          <button type="button" class="btn btn-sm" id="commit-generate" title="Draft a message from the selected changes with the active AI provider">
+            Generate with IA
+          </button>
+        </div>
         <div class="commit-files">
           <div class="commit-files-head">
             <label class="checkbox-label">
@@ -329,9 +396,26 @@
       <div id="conflict-status" class="dialog-status"></div>
       <menu>
         <button class="btn" id="conflict-close" value="cancel">Close</button>
+        <button class="btn" id="conflict-ai-fix">Fix with AI</button>
         <button class="btn" id="conflict-ours" value="ok">Use ours</button>
         <button class="btn" id="conflict-theirs" value="ok">Use theirs</button>
         <button class="btn btn-primary" id="conflict-save" value="ok">Save &amp; mark resolved</button>
+      </menu>
+    </dialog>
+
+    <dialog id="ai-conflict-dialog">
+      <div class="dialog-head">
+        <div>
+          <h3 id="ai-conflict-title">AI merge</h3>
+          <p class="muted hint" id="ai-conflict-subtitle"></p>
+        </div>
+      </div>
+      <div id="ai-conflict-body" class="ai-conflict-body"></div>
+      <div id="ai-conflict-status" class="dialog-status"></div>
+      <menu>
+        <button class="btn" id="ai-conflict-close" value="cancel">Close</button>
+        <button class="btn" id="ai-conflict-regenerate">Regenerate</button>
+        <button class="btn btn-primary" id="ai-conflict-apply" value="ok" disabled>Apply</button>
       </menu>
     </dialog>
 
@@ -351,11 +435,13 @@
       </menu>
     </dialog>
 
-    <dialog id="settings-dialog">
+    <dialog id="settings-dialog" class="settings-dialog">
       <div class="dialog-head">
         <h3>Settings</h3>
         <p class="muted hint">
-          The active repository's color scheme.
+          AI providers, review rules, the Git hosting connections, and the theme.
+          Tokens are stored locally in a 0600 config file and never shown again
+          once saved.
         </p>
         <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -363,23 +449,165 @@
       </div>
       <div class="settings-tabs" role="tablist">
         <button type="button" class="settings-tab" data-tab="theme" role="tab">Theme</button>
+        <button type="button" class="settings-tab" data-tab="ai" role="tab">AI providers</button>
+        <button type="button" class="settings-tab" data-tab="review" role="tab">Review rules</button>
+        <button type="button" class="settings-tab" data-tab="commit" role="tab">Commit</button>
+        <button type="button" class="settings-tab" data-tab="hosting" role="tab">Git hosting</button>
       </div>
 
       <div class="settings-body">
-        <section class="settings-panel" data-panel="theme">
+        <section class="settings-panel" data-panel="ai">
+          <div class="settings-panel-head">
+            <h4>Providers</h4>
+            <button type="button" class="btn" id="settings-add-provider">Add provider</button>
+          </div>
+          <ul id="settings-providers" class="provider-list"></ul>
+          <p class="muted hint">
+            An OpenAI-compatible endpoint (Ollama, llama.cpp, LM Studio, …). Set the
+            protocol to <em>Auto</em> to let Liana probe for tool support and remember
+            the result.
+          </p>
+        </section>
+
+        <section class="settings-panel" data-panel="review" hidden>
+          <label>
+            Reviewer instructions
+            <textarea id="settings-review-instructions" rows="12"
+              placeholder="What should the reviewer focus on?"></textarea>
+          </label>
+          <div class="settings-grid">
+            <label>
+              Minimum severity
+              <select id="settings-review-severity">
+                <option value="info">info</option>
+                <option value="warning">warning</option>
+                <option value="error">error</option>
+              </select>
+            </label>
+            <label>
+              Max comments (0 = unlimited)
+              <input type="number" id="settings-review-maxcomments" min="0" />
+            </label>
+            <label>
+              Language
+              <input type="text" id="settings-review-language" placeholder="English" />
+            </label>
+            <label>
+              Max agent steps
+              <input type="number" id="settings-review-maxsteps" min="1" />
+            </label>
+          </div>
+          <label>
+            Ignore globs (one per line)
+            <textarea id="settings-review-ignore" rows="3"
+              placeholder="**/dist/**&#10;**/node_modules/**"></textarea>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="settings-review-batch" />
+            Batch changed files to fit small context windows
+          </label>
+          <p class="muted hint" id="settings-review-note"></p>
+        </section>
+
+        <section class="settings-panel" data-panel="commit" hidden>
+          <label>
+            Commit message instructions
+            <textarea id="settings-commit-instructions" rows="8"
+              placeholder="How should commit messages read?"></textarea>
+          </label>
+          <div class="settings-grid">
+            <label>
+              Language
+              <input type="text" id="settings-commit-language" placeholder="English" />
+            </label>
+            <label>
+              Max diff characters
+              <input type="number" id="settings-commit-maxdiff" min="1000" />
+            </label>
+          </div>
+          <label class="checkbox-label">
+            <input type="checkbox" id="settings-commit-history" />
+            Include recent commit subjects so the model matches the repo's style
+          </label>
+          <p class="muted hint">
+            Used by <em>Generate with IA</em> in the Create-commit dialog. The
+            selected files' diffs and the recent subjects are sent to the active
+            OpenAI-compatible provider.
+          </p>
+        </section>
+
+        <section class="settings-panel" data-panel="hosting" hidden>
+          <label>
+            Forge
+            <select id="settings-forge">
+              <option value="auto">Auto (from origin)</option>
+              <option value="gitlab">GitLab</option>
+              <option value="github">GitHub</option>
+            </select>
+          </label>
+          <p class="muted hint">
+            <em>Auto</em> detects the forge from the repository's <code>origin</code>,
+            falling back to GitLab.
+          </p>
+
+          <div class="settings-panel-head">
+            <h4>GitLab</h4>
+            <button type="button" class="btn" id="settings-test-gitlab">Test</button>
+          </div>
+          <label>
+            GitLab base URL
+            <input type="text" id="settings-gitlab-url" placeholder="https://gitlab.com" />
+          </label>
+          <label>
+            Personal access token (api scope)
+            <input type="password" id="settings-gitlab-token" autocomplete="off"
+              placeholder="Leave blank to keep the saved token" />
+          </label>
+          <label>
+            Project id or path (optional — derived from <code>origin</code> when empty)
+            <input type="text" id="settings-gitlab-project" placeholder="group/project" />
+          </label>
+          <p class="muted hint" id="settings-gitlab-note"></p>
+
+          <hr class="settings-sep" />
+
+          <div class="settings-panel-head">
+            <h4>GitHub</h4>
+            <button type="button" class="btn" id="settings-test-github">Test</button>
+          </div>
+          <label>
+            GitHub API base URL
+            <input type="text" id="settings-github-url" placeholder="https://api.github.com" />
+          </label>
+          <label>
+            Personal access token (fine-grained: Contents read, Pull requests read+write)
+            <input type="password" id="settings-github-token" autocomplete="off"
+              placeholder="Leave blank to keep the saved token" />
+          </label>
+          <label>
+            Repository <code>owner/name</code> (optional — derived from <code>origin</code> when empty)
+            <input type="text" id="settings-github-repo" placeholder="owner/name" />
+          </label>
+          <p class="muted hint" id="settings-github-note"></p>
+        </section>
+
+        <section class="settings-panel" data-panel="theme" hidden>
           <div id="theme-options" class="theme-options" role="radiogroup" aria-label="Theme"></div>
         </section>
       </div>
 
+      <div id="settings-status" class="dialog-status"></div>
       <menu>
-        <button class="btn btn-primary" id="settings-close" value="cancel">Close</button>
+        <button class="btn" id="settings-cancel" value="cancel">Cancel</button>
+        <button class="btn" id="settings-test" value="ok">Test</button>
+        <button class="btn btn-primary" id="settings-save" value="ok">Save</button>
       </menu>
     </dialog>
 
     <dialog id="about-dialog">
       <div class="dialog-head">
         <h3>About liana</h3>
-        <p class="muted hint">Minimal git GUI: commit graph with commit / rebase / cherry-pick / revert, push / pull / settings.</p>
+        <p class="muted hint">A minimal local git GUI: commit-graph history surgery, plus AI-assisted code review.</p>
         <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
@@ -390,8 +618,35 @@
           <dd id="about-version"></dd>
         </div>
       </dl>
+      <div class="about-features">
+        <h4>History</h4>
+        <ul>
+          <li>Interactive commit graph — commit, rebase, cherry-pick, revert, reset</li>
+          <li>Branch, tag, and stash actions from the graph and detail pane</li>
+          <li>Unified / split diff viewer and commit search (<kbd>Ctrl+F</kbd>)</li>
+          <li>Multiple repositories, each in its own tab</li>
+        </ul>
+        <h4>Conflicts &amp; submodules</h4>
+        <ul>
+          <li>File-level conflict resolution (base / ours / theirs) with <strong>Fix with AI</strong></li>
+          <li>Submodule status, history, update, sync, and deinit</li>
+        </ul>
+        <h4>Code review &amp; AI</h4>
+        <ul>
+          <li>Review GitLab merge requests and GitHub pull requests with an OpenAI-compatible model</li>
+          <li>Per-line comments you approve one by one, pausable and resumable sessions</li>
+          <li>AI-drafted commit messages from the selected changes</li>
+        </ul>
+        <h4>Sync &amp; settings</h4>
+        <ul>
+          <li>Push / pull / login; per-repo forge selection (GitLab or GitHub)</li>
+          <li>Multiple themes; AI, GitLab, and GitHub settings</li>
+          <li>Same UI as a browser dev server or a packaged Electron desktop app</li>
+        </ul>
+      </div>
       <p class="muted hint about-note">
         Runs entirely locally against the <code>git</code> CLI. No account, no telemetry.
+        Settings and review sessions are stored locally with restricted permissions.
       </p>
       <menu>
         <button class="btn btn-primary" id="about-close" value="cancel">Close</button>

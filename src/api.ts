@@ -9,6 +9,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { INTERACTIVE_REBASE_ENABLED } from './config';
 import { parseCommitFiles, parseUnmerged } from './commit-files';
+import {
+  cancelReviewJob,
+  createDiscussion,
+  deleteReviewSession,
+  generateCommitMessage,
+  getReviewJob,
+  listReviewSessions,
+  loadReviewSession,
+  pauseReviewJob,
+  resumeReview,
+  reviewJobRepo,
+  saveReviewSessionComments,
+  startReview,
+  testForge,
+  testGitLab,
+  testProvider,
+} from './review';
+import { forgeByKind, resolveForge } from './forges';
+import { markInterruptedSessions } from './sessions';
+import { applyConflictFix, proposeConflictFix } from './conflict-fix';
+import { activeProvider, commitRule, providerById, publicSettings, saveSettings } from './settings';
 import type {
   BranchInfo,
   CommitFile,
@@ -26,6 +47,8 @@ import type {
   RepoState,
   RepoStatus,
   ResetMode,
+  ReviewComment,
+  ReviewRuleConfig,
   StashInfo,
   StatusEntry,
   SubmoduleInfo,
@@ -422,6 +445,34 @@ async function createCommit(repoPath: string, message: string, files: string[]):
   if (toStage.length > 0) await gitRun(repoPath, ['add', '-A', '--', ...toStage]);
   await gitRun(repoPath, ['commit', '-m', message]);
   return (await gitRun(repoPath, ['rev-parse', 'HEAD'])).trim();
+}
+
+/**
+ * Gather the working-tree diffs for an explicit set of paths, for AI commit
+ * message generation. Paths are intersected with the live status so a caller
+ * can't read outside the working tree; renames use the recorded source path.
+ * Binary/empty diffs are skipped and the combined text is truncated.
+ */
+async function selectedWorktreeDiffs(
+  repoPath: string,
+  files: string[],
+  maxChars: number,
+): Promise<string> {
+  const status = await loadStatus(repoPath);
+  const selected = new Set(files);
+  const parts: string[] = [];
+  let total = 0;
+  for (const entry of status.entries) {
+    if (!selected.has(entry.path)) continue;
+    const patch = await worktreePatch(repoPath, entry.path, entry.oldPath).catch(() => '');
+    if (!patch.trim() || patch.includes('Binary files')) continue;
+    const remaining = maxChars - total;
+    if (remaining <= 0) break;
+    const slice = patch.length > remaining ? `${patch.slice(0, remaining)}\n… [truncated]` : patch;
+    parts.push(slice);
+    total += slice.length;
+  }
+  return parts.join('\n\n');
 }
 
 async function rebaseOnto(repoPath: string, onto: string): Promise<string> {
@@ -1404,6 +1455,8 @@ export interface Api {
 }
 
 export function createApi(defaultRepo: string | null): Api {
+  // Sessions left `running` by a previous process are resumable, not hung.
+  markInterruptedSessions();
   // Validated repositories, keyed by a per-process opaque id. The client owns the
   // tab list; the server only maps ids → absolute paths for the life of the process.
   const repos = new Map<string, { path: string; name: string }>();
@@ -1460,10 +1513,202 @@ export function createApi(defaultRepo: string | null): Api {
         const entry = register(abs);
         return { status: 200, body: { ok: true, id: entry.id, path: entry.path, name: entry.name } };
       }
+      // Settings and their connectivity probes are global, not repo-scoped.
+      if (route === '/settings' && method === 'GET') {
+        return { status: 200, body: publicSettings() };
+      }
+      if (route === '/settings' && method === 'POST') {
+        const patch = rawBody ? (JSON.parse(rawBody) as unknown) : {};
+        return { status: 200, body: saveSettings(patch) };
+      }
+      if (route === '/settings/test-ai' && method === 'POST') {
+        const { providerId } = JSON.parse(rawBody || '{}') as { providerId?: string };
+        const provider =
+          (providerId !== undefined ? providerById(providerId) : null) ?? activeProvider();
+        if (!provider) return { status: 400, body: { error: 'No AI provider configured' } };
+        const reply = await testProvider(provider);
+        return { status: 200, body: { ok: true, reply } };
+      }
+      if (route === '/settings/test-forge' && method === 'POST') {
+        const { forge } = JSON.parse(rawBody || '{}') as { forge?: string };
+        const kind = forge === 'github' ? 'github' : 'gitlab';
+        const username = await testForge(kind);
+        return { status: 200, body: { ok: true, username } };
+      }
+      if (route === '/settings/test-gitlab' && method === 'POST') {
+        const username = await testGitLab();
+        return { status: 200, body: { ok: true, username } };
+      }
       // Every repo-scoped route must name a registered repository.
       const entry = repoId !== undefined ? repos.get(repoId) : undefined;
       if (!entry) return { status: 400, body: { error: 'Unknown repository' } };
       const repoPath = entry.path;
+      // Forge-neutral request routes; `/gitlab/*` are deprecated aliases that force
+      // the GitLab forge so old clients keep working.
+      if (
+        (route.startsWith('/forge/') || route.startsWith('/gitlab/')) &&
+        (route.endsWith('/mrs') || route.endsWith('/mr') || route.endsWith('/approve'))
+      ) {
+        const suffix = route.slice(route.lastIndexOf('/'));
+        const forge = route.startsWith('/gitlab/')
+          ? forgeByKind('gitlab')
+          : await resolveForge(repoPath);
+        if (suffix === '/mrs' && method === 'GET') {
+          const mrs = await forge.listRequests(repoPath);
+          return { status: 200, body: { ok: true, mrs } };
+        }
+        if (suffix === '/mr' && method === 'POST') {
+          const { iid, fetch: doFetch } = JSON.parse(rawBody) as { iid?: number; fetch?: boolean };
+          if (!Number.isInteger(iid) || (iid ?? 0) < 1) {
+            return { status: 400, body: { error: 'Missing request number' } };
+          }
+          const changes = await forge.getChanges(repoPath, iid as number);
+          // A failed fetch is reported alongside the changes rather than failing the
+          // request: the in-memory diff is still reviewable without the objects.
+          let fetchResult: { fetched: boolean; error?: string } | undefined;
+          if (doFetch === true) {
+            try {
+              fetchResult = await forge.ensureRefs(repoPath, changes);
+            } catch (err) {
+              fetchResult = { fetched: false, error: err instanceof Error ? err.message : String(err) };
+            }
+          }
+          return { status: 200, body: { ok: true, changes, fetch: fetchResult } };
+        }
+        if (suffix === '/approve' && method === 'POST') {
+          const { iid } = JSON.parse(rawBody) as { iid?: number };
+          if (!Number.isInteger(iid) || (iid ?? 0) < 1) {
+            return { status: 400, body: { error: 'Missing request number' } };
+          }
+          await forge.approve(repoPath, iid as number);
+          return { status: 200, body: { ok: true } };
+        }
+      }
+      if (route === '/review/generate' && method === 'POST') {
+        const parsed = JSON.parse(rawBody) as {
+          iid?: number;
+          providerId?: string;
+          rule?: Partial<ReviewRuleConfig>;
+          maxSteps?: number;
+        };
+        if (!Number.isInteger(parsed.iid) || (parsed.iid ?? 0) < 1) {
+          return { status: 400, body: { error: 'Missing request number' } };
+        }
+        const forge = await resolveForge(repoPath);
+        const changes = await forge.getChanges(repoPath, parsed.iid as number);
+        await forge.ensureRefs(repoPath, changes).catch(() => {
+          // Best effort: without the objects the agent's repo tools degrade, but the
+          // diff-based review still runs.
+        });
+        const job = startReview({
+          repoPath,
+          changes,
+          providerId: parsed.providerId,
+          rule: parsed.rule,
+          maxSteps: parsed.maxSteps,
+        });
+        return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/status' && method === 'POST') {
+        const { jobId } = JSON.parse(rawBody) as { jobId?: string };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        const id = jobId.trim();
+        // A job may only be seen through the repository it belongs to.
+        if (reviewJobRepo(id) !== repoPath) {
+          return { status: 404, body: { error: 'Unknown review job' } };
+        }
+        const job = getReviewJob(id);
+        if (!job) return { status: 404, body: { error: 'Unknown review job' } };
+        return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/cancel' && method === 'POST') {
+        const { jobId } = JSON.parse(rawBody) as { jobId?: string };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        const id = jobId.trim();
+        if (reviewJobRepo(id) !== repoPath) {
+          return { status: 404, body: { error: 'Unknown review job' } };
+        }
+        const cancelled = cancelReviewJob(id);
+        return { status: 200, body: { ok: true, cancelled } };
+      }
+      if (route === '/review/pause' && method === 'POST') {
+        const { jobId } = JSON.parse(rawBody) as { jobId?: string };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        const id = jobId.trim();
+        if (reviewJobRepo(id) !== repoPath) {
+          return { status: 404, body: { error: 'Unknown review job' } };
+        }
+        const paused = pauseReviewJob(id);
+        return { status: 200, body: { ok: true, paused } };
+      }
+      if (route === '/review/resume' && method === 'POST') {
+        const { jobId } = JSON.parse(rawBody) as { jobId?: string };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        const job = resumeReview(repoPath, jobId.trim());
+        if (!job) return { status: 404, body: { error: 'No paused review to resume' } };
+        return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/sessions' && method === 'GET') {
+        return { status: 200, body: { ok: true, sessions: listReviewSessions(repoPath) } };
+      }
+      if (route === '/review/session' && method === 'POST') {
+        const { sessionId } = JSON.parse(rawBody) as { sessionId?: string };
+        if (!sessionId?.trim()) return { status: 400, body: { error: 'Missing sessionId' } };
+        const view = loadReviewSession(repoPath, sessionId.trim());
+        if (!view) return { status: 404, body: { error: 'Unknown review session' } };
+        return { status: 200, body: { ok: true, ...view } };
+      }
+      if (route === '/review/session/save' && method === 'POST') {
+        const { sessionId, comments } = JSON.parse(rawBody) as {
+          sessionId?: string;
+          comments?: ReviewComment[];
+        };
+        if (!sessionId?.trim()) return { status: 400, body: { error: 'Missing sessionId' } };
+        if (!Array.isArray(comments)) {
+          return { status: 400, body: { error: 'comments must be an array' } };
+        }
+        const saved = saveReviewSessionComments(repoPath, sessionId.trim(), comments);
+        return { status: 200, body: { ok: true, saved } };
+      }
+      if (route === '/review/session/delete' && method === 'POST') {
+        const { sessionId } = JSON.parse(rawBody) as { sessionId?: string };
+        if (!sessionId?.trim()) return { status: 400, body: { error: 'Missing sessionId' } };
+        const deleted = deleteReviewSession(repoPath, sessionId.trim());
+        return { status: 200, body: { ok: true, deleted } };
+      }
+      if (route === '/review/post' && method === 'POST') {
+        const { iid, comments, diffRefs, forge: forgeKind } = JSON.parse(rawBody) as {
+          iid?: number;
+          comments?: ReviewComment[];
+          diffRefs?: { baseSha?: string; headSha?: string; startSha?: string };
+          forge?: string;
+        };
+        if (!Number.isInteger(iid) || (iid ?? 0) < 1) {
+          return { status: 400, body: { error: 'Missing request number' } };
+        }
+        if (!Array.isArray(comments)) return { status: 400, body: { error: 'comments must be an array' } };
+        const refs = {
+          baseSha: diffRefs?.baseSha ?? '',
+          headSha: diffRefs?.headSha ?? '',
+          startSha: diffRefs?.startSha ?? '',
+        };
+        const kind = forgeKind === 'github' ? 'github' : forgeKind === 'gitlab' ? 'gitlab' : undefined;
+        const results: Array<{ id: string; ok: boolean; discussionId?: string; error?: string }> = [];
+        for (const comment of comments) {
+          if (comment.status !== 'approved') continue;
+          try {
+            const discussionId = await createDiscussion(repoPath, iid as number, comment, refs, kind);
+            results.push({ id: comment.id, ok: true, discussionId });
+          } catch (err) {
+            results.push({
+              id: comment.id,
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        return { status: 200, body: { ok: true, results } };
+      }
       if (route === '/state' && method === 'GET') {
         const [{ stashes, hidden }, { state, fingerprint: refsPrint }, status, conflicts, submodules] =
           await Promise.all([
@@ -1544,6 +1789,29 @@ export function createApi(defaultRepo: string | null): Api {
         const out = await skipOperation(repoPath);
         return { status: 200, body: { ok: true, output: out } };
       }
+      if (route === '/conflict-fix' && method === 'POST') {
+        const { path: filePath, providerId } = JSON.parse(rawBody || '{}') as {
+          path?: string;
+          providerId?: string;
+        };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const file = await loadConflictFile(repoPath, filePath.trim());
+        const fix = await proposeConflictFix(file, providerId);
+        return { status: 200, body: { ok: true, fix } };
+      }
+      if (route === '/conflict-apply' && method === 'POST') {
+        const { path: filePath, kind, content } = JSON.parse(rawBody || '{}') as {
+          path?: string;
+          kind?: 'content' | 'delete';
+          content?: string | null;
+        };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        if (kind !== 'content' && kind !== 'delete') {
+          return { status: 400, body: { error: 'Invalid kind' } };
+        }
+        await applyConflictFix(repoPath, filePath.trim(), kind, content ?? null);
+        return { status: 200, body: { ok: true } };
+      }
       if (route === '/submodules' && method === 'GET') {
         const submodules = await loadSubmodules(repoPath);
         return { status: 200, body: { ok: true, submodules } };
@@ -1591,6 +1859,37 @@ export function createApi(defaultRepo: string | null): Api {
         if (wanted.length === 0) return { status: 400, body: { error: 'No files selected' } };
         const hash = await createCommit(repoPath, message.trim(), wanted);
         return { status: 200, body: { ok: true, hash } };
+      }
+      if (route === '/commit-message' && method === 'POST') {
+        const { files, providerId } = JSON.parse(rawBody) as {
+          files?: unknown;
+          providerId?: string;
+        };
+        if (!Array.isArray(files)) return { status: 400, body: { error: 'files must be an array' } };
+        const wanted = files.filter((f): f is string => typeof f === 'string');
+        if (wanted.length === 0) return { status: 400, body: { error: 'No files selected' } };
+        const rule = commitRule();
+        const diff = await selectedWorktreeDiffs(repoPath, wanted, rule.maxDiffChars);
+        let history: string[] = [];
+        if (rule.includeHistory) {
+          try {
+            const out = await gitRun(repoPath, [
+              'log',
+              '-n',
+              '20',
+              '--format=%s',
+            ]);
+            history = out.split('\n').filter((s) => s.trim().length > 0);
+          } catch {
+            // A repo without commits (unborn HEAD) simply has no history.
+          }
+        }
+        const message = await generateCommitMessage(
+          rule,
+          { diff, history },
+          typeof providerId === 'string' && providerId ? providerId : undefined,
+        );
+        return { status: 200, body: { ok: true, message } };
       }
       if (route === '/rebase' && method === 'POST') {
         const { onto } = JSON.parse(rawBody) as { onto?: string };
