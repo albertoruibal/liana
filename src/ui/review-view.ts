@@ -257,16 +257,24 @@ export function renderReviewLog(job: ReviewJob): void {
           .join('');
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
   const prompts = $('#review-log-prompts');
+  // The job is polled continuously, so this runs repeatedly; keep expanded
+  // entries open and the scroll position stable across re-renders.
+  const openIdx = new Set<number>();
+  prompts.querySelectorAll<HTMLDetailsElement>('details[data-idx]').forEach((d) => {
+    if (d.open) openIdx.add(Number(d.dataset.idx));
+  });
+  const scrollTop = prompts.scrollTop;
   prompts.innerHTML =
     job.prompts.length === 0
       ? '<p class="muted">No prompt sent yet.</p>'
       : job.prompts
           .map(
-            (p) =>
-              `<details><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
+            (p, i) =>
+              `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
               `<pre>${esc(p.text)}</pre></details>`,
           )
           .join('');
+  prompts.scrollTop = scrollTop;
   const out = $<HTMLPreElement>('#review-log-output');
   out.textContent = job.output || '(no output captured yet)';
 }
