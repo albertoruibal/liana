@@ -3397,6 +3397,9 @@ dialog select:focus-visible {
 
 .review-inner {
   width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
   padding: 20px 24px 44px;
 }
 
@@ -3589,6 +3592,10 @@ dialog select:focus-visible {
   background: var(--bg-elev-2);
   padding: 12px;
   margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .review-queue-head {
@@ -3607,7 +3614,8 @@ dialog select:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 440px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
 }
