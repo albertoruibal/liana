@@ -151,6 +151,45 @@ async function api<T>(route: string, body?: unknown, opts: ApiOpts = {}): Promis
   return data;
 }
 
+// --- Toasts ---
+
+type ToastKind = 'error' | 'info';
+
+/** Auto-dismiss delay per kind; errors linger so they can be read fully. */
+const TOAST_TIMEOUT: Record<ToastKind, number> = { error: 9000, info: 4000 };
+
+/**
+ * Non-blocking replacement for `alert()`: appends a dismissible toast to the
+ * bottom-right region. Errors persist longer and are announced assertively.
+ */
+function toast(message: string, kind: ToastKind = 'error'): void {
+  const region = document.querySelector('#toast-region');
+  if (!region) return;
+  const el = document.createElement('div');
+  el.className = `toast toast-${kind}`;
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.innerHTML =
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  el.append(text, close);
+  const dismiss = (): void => {
+    window.clearTimeout(timer);
+    el.classList.add('toast-out');
+    el.addEventListener('transitionend', () => el.remove(), { once: true });
+    // Fallback when transitions are disabled (prefers-reduced-motion).
+    window.setTimeout(() => el.remove(), 300);
+  };
+  const timer = window.setTimeout(dismiss, TOAST_TIMEOUT[kind]);
+  close.addEventListener('click', dismiss);
+  region.append(el);
+}
+
 /**
  * Review/GitLab calls are scoped to the repository a review tab is bound to,
  * not the active tab, so background polling keeps working after a tab switch.
@@ -1649,7 +1688,7 @@ async function openRepo(): Promise<void> {
   try {
     await addRepo(p, true);
   } catch (err) {
-    alert(String(err));
+    toast(String(err));
   }
 }
 
@@ -1855,7 +1894,7 @@ async function runAction(btn: HTMLButtonElement): Promise<void> {
     }
     await refresh();
   } catch (err) {
-    alert(`Operation failed:\n${String(err)}`);
+    toast(`Operation failed: ${String(err)}`);
   } finally {
     if (btn.isConnected) btn.disabled = false;
   }
@@ -1914,7 +1953,7 @@ async function openRebaseDialog(onto: string): Promise<void> {
   try {
     const plan = await api<RebaseStartResponse>('/rebase-start', { onto });
     if (plan.items.length === 0) {
-      alert('Nothing to rebase: HEAD is already based on this commit.');
+      toast('Nothing to rebase: HEAD is already based on this commit.', 'info');
       return;
     }
     $('#rebase-summary').textContent = `${plan.items.length} commit(s) to replay onto ${plan.onto.slice(0, 8)} — oldest first`;
@@ -1922,7 +1961,7 @@ async function openRebaseDialog(onto: string): Promise<void> {
     renderRebaseTodo(plan.items);
     dlg.showModal();
   } catch (err) {
-    alert(`Cannot start rebase:\n${String(err)}`);
+    toast(`Cannot start rebase: ${String(err)}`);
   }
 }
 
@@ -1947,6 +1986,7 @@ async function submitRebase(): Promise<void> {
     await refresh();
   } catch (err) {
     status.textContent = String(err);
+    await refresh();
   }
 }
 
@@ -2283,7 +2323,7 @@ $('#stash-form').addEventListener('submit', (ev) => {
       const res = await api<{ stashed: boolean }>('/stash', { message, includeUntracked });
       $<HTMLDialogElement>('#stash-dialog').close();
       if (!res.stashed) {
-        alert('No local changes to stash.');
+        toast('No local changes to stash.', 'info');
         return;
       }
       await refresh();
@@ -2460,7 +2500,7 @@ async function runSync(route: '/push' | '/pull', body: unknown): Promise<void> {
     await api(route, body);
     await refresh();
   } catch (err) {
-    alert(`${route === '/push' ? 'Push' : 'Pull'} failed:\n${String(err)}`);
+    toast(`${route === '/push' ? 'Push' : 'Pull'} failed: ${String(err)}`);
   } finally {
     closeSyncDialog();
   }
@@ -2475,7 +2515,7 @@ async function doPush(force = false): Promise<void> {
   const rs = remoteStatus;
   if (!rs) return;
   if (rs.remotes.length === 0) {
-    alert('No remote configured. Add one with `git remote add <name> <url>`.');
+    toast('No remote configured. Add one with `git remote add <name> <url>`.', 'info');
     return;
   }
   let remote: string | undefined;
@@ -2504,7 +2544,7 @@ async function doPush(force = false): Promise<void> {
       }
       return;
     }
-    alert(`Push failed:\n${message}`);
+    toast(`Push failed: ${message}`);
   }
 }
 
@@ -2512,7 +2552,7 @@ async function doPull(): Promise<void> {
   const rs = remoteStatus;
   if (!rs) return;
   if (!rs.upstream) {
-    alert('No upstream configured. Push this branch first to set one.');
+    toast('No upstream configured. Push this branch first to set one.', 'info');
     return;
   }
   await runSync('/pull', {});
@@ -2873,7 +2913,7 @@ async function rebaseOntoBranch(name: string): Promise<void> {
     await api('/rebase', { onto: name });
     await refresh();
   } catch (err) {
-    alert(`Rebase failed:\n${String(err)}`);
+    toast(`Rebase failed: ${String(err)}`);
   }
 }
 
@@ -2885,7 +2925,7 @@ async function cherryPickFromMenu(hash: string, mainline?: number, record?: bool
     await api('/cherry-pick', { ref: hash, mainline, record });
     await refresh();
   } catch (err) {
-    alert(`Cherry-pick failed:\n${String(err)}`);
+    toast(`Cherry-pick failed: ${String(err)}`);
   }
 }
 
@@ -2897,7 +2937,7 @@ async function revertFromMenu(hash: string, mainline?: number): Promise<void> {
     await api('/revert', { ref: hash, mainline });
     await refresh();
   } catch (err) {
-    alert(`Revert failed:\n${String(err)}`);
+    toast(`Revert failed: ${String(err)}`);
   }
 }
 
@@ -2908,7 +2948,7 @@ async function mergeIntoCurrent(name: string): Promise<void> {
     await api('/merge', { ref: name });
     await refresh();
   } catch (err) {
-    alert(`Merge failed:\n${String(err)}`);
+    toast(`Merge failed: ${String(err)}`);
   }
 }
 
@@ -2919,7 +2959,7 @@ async function deleteBranch(name: string, remote: boolean): Promise<void> {
     await api('/branch-delete', { name, remote });
     await refresh();
   } catch (err) {
-    alert(`Delete failed:\n${String(err)}`);
+    toast(`Delete failed: ${String(err)}`);
   }
 }
 
@@ -2929,7 +2969,7 @@ async function deleteTag(name: string): Promise<void> {
     await api('/tag-delete', { name });
     await refresh();
   } catch (err) {
-    alert(`Delete failed:\n${String(err)}`);
+    toast(`Delete failed: ${String(err)}`);
   }
 }
 
@@ -2938,7 +2978,7 @@ async function applyStash(hash: string): Promise<void> {
     await api('/stash-apply', { hash });
     await refresh();
   } catch (err) {
-    alert(`Apply failed:\n${String(err)}`);
+    toast(`Apply failed: ${String(err)}`);
   }
 }
 
@@ -2949,7 +2989,7 @@ async function popStash(hash: string): Promise<void> {
     selectedHash = null;
     await refresh();
   } catch (err) {
-    alert(`Pop failed:\n${String(err)}`);
+    toast(`Pop failed: ${String(err)}`);
   }
 }
 
@@ -2960,7 +3000,7 @@ async function dropStash(hash: string): Promise<void> {
     selectedHash = null;
     await refresh();
   } catch (err) {
-    alert(`Drop failed:\n${String(err)}`);
+    toast(`Drop failed: ${String(err)}`);
   }
 }
 
@@ -3005,7 +3045,7 @@ async function resetTo(hash: string, mode: ResetMode): Promise<void> {
     selectedHash = null;
     await refresh();
   } catch (err) {
-    alert(`Reset failed:\n${String(err)}`);
+    toast(`Reset failed: ${String(err)}`);
   }
 }
 
@@ -4044,7 +4084,7 @@ async function generateReview(): Promise<void> {
 function openReviewTab(): void {
   // Bind to the active repository; opening review with no repo is a no-op.
   if (!activeId) {
-    alert('Open a repository first.');
+    toast('Open a repository first.', 'info');
     return;
   }
   // Re-opening for a repo that already has a review tab focuses it, keeping state.
