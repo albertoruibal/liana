@@ -459,6 +459,17 @@ export interface ReviewTraceStep {
   durationMs: number;
 }
 
+/** One model request as actually sent, for UI transparency. */
+export interface ReviewPromptStep {
+  /** Agent-loop step this request belongs to. */
+  step: number;
+  /** Serialized wire messages, capped; see `truncated`/`chars`. */
+  text: string;
+  /** Full length of the prompt before truncation. */
+  chars: number;
+  truncated: boolean;
+}
+
 /** Lifecycle of a review job; `paused` is resumable, `cancelled` is terminal. */
 export type ReviewJobState = 'running' | 'paused' | 'done' | 'error' | 'cancelled';
 
@@ -473,6 +484,8 @@ export interface ReviewJob {
   /** Latest streamed model output (may be partial). */
   output: string;
   trace: ReviewTraceStep[];
+  /** The exact requests sent to the model, in order. */
+  prompts: ReviewPromptStep[];
   comments: ReviewComment[];
   error: string | null;
 }

@@ -252,6 +252,14 @@ function coerceJob(v: unknown): ReviewJob | null {
           durationMs: Math.max(0, Math.floor(num(t.durationMs, 0))),
         }))
       : [],
+    prompts: Array.isArray(v.prompts)
+      ? v.prompts.filter(isRecord).map((p) => ({
+          step: Math.floor(num(p.step, 0)),
+          text: str(p.text, ''),
+          chars: Math.max(0, Math.floor(num(p.chars, 0))),
+          truncated: p.truncated === true,
+        }))
+      : [],
     comments: Array.isArray(v.comments)
       ? v.comments.filter(isRecord).map((c) => ({
           id: str(c.id, ''),

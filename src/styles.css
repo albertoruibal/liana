@@ -3557,6 +3557,32 @@ dialog select:focus-visible {
   color: var(--fg-dim);
 }
 
+.review-log-prompts {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.review-log-prompts details {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.review-log-prompts summary {
+  cursor: pointer;
+  color: var(--fg-dim);
+}
+
+.review-log-prompts pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
 .review-queue {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);

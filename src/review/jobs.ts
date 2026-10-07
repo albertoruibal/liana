@@ -35,6 +35,7 @@ import type {
   ReviewCommentStage,
   ReviewFile,
   ReviewJob,
+  ReviewPromptStep,
   ReviewRuleConfig,
   ReviewSession,
   ReviewSessionView,
@@ -374,6 +375,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       batchTotal: 1,
       output: '',
       trace: [],
+      prompts: [],
       comments: [],
       error: null,
     },
@@ -534,6 +536,27 @@ async function runReview(rec: JobRecord): Promise<void> {
   persist(rec);
 }
 
+/** Per-prompt cap in the model log; the full request can be huge (it embeds the diff). */
+const PROMPT_LOG_CHARS = 16000;
+/** Keep the log bounded; drop the oldest entries once it grows past this. */
+const PROMPT_LOG_MAX = 40;
+
+/** Record the exact request sent to the model, capped, for the model log. */
+function recordPrompt(rec: JobRecord, step: number, wire: unknown[]): void {
+  const text = JSON.stringify(wire, null, 2);
+  const truncated = text.length > PROMPT_LOG_CHARS;
+  const entry: ReviewPromptStep = {
+    step,
+    text: truncated ? `${text.slice(0, PROMPT_LOG_CHARS)}\n… [truncated]` : text,
+    chars: text.length,
+    truncated,
+  };
+  rec.job.prompts.push(entry);
+  if (rec.job.prompts.length > PROMPT_LOG_MAX) {
+    rec.job.prompts.splice(0, rec.job.prompts.length - PROMPT_LOG_MAX);
+  }
+}
+
 async function runBatch(
   rec: JobRecord,
   provider: StoredProvider,
@@ -606,11 +629,13 @@ async function runBatch(
     };
 
     const useNativeTools = adapter.native;
+    const wire = messages.map(toWire(useNativeTools));
+    recordPrompt(rec, step, wire);
     const result = await chatCompletion(
       provider,
       {
         model: provider.model,
-        messages: messages.map(toWire(useNativeTools)),
+        messages: wire,
         temperature: provider.temperature,
         max_tokens: provider.maxTokens,
         stream: provider.stream,
@@ -690,11 +715,13 @@ async function runBatch(
         role: 'user',
         content: 'Stop exploring. Return the final JSON review result now.',
       });
+      const finalWire = messages.map(toWire(false));
+      recordPrompt(rec, step, finalWire);
       const finalResult = await chatCompletion(
         provider,
         {
           model: provider.model,
-          messages: messages.map(toWire(false)),
+          messages: finalWire,
           temperature: provider.temperature,
           max_tokens: provider.maxTokens,
         },

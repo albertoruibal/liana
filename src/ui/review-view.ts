@@ -255,6 +255,18 @@ export function renderReviewLog(job: ReviewJob): void {
               `<span class="muted">${t.durationMs}ms</span></li>`,
           )
           .join('');
+  $('#review-log-prompt-count').textContent = String(job.prompts.length);
+  const prompts = $('#review-log-prompts');
+  prompts.innerHTML =
+    job.prompts.length === 0
+      ? '<p class="muted">No prompt sent yet.</p>'
+      : job.prompts
+          .map(
+            (p) =>
+              `<details><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
+              `<pre>${esc(p.text)}</pre></details>`,
+          )
+          .join('');
   const out = $<HTMLPreElement>('#review-log-output');
   out.textContent = job.output || '(no output captured yet)';
 }
@@ -773,7 +785,14 @@ export function initReview(): void {
     const trace = state.job.trace
       .map((t) => `${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
       .join('\n');
-    const text = [state.job.output, trace ? `\n\n--- agent trace ---\n${trace}` : ''].join('');
+    const prompts = state.job.prompts
+      .map((p) => `--- step ${p.step}${p.truncated ? ` (${p.chars} chars, truncated)` : ''} ---\n${p.text}`)
+      .join('\n\n');
+    const text = [
+      state.job.output,
+      trace ? `\n\n--- agent trace ---\n${trace}` : '',
+      prompts ? `\n\n--- prompts ---\n${prompts}` : '',
+    ].join('');
     void copyToClipboard(text).then(() => toast('Model log copied.', 'info'));
   });
 
