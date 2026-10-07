@@ -512,19 +512,77 @@ async function readGitPath(repoPath: string, name: string): Promise<string | nul
   }
 }
 
+/** Strip refs/heads/ or refs/remotes/ from a full ref name, leaving a short branch name. */
+function shortRefName(full: string): string {
+  return full.replace(/^refs\/(?:heads|remotes)\//, '');
+}
+
+/** Short name of the branch the rebase is replaying, from `head-name`. */
+async function rebaseHeadName(repoPath: string): Promise<string | null> {
+  const full =
+    (await readGitPath(repoPath, 'rebase-merge/head-name')) ??
+    (await readGitPath(repoPath, 'rebase-apply/head-name'));
+  return full ? shortRefName(full) : null;
+}
+
+/**
+ * Best short name for a commit: a local branch pointing at it (the common case for
+ * a rebase base), otherwise the symbolic ref (`git name-rev`), or null. Remote-tracking
+ * names are dropped so a stale `origin/x` can't masquerade as a local branch.
+ */
+async function refNameAt(repoPath: string, sha: string): Promise<string | null> {
+  try {
+    const out = (await git(repoPath, ['for-each-ref', '--format=%(refname)', '--points-at', sha])).trim();
+    const locals = out
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith('refs/heads/'));
+    if (locals[0]) return shortRefName(locals[0]);
+  } catch {
+    // Fall through to name-rev.
+  }
+  try {
+    const name = (await git(repoPath, ['name-rev', '--name-only', '--refs=refs/heads/*', sha])).trim();
+    if (name && name !== 'undefined' && !name.endsWith('^0')) return name;
+  } catch {
+    // No name available.
+  }
+  return null;
+}
+
+/** Branch names for the ours / theirs sides of the in-progress operation, when known. */
+async function conflictSideLabels(
+  repoPath: string,
+  kind: MergeOperation['kind'],
+  onto: string | null,
+): Promise<{ oursLabel: string | null; theirsLabel: string | null }> {
+  if (kind === 'none') return { oursLabel: null, theirsLabel: null };
+  if (kind === 'rebase') {
+    return { oursLabel: await rebaseHeadName(repoPath), theirsLabel: onto ? await refNameAt(repoPath, onto) : null };
+  }
+  if (kind === 'merge') {
+    const theirs = onto ?? (await readGitPath(repoPath, 'MERGE_HEAD'));
+    return { oursLabel: null, theirsLabel: theirs ? await refNameAt(repoPath, theirs) : null };
+  }
+  return { oursLabel: null, theirsLabel: null };
+}
+
 /**
  * Merge / rebase / cherry-pick / revert state, read from git's own metadata files
  * (never inferred). `onto` is the commit the operation applies onto when known.
  */
-export async function loadMergeState(repoPath: string): Promise<MergeOperation> {
-  const [rebaseMerge, rebaseApply, mergeHead, cherryHead, revertHead, conflicts] = await Promise.all([
+export async function loadMergeState(
+  repoPath: string,
+  conflicts?: ConflictEntry[],
+): Promise<MergeOperation> {
+  const [rebaseMerge, rebaseApply, mergeHead, cherryHead, revertHead] = await Promise.all([
     gitPathExists(repoPath, 'rebase-merge'),
     gitPathExists(repoPath, 'rebase-apply'),
     gitPathExists(repoPath, 'MERGE_HEAD'),
     gitPathExists(repoPath, 'CHERRY_PICK_HEAD'),
     gitPathExists(repoPath, 'REVERT_HEAD'),
-    loadConflicts(repoPath),
   ]);
+  const entries = conflicts ?? (await loadConflicts(repoPath));
   let kind: MergeOperation['kind'] = 'none';
   let onto: string | null = null;
   if (rebaseMerge || rebaseApply) {
@@ -540,7 +598,8 @@ export async function loadMergeState(repoPath: string): Promise<MergeOperation> 
     kind = 'revert';
     onto = await readGitPath(repoPath, 'REVERT_HEAD');
   }
-  return { kind, inProgress: kind !== 'none', onto, conflictCount: conflicts.length };
+  const labels = await conflictSideLabels(repoPath, kind, onto);
+  return { kind, inProgress: kind !== 'none', onto, conflictCount: entries.length, ...labels };
 }
 
 /** Unmerged index entries (`git ls-files -u`), parsed into conflict records. */
@@ -564,10 +623,18 @@ function looksBinary(text: string): boolean {
   return text.slice(0, 8000).includes('\0');
 }
 
-/** Base / ours / theirs contents for one conflicted path, for the resolve dialog. */
-export async function loadConflictFile(repoPath: string, filePath: string): Promise<ConflictFile> {
-  const conflicts = await loadConflicts(repoPath);
-  const entry = conflicts.find((c) => c.path === filePath);
+/**
+ * Base / ours / theirs contents for one conflicted path, for the resolve dialog.
+ * `conflicts`/`operation` may be passed in to avoid redundant git calls.
+ */
+export async function loadConflictFile(
+  repoPath: string,
+  filePath: string,
+  conflicts?: ConflictEntry[],
+  operation?: MergeOperation,
+): Promise<ConflictFile> {
+  const entries = conflicts ?? (await loadConflicts(repoPath));
+  const entry = entries.find((c) => c.path === filePath);
   if (!entry) throw new GitError(`Not a conflicted path: ${filePath}`, 'Path is not unmerged', 400);
   const [base, ours, theirs] = await Promise.all([
     readStage(repoPath, 1, filePath),
@@ -576,6 +643,7 @@ export async function loadConflictFile(repoPath: string, filePath: string): Prom
   ]);
   const isBinary = [base, ours, theirs].some((t) => t !== null && looksBinary(t));
   const worktree = readRepoFile(repoPath, filePath);
+  const op = operation ?? (await loadMergeState(repoPath, entries));
   return {
     path: filePath,
     type: entry.type,
@@ -589,6 +657,8 @@ export async function loadConflictFile(repoPath: string, filePath: string): Prom
     theirs: isBinary && !entry.isSubmodule ? null : theirs,
     worktree: isBinary && !entry.isSubmodule ? null : worktree,
     worktreeAvailable: worktree !== null,
+    oursLabel: op.oursLabel,
+    theirsLabel: op.theirsLabel,
   };
 }
 

@@ -486,6 +486,9 @@ function operationBanner(op: MergeOperation): string {
 /** List of unresolved paths with per-file resolution controls. */
 function renderConflicts(conflicts: ConflictEntry[]): string {
   if (conflicts.length === 0) return '';
+  const op = lastResponse?.operation;
+  const ours = op?.oursLabel || 'Ours';
+  const theirs = op?.theirsLabel || 'Theirs';
   let html = '<h4>Conflicts</h4><ul class="conflict-list">';
   for (const c of conflicts) {
     html += `<li class="conflict-item" data-path="${esc(c.path)}">
@@ -496,8 +499,8 @@ function renderConflicts(conflicts: ConflictEntry[]): string {
       </div>
       <div class="conflict-actions">
         <button type="button" class="btn btn-sm act" data-act="view-conflict" data-path="${esc(c.path)}">Compare</button>
-        <button type="button" class="btn btn-sm act" data-act="take-ours" data-path="${esc(c.path)}">Ours</button>
-        <button type="button" class="btn btn-sm act" data-act="take-theirs" data-path="${esc(c.path)}">Theirs</button>
+        <button type="button" class="btn btn-sm act" data-act="take-ours" data-path="${esc(c.path)}">${esc(ours)}</button>
+        <button type="button" class="btn btn-sm act" data-act="take-theirs" data-path="${esc(c.path)}">${esc(theirs)}</button>
         <button type="button" class="btn btn-sm act" data-act="mark-resolved" data-path="${esc(c.path)}">Mark resolved</button>
       </div>
     </li>`;
@@ -980,6 +983,8 @@ function disposeConflictEditors(): void {
  * and gitlink conflicts keep the plain-text columns and cannot be edited.
  */
 async function renderConflictDialog(file: ConflictFile): Promise<void> {
+  const oursLabel = file.oursLabel || 'Ours';
+  const theirsLabel = file.theirsLabel || 'Theirs';
   $('#conflict-subtitle').textContent =
     conflictTypeLabel(file.type) + (file.isSubmodule ? ' · submodule' : '');
   const editable = !file.isBinary && !file.isSubmodule && file.worktreeAvailable;
@@ -989,16 +994,15 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
     note =
       '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>';
   } else if (editable) {
-    note =
-      '<p class="muted hint">Ours / Theirs highlight their changes against Base; the Result pane tints the conflict-marker regions. Pick a side, or edit the Result and save — saving writes the working-tree file and stages it.</p>';
+    note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base; the Result pane tints the conflict-marker regions. Pick a side, or edit the Result and save — saving writes the working-tree file and stages it.</p>`;
   } else {
-    note = '<p class="muted hint">Choose a side to resolve this file; the sides are highlighted against Base.</p>';
+    note = `<p class="muted hint">Choose a side to resolve this file; ${esc(oursLabel)} and ${esc(theirsLabel)} are highlighted against Base.</p>`;
   }
 
   const cols = useMonaco
     ? (['base', 'ours', 'theirs'] as const)
         .map((side) => {
-          const label = side === 'base' ? 'Base' : side === 'ours' ? 'Ours' : 'Theirs';
+          const label = side === 'base' ? 'Base' : side === 'ours' ? oursLabel : theirsLabel;
           const present =
             side === 'base' ? file.hasBase : side === 'ours' ? file.hasOurs : file.hasTheirs;
           const content = side === 'base' ? file.base : side === 'ours' ? file.ours : file.theirs;
@@ -1013,8 +1017,8 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
         })
         .join('')
     : conflictColumn('Base', 'base', file) +
-      conflictColumn('Ours', 'ours', file) +
-      conflictColumn('Theirs', 'theirs', file);
+      conflictColumn(oursLabel, 'ours', file) +
+      conflictColumn(theirsLabel, 'theirs', file);
 
   const result = editable
     ? `<div class="conflict-result">
@@ -1026,6 +1030,8 @@ async function renderConflictDialog(file: ConflictFile): Promise<void> {
   disposeConflictEditors();
   $('#conflict-body').innerHTML =
     note + `<div class="conflict-columns">${cols}</div>` + result;
+  $<HTMLButtonElement>('#conflict-ours').textContent = `Use ${oursLabel}`;
+  $<HTMLButtonElement>('#conflict-theirs').textContent = `Use ${theirsLabel}`;
   $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
   $<HTMLButtonElement>('#conflict-theirs').disabled = !file.hasTheirs;
   $<HTMLButtonElement>('#conflict-save').disabled = !editable;

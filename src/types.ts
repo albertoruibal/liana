@@ -129,6 +129,10 @@ export interface MergeOperation {
   onto: string | null;
   /** Number of unmerged paths. */
   conflictCount: number;
+  /** Branch name for the ours side (checked-out / rebased branch), or null when unknown. */
+  oursLabel: string | null;
+  /** Branch name for the theirs side (merge target), or null when unknown. */
+  theirsLabel: string | null;
 }
 
 /** The three stage contents for one conflicted path, for the resolve dialog. */
@@ -149,6 +153,10 @@ export interface ConflictFile {
   worktree: string | null;
   /** True when a working-tree file exists and can be edited and staged. */
   worktreeAvailable: boolean;
+  /** Branch name for the ours side, shown in the dialog in place of "Ours"; null when unknown. */
+  oursLabel: string | null;
+  /** Branch name for the theirs side, shown in the dialog in place of "Theirs"; null when unknown. */
+  theirsLabel: string | null;
 }
 
 /** Original and modified text of one file, for the read-only Monaco viewer / diff. */
