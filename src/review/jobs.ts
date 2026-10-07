@@ -595,6 +595,7 @@ async function runBatch(
     // Scan the streamed text for complete comment objects and surface them as
     // pending previews so the UI list fills in while the model is still writing.
     let liveText = '';
+    let sawDelta = false;
     let lastScan = 0;
     const scanLive = (): void => {
       const now = Date.now();
@@ -616,6 +617,7 @@ async function runBatch(
         ...(useNativeTools ? { tools: nativeTools(), tool_choice: 'auto' } : {}),
       },
       (chunk) => {
+        sawDelta = true;
         rec.job.output += chunk;
         rec.job.output = rec.job.output.slice(-4000);
         liveText += chunk;
@@ -634,6 +636,11 @@ async function runBatch(
     if (parsed.content.length > 0) {
       const previews = parsePartialComments(parsed.content, rule, changes.files);
       if (previews.length > 0) syncComments(rec, previews, 'pending');
+    }
+    // Keep the raw output for the model log even when the provider ignored
+    // `stream: true` and returned a single JSON body.
+    if (!sawDelta && parsed.content.trim().length > 0) {
+      rec.job.output = parsed.content.slice(-4000);
     }
 
     const obj = extractJsonObject(parsed.content);

@@ -156,6 +156,7 @@
           </div>
           <div class="review-options">
             <button type="button" class="btn btn-primary" id="review-generate">Review with IA</button>
+            <button type="button" class="btn" id="review-show-log" disabled>Model log</button>
             <button type="button" class="btn" id="review-pause-job" hidden>Pause</button>
             <button type="button" class="btn" id="review-resume-job" hidden>Resume</button>
             <button type="button" class="btn" id="review-cancel-job" hidden>Cancel</button>
@@ -165,16 +166,6 @@
             <span class="sync-spinner" aria-hidden="true"></span>
             <span id="review-progress-text">Working…</span>
           </div>
-
-          <details id="review-trace-wrap" class="review-trace" hidden>
-            <summary>Agent trace (<span id="review-trace-count">0</span>)</summary>
-            <ol id="review-trace"></ol>
-          </details>
-
-          <details id="review-output-wrap" class="review-output" hidden>
-            <summary>Model output</summary>
-            <pre id="review-output"></pre>
-          </details>
 
           <div id="review-queue-wrap" class="review-queue" hidden>
             <div class="review-queue-head">
@@ -434,6 +425,32 @@
       <div id="submodule-log-body" class="submodule-log-body"></div>
       <menu>
         <button class="btn btn-primary" id="submodule-log-close" value="cancel">Close</button>
+      </menu>
+    </dialog>
+
+    <dialog id="review-log-dialog" class="review-log-dialog">
+      <div class="dialog-head">
+        <div>
+          <h3>Model log</h3>
+          <p class="muted hint" id="review-log-subtitle"></p>
+        </div>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="review-log-body" class="review-log-body">
+        <section id="review-log-trace-wrap">
+          <h4>Agent trace (<span id="review-log-trace-count">0</span>)</h4>
+          <ol id="review-log-trace" class="review-log-trace"></ol>
+        </section>
+        <section id="review-log-output-wrap">
+          <h4>Model output</h4>
+          <pre id="review-log-output" class="review-log-output"></pre>
+        </section>
+      </div>
+      <menu>
+        <button class="btn" id="review-log-copy">Copy</button>
+        <button class="btn btn-primary" id="review-log-close" value="cancel">Close</button>
       </menu>
     </dialog>
 

@@ -1,6 +1,7 @@
 // Code review main view: one tab per repository, MR/session state, jobs, and comments.
 
 import { reviewApi } from './api-client';
+import { copyToClipboard } from './clipboard';
 import { loadCode } from './code-loader';
 import { esc, gutter } from './format';
 import { renderCached } from './graph-view';
@@ -207,11 +208,10 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     paintForgeWording(state);
     $('#review-subtitle').textContent = `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
     $('#review-queue-wrap').hidden = true;
-    $('#review-trace-wrap').hidden = true;
-    $('#review-output-wrap').hidden = true;
     $('#review-progress').hidden = true;
     $('#review-cancel-job').hidden = true;
     $('#review-approve-mr').hidden = false;
+    $<HTMLButtonElement>('#review-show-log').disabled = true;
     status.textContent = fetchResult?.error
       ? `Request commit not fetched: ${fetchResult.error} — repository tools may be limited`
       : '';
@@ -222,17 +222,26 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
   }
 }
 
-export function renderTrace(job: ReviewJob): void {
-  $('#review-trace-count').textContent = String(job.trace.length);
-  const ol = $('#review-trace');
-  ol.innerHTML = job.trace
-    .map(
-      (t) =>
-        `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
-        `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-        `<span class="muted">${t.durationMs}ms</span></li>`,
-    )
-    .join('');
+/** Render a job's agent trace and raw model output into the model-log dialog. */
+export function renderReviewLog(job: ReviewJob): void {
+  $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
+    job.protocol ? ` · ${job.protocol}` : ''
+  }`;
+  $('#review-log-trace-count').textContent = String(job.trace.length);
+  const ol = $('#review-log-trace');
+  ol.innerHTML =
+    job.trace.length === 0
+      ? '<li class="muted">No tool calls yet.</li>'
+      : job.trace
+          .map(
+            (t) =>
+              `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
+              `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+              `<span class="muted">${t.durationMs}ms</span></li>`,
+          )
+          .join('');
+  const out = $<HTMLPreElement>('#review-log-output');
+  out.textContent = job.output || '(no output captured yet)';
 }
 
 /** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
@@ -543,14 +552,8 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
     job.protocol ? ` · ${job.protocol}` : ''
   }`;
-  if (job.trace.length > 0) {
-    $('#review-trace-wrap').hidden = false;
-    renderTrace(job);
-  }
-  if (job.output) {
-    $('#review-output-wrap').hidden = false;
-    $<HTMLPreElement>('#review-output').textContent = job.output;
-  }
+  $<HTMLButtonElement>('#review-show-log').disabled = false;
+  if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
   if (job.comments.length > 0) renderCommentQueue(state);
   if (job.state === 'error') {
     $('#review-status').textContent = `Review failed: ${job.error ?? 'unknown error'}`;
@@ -611,8 +614,6 @@ export async function generateReview(): Promise<void> {
     state.edits.clear();
     state.showRejected = false;
     $('#review-queue-wrap').hidden = true;
-    $('#review-trace-wrap').hidden = true;
-    $('#review-output-wrap').hidden = true;
     status.textContent = '';
     renderJob(state, job);
     window.clearTimeout(state.poll);
@@ -666,12 +667,11 @@ export function openReviewTab(): void {
 export function resetReviewDom(): void {
   $('#review-subtitle').textContent = 'Review an open merge/pull request with AI.';
   $('#review-queue-wrap').hidden = true;
-  $('#review-trace-wrap').hidden = true;
-  $('#review-output-wrap').hidden = true;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
   $('#review-approve-mr').hidden = true;
+  $<HTMLButtonElement>('#review-show-log').disabled = true;
 }
 
 /** Repaint the review view from a tab's stored state when it becomes visible. */
@@ -685,13 +685,12 @@ export function paintReview(state: ReviewTabState): void {
     : 'Review an open merge/pull request with AI.';
   $('#review-approve-mr').hidden = changes === null;
   $('#review-queue-wrap').hidden = true;
-  $('#review-trace-wrap').hidden = true;
-  $('#review-output-wrap').hidden = true;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
   $('#review-cancel-job').hidden = true;
   $('#review-status').textContent = '';
+  $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
   if (state.job) renderJob(state, state.job);
 }
 
@@ -755,6 +754,28 @@ export function initReview(): void {
 
   $('#review-generate').addEventListener('click', () => void generateReview());
 
+  $('#review-show-log').addEventListener('click', () => {
+    const state = activeReview();
+    if (!state?.job) return;
+    renderReviewLog(state.job);
+    $<HTMLDialogElement>('#review-log-dialog').showModal();
+  });
+
+  $('#review-log-copy').addEventListener('click', () => {
+    const state = activeReview();
+    if (!state?.job) return;
+    const trace = state.job.trace
+      .map((t) => `${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
+      .join('\n');
+    const text = [state.job.output, trace ? `\n\n--- agent trace ---\n${trace}` : ''].join('');
+    void copyToClipboard(text).then(() => toast('Model log copied.', 'info'));
+  });
+
+  $('#review-log-close').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    $<HTMLDialogElement>('#review-log-dialog').close();
+  });
+
   $('#review-session-select').addEventListener('change', () => {
     const state = activeReview();
     if (!state) return;
@@ -780,12 +801,11 @@ export function initReview(): void {
         state.showRejected = false;
         refreshSessionSelect(state);
         $('#review-queue-wrap').hidden = true;
-        $('#review-trace-wrap').hidden = true;
-        $('#review-output-wrap').hidden = true;
         $('#review-progress').hidden = true;
         $('#review-pause-job').hidden = true;
         $('#review-resume-job').hidden = true;
         $('#review-cancel-job').hidden = true;
+        $<HTMLButtonElement>('#review-show-log').disabled = true;
         $('#review-status').textContent = 'Saved review deleted.';
         void loadReviewSessions(state);
       })
@@ -898,6 +918,7 @@ export function initReview(): void {
     const conflictDlg = $<HTMLDialogElement>('#conflict-dialog');
     const aiConflictDlg = $<HTMLDialogElement>('#ai-conflict-dialog');
     const submoduleDlg = $<HTMLDialogElement>('#submodule-log-dialog');
+    const reviewLogDlg = $<HTMLDialogElement>('#review-log-dialog');
     const settingsDlg = $<HTMLDialogElement>('#settings-dialog');
     const codeDlg = $<HTMLDialogElement>('#code-dialog');
     if (codeDlg.open) {
@@ -906,6 +927,10 @@ export function initReview(): void {
     }
     if (settingsDlg.open) {
       settingsDlg.close();
+      return;
+    }
+    if (reviewLogDlg.open) {
+      reviewLogDlg.close();
       return;
     }
     if (submoduleDlg.open) {
