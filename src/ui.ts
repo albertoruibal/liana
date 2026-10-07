@@ -2039,6 +2039,16 @@ window.addEventListener('resize', () => {
 
 // --- Wire up static UI ---
 
+// The header X closes a dialog by activating the same footer button, so
+// per-dialog cleanup (Monaco disposal, promise resolution) still runs.
+document.querySelectorAll<HTMLButtonElement>('.dialog-close').forEach((btn) => {
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    const dlg = btn.closest('dialog');
+    dlg?.querySelector<HTMLButtonElement>('menu button[id$="-close"], menu button[id$="-cancel"]')?.click();
+  });
+});
+
 $('#btn-refresh').addEventListener('click', () => void refresh());
 
 $('#btn-stash').addEventListener('click', () => {

@@ -142,6 +142,9 @@
       <div class="dialog-head">
         <h3>Interactive rebase</h3>
         <p class="muted hint" id="rebase-summary"></p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <ol id="rebase-todo"></ol>
       <div id="rebase-status" class="dialog-status"></div>
@@ -158,6 +161,9 @@
         <div class="dialog-head">
           <h3 id="name-title">Create branch</h3>
           <p class="muted hint" id="name-subtitle"></p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
         </div>
         <label>
           Name
@@ -175,6 +181,9 @@
       <div class="dialog-head">
         <h3 id="reset-title">Reset branch</h3>
         <p class="muted hint" id="reset-summary"></p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="reset-warning" class="dirty-banner" hidden>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -191,6 +200,9 @@
         <div class="dialog-head">
           <h3>Stash changes</h3>
           <p class="muted hint">Saves uncommitted changes and restores the working tree.</p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
         </div>
         <label>
           Message
@@ -214,6 +226,9 @@
         <div class="dialog-head">
           <h3>Create commit</h3>
           <p class="muted hint">Changes are committed on the checked-out branch.</p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
         </div>
         <label>
           Commit message
@@ -241,6 +256,9 @@
       <div class="dialog-head">
         <h3 id="remote-title">Choose a remote</h3>
         <p class="muted hint" id="remote-subtitle"></p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="remote-list" class="remote-list"></div>
       <menu>
@@ -269,6 +287,9 @@
           <button type="button" class="diff-view-btn" data-view="unified">Unified</button>
           <button type="button" class="diff-view-btn" data-view="split">Split</button>
         </div>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="diff-body" class="diff-body"></div>
       <div id="diff-status" class="dialog-status"></div>
@@ -283,6 +304,9 @@
           <h3 id="code-title">File</h3>
           <p class="muted hint" id="code-subtitle"></p>
         </div>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="code-body" class="code-host"></div>
       <div id="code-status" class="dialog-status"></div>
@@ -297,6 +321,9 @@
           <h3 id="conflict-title">Resolve conflict</h3>
           <p class="muted hint" id="conflict-subtitle"></p>
         </div>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="conflict-body" class="conflict-body"></div>
       <div id="conflict-status" class="dialog-status"></div>
@@ -314,6 +341,9 @@
           <h3 id="submodule-log-title">Submodule history</h3>
           <p class="muted hint" id="submodule-log-subtitle"></p>
         </div>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div id="submodule-log-body" class="submodule-log-body"></div>
       <menu>
@@ -327,6 +357,9 @@
         <p class="muted hint">
           The active repository's color scheme.
         </p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div class="settings-tabs" role="tablist">
         <button type="button" class="settings-tab" data-tab="theme" role="tab">Theme</button>
@@ -347,6 +380,9 @@
       <div class="dialog-head">
         <h3>About liana</h3>
         <p class="muted hint">Minimal git GUI: commit graph with commit / rebase / cherry-pick / revert, push / pull / settings.</p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <dl class="about-meta">
         <div>

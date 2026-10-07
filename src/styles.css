@@ -2221,13 +2221,22 @@ dialog[open] {
 }
 
 .dialog-head {
+  position: relative;
   margin-bottom: 14px;
+  padding-right: 30px;
 }
 
 .dialog-head h3 {
   margin: 0 0 4px;
   font-size: 16px;
   font-weight: 700;
+}
+
+/* Header close affordance, pinned to the dialog's top-right corner. */
+.dialog-close {
+  position: absolute;
+  top: -2px;
+  right: -2px;
 }
 
 .dialog-status {
