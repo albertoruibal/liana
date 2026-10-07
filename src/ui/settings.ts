@@ -69,6 +69,7 @@ export function renderProviderList(): void {
             <label class="pf-checkbox">
               <input type="checkbox" class="pf-stream" ${p.stream ? 'checked' : ''} /> Stream
             </label>
+            <button type="button" class="btn pf-test">Test</button>
             <button type="button" class="btn pf-remove">Remove</button>
           </div>
           <p class="muted hint pf-detected">${
@@ -127,8 +128,6 @@ export function showSettingsTab(tab: string): void {
   document.querySelectorAll<HTMLElement>('.settings-panel').forEach((p) => {
     p.hidden = p.dataset.panel !== tab;
   });
-  // Git hosting has its own per-forge Test buttons inside the panel.
-  $('#settings-test').hidden = tab !== 'ai';
   if (tab === 'theme') applyTheme(currentTheme());
 }
 
@@ -264,6 +263,23 @@ export function testForgeButton(forge: 'gitlab' | 'github', route: string, label
   };
 }
 
+/** Per-provider Test button: persist first so the probe uses the edited fields. */
+async function testProviderItem(li: HTMLLIElement): Promise<void> {
+  const status = $('#settings-status');
+  try {
+    readProviderInputs();
+    const provider = settingsProviders[Number(li.dataset.index)];
+    if (!provider) return;
+    const { id, name } = provider;
+    await persistSettings();
+    status.textContent = `Testing ${name}…`;
+    const res = await api<{ reply: string }>('/settings/test-ai', { providerId: id }, { scoped: false });
+    status.textContent = `AI OK (${name}): ${res.reply}`;
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
 export function initSettings(): void {
   $('#btn-settings').addEventListener('click', () => {
     closeMoreMenu();
@@ -298,9 +314,14 @@ export function initSettings(): void {
 
   $('#settings-providers').addEventListener('click', (ev) => {
     const target = ev.target;
-    if (!(target instanceof HTMLElement) || !target.classList.contains('pf-remove')) return;
+    if (!(target instanceof HTMLElement)) return;
     const li = target.closest<HTMLLIElement>('.provider-item');
     if (!li) return;
+    if (target.classList.contains('pf-test')) {
+      void testProviderItem(li);
+      return;
+    }
+    if (!target.classList.contains('pf-remove')) return;
     readProviderInputs();
     const i = Number(li.dataset.index);
     const removed = settingsProviders[i];
@@ -319,31 +340,6 @@ export function initSettings(): void {
       try {
         await persistSettings();
         status.textContent = 'Saved.';
-      } catch (err) {
-        status.textContent = String(err);
-      }
-    })();
-  });
-
-  $('#settings-test').addEventListener('click', (ev) => {
-    ev.preventDefault();
-    const status = $('#settings-status');
-    void (async () => {
-      try {
-        readProviderInputs();
-        const active = settingsProviders.find((p) => p.id === settingsActiveProviderId);
-        if (!active) {
-          status.textContent = 'Add a provider first.';
-          return;
-        }
-        await persistSettings();
-        status.textContent = 'Testing AI endpoint…';
-        const res = await api<{ reply: string }>(
-          '/settings/test-ai',
-          { providerId: active.id },
-          { scoped: false },
-        );
-        status.textContent = `AI OK: ${res.reply}`;
       } catch (err) {
         status.textContent = String(err);
       }
