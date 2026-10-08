@@ -590,7 +590,7 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
       ${commentExcerptHtml(state, c)}
       <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
       <div class="review-comment-actions">
-        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Approve</button>
+        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>
         <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
       </div>
     </div>`;
@@ -639,7 +639,7 @@ function reconcileCommentList(state: ReviewTabState, list: HTMLElement, visible:
   if (visible.length === 0) {
     if (list.querySelector(':scope > .review-comment-card[data-id]')) {
       disposeExcerptEditors();
-      list.innerHTML = '<p class="muted review-comment-empty">All comments rejected.</p>';
+      list.innerHTML = '<p class="muted review-comment-empty">No comments to show.</p>';
     }
     return;
   }
@@ -687,7 +687,6 @@ export function renderCommentQueue(state: ReviewTabState): void {
     $('#review-queue-wrap').hidden = true;
     return;
   }
-  $('#review-queue-wrap').hidden = false;
   // Re-apply local edits/approvals so a poll snapshot never clobbers typing.
   for (const c of job.comments) {
     const edit = state.edits.get(c.id);
@@ -696,14 +695,21 @@ export function renderCommentQueue(state: ReviewTabState): void {
       c.status = edit.status;
     }
   }
-  const total = job.comments.length;
-  const pending = job.comments.filter((c) => c.stage === 'pending').length;
-  const rejected = job.comments.filter((c) => c.status === 'rejected').length;
+  // Posted comments are done: hide them (and the queue itself when none remain).
+  const unposted = job.comments.filter((c) => c.status !== 'posted');
+  if (unposted.length === 0) {
+    $('#review-queue-wrap').hidden = true;
+    return;
+  }
+  $('#review-queue-wrap').hidden = false;
+  const total = unposted.length;
+  const pending = unposted.filter((c) => c.stage === 'pending').length;
+  const rejected = unposted.filter((c) => c.status === 'rejected').length;
   $('#review-queue-count').textContent = pending > 0 ? `(${total}, ${pending} scanning…)` : `(${total})`;
   const toggle = $<HTMLButtonElement>('#review-toggle-rejected');
   toggle.hidden = rejected === 0;
   toggle.textContent = state.showRejected ? 'Hide rejected' : `Show rejected (${rejected})`;
-  const visible = job.comments.filter((c) => state.showRejected || c.status !== 'rejected');
+  const visible = unposted.filter((c) => state.showRejected || c.status !== 'rejected');
   const list = $('#review-comment-list');
   reconcileCommentList(state, list, visible);
   // Upgrade the excerpt placeholders to inline Monaco diffs (no-op if unavailable).
