@@ -1282,6 +1282,63 @@ main {
   color: var(--fg-faint);
 }
 
+/* Collapsible detail sections (Branches, Unstaged) */
+#detail-pane .detail-section {
+  margin: 18px 0 8px;
+}
+
+#detail-pane .detail-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--fg-faint);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+#detail-pane .detail-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+#detail-pane .detail-section > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform var(--dur) var(--ease);
+}
+
+#detail-pane .detail-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+#detail-pane .detail-section > summary:hover {
+  color: var(--fg-dim);
+}
+
+#detail-pane .detail-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-dim);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+#detail-pane .detail-section > ul,
+#detail-pane .detail-section > p {
+  margin-top: 8px;
+}
+
 .detail-head {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-soft);

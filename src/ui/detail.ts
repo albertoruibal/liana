@@ -217,7 +217,7 @@ export function renderDetail(commits: GitCommit[], state: RepoState | undefined,
       html += `<p class="muted">${esc(store.repoName)} — ${esc(state.headBranch ?? 'detached HEAD')}</p>`;
       html += syncSummaryHtml();
       if (state.branches.length > 0) {
-        html += '<h4>Branches</h4><ul class="branch-list">';
+        html += `<details class="detail-section"><summary>Branches <span class="detail-count">${state.branches.length}</span></summary><ul class="branch-list">`;
         for (const b of state.branches) {
           const kind = b.isRemote ? 'remote' : 'local';
           const badge = b.isHead ? '<span class="head-badge">HEAD</span>' : '';
@@ -229,7 +229,7 @@ export function renderDetail(commits: GitCommit[], state: RepoState | undefined,
           </li>`;
         }
         html += '</ul>';
-        html += '<p class="muted hint">Click a branch to checkout</p>';
+        html += '<p class="muted hint">Click a branch to checkout</p></details>';
       }
     }
     if (status && status.entries.length > 0) {
@@ -243,12 +243,12 @@ export function renderDetail(commits: GitCommit[], state: RepoState | undefined,
         html += '</ul>';
       }
       if (unstaged.length > 0) {
-        html += '<h4>Unstaged</h4><ul class="status-list">';
+        html += `<details class="detail-section"><summary>Unstaged <span class="detail-count">${unstaged.length}</span></summary><ul class="status-list">`;
         for (const e of unstaged) {
           const code = e.stagedX === '?' ? '??' : e.unstagedY;
           html += `<li><span class="status-badge ${statusClass(e.stagedX === '?' ? '?' : e.unstagedY)}">${esc(code)}</span><span class="status-path">${esc(e.path)}</span></li>`;
         }
-        html += '</ul>';
+        html += '</ul></details>';
       }
     } else {
       html += '<p class="muted">Working tree clean</p>';
