@@ -2,6 +2,7 @@
 // AbortController timeouts and unchanged upstream-error passthrough. Node-only.
 
 import { providerKey, type StoredProvider } from '../settings';
+import { describeFetchError } from '../forge';
 import type { ToolCall } from '../review-tools';
 
 // The LLM call (including a streamed response) may take a long time on slow
@@ -83,6 +84,11 @@ export async function chatCompletion(
       // Distinguish a user cancellation from hitting the timeout.
       if (signal?.aborted) throw new Error(labels.cancelled ?? 'Review cancelled');
       throw new Error(labels.timeout ?? `AI request timed out after ${formatTimeout(HTTP_TIMEOUT_MS)}`);
+    }
+    // Node hides the real network cause (DNS/refused/TLS/undici timeout) behind
+    // a bare "fetch failed"; surface it so the job error is actionable.
+    if (err instanceof TypeError) {
+      throw new Error(`AI request to ${provider.baseUrl} failed: ${describeFetchError(err)}`);
     }
     throw err;
   } finally {

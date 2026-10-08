@@ -4,6 +4,7 @@
 
 import type { Connect, Plugin, ViteDevServer } from 'vite';
 import { createApi } from './src/api/index';
+import { configureNetwork } from './src/net';
 
 function sendJson(res: Connect.IncomingMessage, status: number, body: unknown): void {
   res.statusCode = status;
@@ -22,6 +23,7 @@ export function apiPlugin(defaultRepo: string | null): Plugin {
     name: 'liana-api',
     apply: 'serve',
     configureServer(server: ViteDevServer) {
+      configureNetwork();
       const api = createApi(defaultRepo);
 
       server.middlewares.use('/api', (req, res) => {

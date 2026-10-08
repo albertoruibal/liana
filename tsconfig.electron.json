@@ -10,6 +10,7 @@
     "src/api/**/*.ts",
     "src/config.ts",
     "src/types.ts",
+    "src/net.ts",
     "src/settings.ts",
     "src/forge.ts",
     "src/forges.ts",

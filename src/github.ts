@@ -9,6 +9,7 @@
 
 import {
   checkoutRequestBranch,
+  describeFetchError,
   fetchHeadIntoHiddenRef,
   gitRemoteOrigin,
   hiddenHeadRef,
@@ -69,6 +70,11 @@ async function githubFetch(method: string, urlPath: string, body?: unknown): Pro
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`GitHub request timed out after ${GITHUB_TIMEOUT_MS / 1000}s`);
+    }
+    // Preserve HTTP-status errors (e.g. the 422/404 fallback in createReviewComment);
+    // only a genuine fetch failure (a TypeError) hides its cause behind "fetch failed".
+    if (err instanceof TypeError) {
+      throw new Error(`GitHub ${method} ${urlPath} failed: ${describeFetchError(err)}`);
     }
     throw err;
   } finally {

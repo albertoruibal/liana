@@ -109,6 +109,27 @@ export function runGit(
   });
 }
 
+/**
+ * Extract a useful message from a failed `fetch`. Node wraps network failures
+ * in a generic `TypeError: fetch failed` and hides the real reason (DNS,
+ * connection refused, TLS, or an undici connect/headers/body timeout) in
+ * `err.cause`. Walk the cause chain so the UI shows that, not "fetch failed".
+ */
+export function describeFetchError(err: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = err;
+  for (let depth = 0; depth < 3 && cur instanceof Error; depth++) {
+    const code = (cur as { code?: unknown }).code;
+    const detail = typeof code === 'string' ? `${cur.message} (${code})` : cur.message;
+    if (detail && !parts.includes(detail)) parts.push(detail);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  const text = parts.join(' ← ') || String(err);
+  // An undici timeout (10s connect, 300s headers/body) is the common silent case.
+  if (/UND_ERR_(CONNECT|HEADERS|BODY)_TIMEOUT/.test(text)) return `network timeout: ${text}`;
+  return text;
+}
+
 /** Whether a commit-ish already exists in the local object database. */
 export async function hasCommit(repoPath: string, sha: string): Promise<boolean> {
   try {

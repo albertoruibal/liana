@@ -7,6 +7,7 @@
 
 import {
   checkoutRequestBranch,
+  describeFetchError,
   fetchHeadIntoHiddenRef,
   gitRemoteOrigin,
   hiddenHeadRef,
@@ -59,6 +60,11 @@ async function gitlabFetch(
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`GitLab request timed out after ${GITLAB_TIMEOUT_MS / 1000}s`);
+    }
+    // Preserve the HTTP-status error from the `!res.ok` branch above; only a
+    // genuine fetch failure (a TypeError) hides its cause behind "fetch failed".
+    if (err instanceof TypeError) {
+      throw new Error(`GitLab ${method} ${urlPath} failed: ${describeFetchError(err)}`);
     }
     throw err;
   } finally {

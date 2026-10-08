@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createApi } from '../src/api/index';
+import { configureNetwork } from '../src/net';
 
 export interface ServerOptions {
   /** Repository to open at launch, or null to start unconfigured. */
@@ -109,6 +110,7 @@ async function listenOn(server: http.Server, preferred: number | null): Promise<
 }
 
 export async function startServer(opts: ServerOptions): Promise<RunningServer> {
+  configureNetwork();
   const api = createApi(opts.defaultRepo);
   const root = path.resolve(opts.staticDir);
 

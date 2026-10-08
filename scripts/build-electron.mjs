@@ -24,7 +24,12 @@ await build({
   format: 'esm',
   entryPoints: ['electron/main.ts'],
   outfile: 'dist-electron/main.mjs',
-  // esbuild rewrites import.meta.url correctly in ESM output.
+  // esbuild rewrites import.meta.url correctly in ESM output. The `require`
+  // banner lets inlined CJS dependencies (undici) satisfy their internal
+  // require() calls, which esbuild's ESM output cannot otherwise provide.
+  banner: {
+    js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+  },
 });
 
 await build({
