@@ -73,8 +73,6 @@ export function updateTerminalVisibility(): void {
   const shown = path !== null && store.terminals.has(path);
   $('#terminal-view').hidden = !shown;
   if (shown && path) {
-    const state = store.terminals.get(path);
-    $('#terminal-cwd').textContent = state ? ` · ${state.name}` : '';
     // Never show the terminal and the review view at once.
     $('#review-view').hidden = true;
   }

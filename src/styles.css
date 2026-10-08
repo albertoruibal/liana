@@ -3557,21 +3557,6 @@ dialog select:focus-visible {
   padding: 20px 24px 44px;
 }
 
-.review-head {
-  margin-bottom: 16px;
-}
-
-.review-head h3 {
-  margin: 0 0 4px;
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.review-repo {
-  color: var(--fg-dim);
-  font-weight: 550;
-}
-
 .review-toolbar {
   display: flex;
   gap: 8px;

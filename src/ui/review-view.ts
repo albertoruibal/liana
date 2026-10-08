@@ -42,6 +42,14 @@ export function requestNumber(forge: ForgeKind | undefined, iid: number): string
   return `${forgeLabels(forge).prefix}${iid}`;
 }
 
+/** The review subtitle shown on its tab tooltip: the selected request, or a hint. */
+export function reviewTabSubtitle(state: ReviewTabState | undefined): string {
+  const changes = state?.changes;
+  return changes
+    ? `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`
+    : 'Review an open merge/pull request with AI.';
+}
+
 /** Update the review toolbar wording (merge request vs pull request) for a tab. */
 export function paintForgeWording(state: ReviewTabState): void {
   if (store.activeReviewId !== state.repoId) return;
@@ -183,10 +191,10 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   for (const c of view.job.comments) {
     state.edits.set(c.id, { body: c.body, status: c.status });
   }
+  renderTabs();
   if (store.activeReviewId !== state.repoId) return;
   paintForgeWording(state);
   refreshMrSelect(state);
-  $('#review-subtitle').textContent = `${requestNumber(view.changes.forge, view.changes.mr.iid)}: ${view.changes.mr.title} — ${view.changes.files.length} file(s)`;
   $('#review-approve-mr').hidden = false;
   renderJob(state, view.job);
   if (view.job.comments.length === 0) $('#review-queue-wrap').hidden = true;
@@ -252,12 +260,12 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     state.job = null;
     state.edits.clear();
     state.showRejected = false;
+    renderTabs();
     // A tab switch landed while this was in flight — the state is updated but
     // the DOM belongs to another review now.
     if (store.activeReviewId !== state.repoId) return true;
     refreshSessionSelect(state);
     paintForgeWording(state);
-    $('#review-subtitle').textContent = `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
     $('#review-queue-wrap').hidden = true;
     $('#review-progress').hidden = true;
     $('#review-cancel-job').hidden = true;
@@ -914,7 +922,6 @@ export function openReviewTab(): void {
 
 /** Clear the review view's DOM for a fresh tab. */
 export function resetReviewDom(): void {
-  $('#review-subtitle').textContent = 'Review an open merge/pull request with AI.';
   $('#review-queue-wrap').hidden = true;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
@@ -929,9 +936,6 @@ export function paintReview(state: ReviewTabState): void {
   refreshSessionSelect(state);
   const changes = state.changes;
   paintForgeWording(state);
-  $('#review-subtitle').textContent = changes
-    ? `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`
-    : 'Review an open merge/pull request with AI.';
   $('#review-approve-mr').hidden = changes === null;
   $('#review-queue-wrap').hidden = true;
   $('#review-progress').hidden = true;
@@ -977,8 +981,6 @@ export function updateReviewVisibility(): void {
   $('#graph-wrap').hidden = shown;
   $('#detail-resizer').hidden = shown;
   $('#detail-pane').hidden = shown;
-  const bound = store.activeReviewId !== null ? store.tabs.find((t) => t.id === store.activeReviewId) : undefined;
-  $('#review-repo').textContent = bound ? ` · ${bound.name}` : '';
 }
 
 export function initReview(): void {
@@ -1063,6 +1065,7 @@ export function initReview(): void {
         $('#review-cancel-job').hidden = true;
         $<HTMLButtonElement>('#review-show-log').disabled = true;
         $('#review-status').textContent = 'Saved review deleted.';
+        renderTabs();
         void loadReviewSessions(state);
       })
       .catch((err) => {

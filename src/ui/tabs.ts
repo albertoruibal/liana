@@ -4,7 +4,7 @@ import { api } from './api-client';
 import { $svg } from './dom';
 import { applyTransform, renderAll, renderGraphHeader } from './graph-view';
 import { updateSyncButtons } from './remotes';
-import { closeReviewTab, paintReview, persistReviewTabs, updateReviewVisibility } from './review-view';
+import { closeReviewTab, paintReview, persistReviewTabs, reviewTabSubtitle, updateReviewVisibility } from './review-view';
 import { closeTerminal, activateTerminal, persistTerminalTabs, dismissTerminalView } from './terminal-view';
 import { closeStatusHistory, renderStatusBar } from './status-bar';
 import { RepoTab, activeTab, saveActive, store } from './store';
@@ -113,13 +113,13 @@ export function renderTabs(): void {
       const review = document.createElement('button');
       review.type = 'button';
       review.className = `repo-tab repo-tab-review${tab.id === store.activeReviewId ? ' is-active' : ''}`;
-      review.title = `Code review — ${tab.name}`;
+      review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(store.reviewTabs.get(tab.id))}`;
       review.dataset.review = tab.id;
       review.innerHTML =
         `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
       const name = document.createElement('span');
       name.className = 'repo-tab-name';
-      name.textContent = `Code review · ${tab.name}`;
+      name.textContent = 'Code review';
       review.appendChild(name);
       const close = document.createElement('span');
       close.className = 'repo-tab-close';
@@ -141,13 +141,13 @@ export function renderTabs(): void {
       const pill = document.createElement('button');
       pill.type = 'button';
       pill.className = `repo-tab repo-tab-terminal${term.path === store.activeTerminalPath ? ' is-active' : ''}`;
-      pill.title = `Terminal — ${term.path}`;
+      pill.title = `Terminal · ${term.name}\nA shell in the selected worktree.`;
       pill.dataset.terminal = term.path;
       pill.innerHTML =
         `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 6.2 6.6 8l-2.2 1.8M8.2 10.4h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
       const name = document.createElement('span');
       name.className = 'repo-tab-name';
-      name.textContent = `Terminal · ${term.name}`;
+      name.textContent = 'Terminal';
       pill.appendChild(name);
       const close = document.createElement('span');
       close.className = 'repo-tab-close';
