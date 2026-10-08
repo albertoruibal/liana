@@ -5,7 +5,7 @@ import { copyToClipboard } from './clipboard';
 import { loadCode } from './code-loader';
 import { esc, gutter } from './format';
 import { renderCached } from './graph-view';
-import { ReviewTabState, activeTab, store } from './store';
+import { ReviewTabState, activeReviewState, activeTab, isReviewShown, store } from './store';
 import { activateReviewTab, renderTabs } from './tabs';
 import { toast } from './toast';
 import { $ } from './dom';
@@ -17,14 +17,12 @@ import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
 import { closeSearch } from './search';
 import { closeStatusHistory, statusHistory } from './status-bar';
-import { dismissTerminalView, updateTerminalVisibility } from './terminal-view';
+import { applyPanel } from './terminal-view';
 
 /** The review tab currently shown, if any. */
 export function activeReview(): ReviewTabState | null {
-  return store.activeReviewId !== null ? store.reviewTabs.get(store.activeReviewId) ?? null : null;
+  return activeReviewState();
 }
-
-export const reviewView = $('#review-view');
 
 export const REVIEW_TABS_KEY = 'liana-review-tabs';
 
@@ -52,7 +50,7 @@ export function reviewTabSubtitle(state: ReviewTabState | undefined): string {
 
 /** Update the review toolbar wording (merge request vs pull request) for a tab. */
 export function paintForgeWording(state: ReviewTabState): void {
-  if (store.activeReviewId !== state.repoId) return;
+  if (!isReviewShown(state)) return;
   const { short, long } = forgeLabels(state.changes?.forge);
   $('#review-mr-label').textContent = long.charAt(0).toUpperCase() + long.slice(1);
   $('#review-approve-mr').textContent = `Approve ${short}`;
@@ -93,12 +91,12 @@ export function confirmApprove(state: ReviewTabState): Promise<boolean> {
   });
 }
 
-/** Remember the open review store.tabs (by path) and which one was visible. */
+/** Remember the open review tabs (by path) and which one was visible. */
 export function persistReviewTabs(): void {
   try {
-    const paths = store.tabs.filter((t) => store.reviewTabs.has(t.id)).map((t) => t.path);
+    const paths = store.tabs.filter((t) => t.review).map((t) => t.path);
     localStorage.setItem(REVIEW_TABS_KEY, JSON.stringify(paths));
-    const active = store.activeReviewId !== null ? store.reviewTabs.get(store.activeReviewId) : undefined;
+    const active = activeReview();
     if (active) localStorage.setItem(REVIEW_ACTIVE_KEY, active.repoPath);
     else localStorage.removeItem(REVIEW_ACTIVE_KEY);
   } catch {
@@ -117,8 +115,9 @@ export function readSavedReviewPaths(): string[] {
 
 /** Best-effort flush of comment edits for every review tab when the page goes away. */
 export function flushReviewEdits(): void {
-  for (const state of store.reviewTabs.values()) {
-    if (!state.job) continue;
+  for (const tab of store.tabs) {
+    const state = tab.review;
+    if (!state?.job) continue;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-liana-repo': state.repoId,
@@ -155,7 +154,7 @@ export async function loadReviewSessions(state: ReviewTabState): Promise<void> {
   try {
     const { sessions } = await reviewApi<{ sessions: ReviewSession[] }>(state, '/review/sessions');
     state.sessions = sessions;
-    if (store.activeReviewId === state.repoId) refreshSessionSelect(state);
+    if (isReviewShown(state)) refreshSessionSelect(state);
   } catch {
     // A failed listing leaves the previous picker contents in place.
   }
@@ -165,7 +164,7 @@ export async function loadReviewSessions(state: ReviewTabState): Promise<void> {
 export async function restoreSession(state: ReviewTabState, sessionId: string): Promise<void> {
   if (!sessionId) return;
   const status = $('#review-status');
-  if (store.activeReviewId === state.repoId) status.textContent = 'Restoring review…';
+  if (isReviewShown(state)) status.textContent = 'Restoring review…';
   window.clearTimeout(state.poll);
   try {
     const view = await reviewApi<ReviewSessionView>(state, '/review/session', { sessionId });
@@ -173,9 +172,9 @@ export async function restoreSession(state: ReviewTabState, sessionId: string): 
     if (view.job.state === 'running') {
       state.poll = window.setTimeout(() => void pollJob(state), 600);
     }
-    if (store.activeReviewId === state.repoId) refreshSessionSelect(state);
+    if (isReviewShown(state)) refreshSessionSelect(state);
   } catch (err) {
-    if (store.activeReviewId === state.repoId) status.textContent = String(err);
+    if (isReviewShown(state)) status.textContent = String(err);
   }
 }
 
@@ -192,7 +191,7 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
     state.edits.set(c.id, { body: c.body, status: c.status });
   }
   renderTabs();
-  if (store.activeReviewId !== state.repoId) return;
+  if (!isReviewShown(state)) return;
   paintForgeWording(state);
   refreshMrSelect(state);
   $('#review-approve-mr').hidden = false;
@@ -229,15 +228,15 @@ export function refreshMrSelect(state: ReviewTabState): void {
 export async function loadMergeRequests(state: ReviewTabState): Promise<void> {
   const status = $('#review-status');
   // Never clobber a restored session's status (e.g. "paused") with MR-list noise.
-  if (store.activeReviewId === state.repoId && !state.job) status.textContent = 'Loading requests…';
+  if (isReviewShown(state) && !state.job) status.textContent = 'Loading requests…';
   try {
     const { mrs } = await reviewApi<{ mrs: ReviewRequest[] }>(state, '/forge/mrs');
     state.mrs = mrs;
-    if (store.activeReviewId !== state.repoId) return;
+    if (!isReviewShown(state)) return;
     refreshMrSelect(state);
     if (!state.job) status.textContent = mrs.length === 0 ? 'No open requests.' : '';
   } catch (err) {
-    if (store.activeReviewId !== state.repoId) return;
+    if (!isReviewShown(state)) return;
     if (!state.job) status.textContent = String(err);
   }
 }
@@ -263,7 +262,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     renderTabs();
     // A tab switch landed while this was in flight — the state is updated but
     // the DOM belongs to another review now.
-    if (store.activeReviewId !== state.repoId) return true;
+    if (!isReviewShown(state)) return true;
     refreshSessionSelect(state);
     paintForgeWording(state);
     $('#review-queue-wrap').hidden = true;
@@ -722,7 +721,7 @@ export function renderCommentQueue(state: ReviewTabState): void {
   const list = $('#review-comment-list');
   reconcileCommentList(state, list, visible);
   // Upgrade the excerpt placeholders to inline Monaco diffs (no-op if unavailable).
-  if (store.activeReviewId === state.repoId) void mountExcerptEditors(state, list);
+  if (isReviewShown(state)) void mountExcerptEditors(state, list);
 }
 
 /** Record a comment's local status/body so a poll re-render preserves it. */
@@ -740,13 +739,13 @@ export async function approveComment(state: ReviewTabState, id: string): Promise
   if (!c || c.status === 'posted' || state.sending.has(id)) return;
   state.sending.add(id);
   setCommentStatus(state, c, 'approved');
-  if (store.activeReviewId === state.repoId) renderCommentQueue(state);
+  if (isReviewShown(state)) renderCommentQueue(state);
   void persistSessionEdits(state);
   try {
     await sendComment(state, id);
   } finally {
     state.sending.delete(id);
-    if (store.activeReviewId === state.repoId) renderCommentQueue(state);
+    if (isReviewShown(state)) renderCommentQueue(state);
   }
 }
 
@@ -755,7 +754,7 @@ export function rejectComment(state: ReviewTabState, id: string): void {
   const c = state.job?.comments.find((x) => x.id === id);
   if (!c) return;
   setCommentStatus(state, c, 'rejected');
-  if (store.activeReviewId === state.repoId) renderCommentQueue(state);
+  if (isReviewShown(state)) renderCommentQueue(state);
   void persistSessionEdits(state);
 }
 
@@ -767,7 +766,7 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
   const c = job.comments.find((x) => x.id === id);
   if (!c) return;
   const status = $('#review-status');
-  const shown = store.activeReviewId === state.repoId;
+  const shown = isReviewShown(state);
   if (shown) status.textContent = 'Posting comment…';
   try {
     const { results } = await reviewApi<{
@@ -790,7 +789,7 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
       const edit = state.edits.get(c.id);
       if (edit) edit.status = c.status;
     }
-    if (store.activeReviewId === state.repoId) {
+    if (isReviewShown(state)) {
       renderCommentQueue(state);
       status.textContent =
         c.status === 'posted' ? 'Comment posted.' : `Post failed: ${c.error ?? 'unknown error'}`;
@@ -832,14 +831,14 @@ export async function pollJob(state: ReviewTabState): Promise<void> {
   try {
     const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/status', { jobId: state.job.id });
     state.job = job;
-    if (store.activeReviewId === state.repoId) renderJob(state, job);
+    if (isReviewShown(state)) renderJob(state, job);
     if (job.state === 'running') {
       state.poll = window.setTimeout(() => void pollJob(state), 800);
     } else {
       void loadReviewSessions(state);
     }
   } catch (err) {
-    if (store.activeReviewId === state.repoId) $('#review-status').textContent = String(err);
+    if (isReviewShown(state)) $('#review-status').textContent = String(err);
   }
 }
 
@@ -889,7 +888,7 @@ export function openReviewTab(): void {
     return;
   }
   // Re-opening for a repo that already has a review tab focuses it, keeping state.
-  if (store.reviewTabs.has(store.activeId)) {
+  if (activeTab()?.review) {
     activateReviewTab(store.activeId);
     return;
   }
@@ -909,12 +908,12 @@ export function openReviewTab(): void {
     showRejected: false,
     sending: new Set(),
   };
-  store.reviewTabs.set(store.activeId, state);
-  store.activeReviewId = store.activeId;
+  tab.review = state;
+  store.activePanel = { kind: 'review', repoId: store.activeId };
   resetReviewDom();
   refreshSessionSelect(state);
   persistReviewTabs();
-  updateReviewVisibility();
+  applyPanel();
   renderTabs();
   void loadMergeRequests(state);
   void loadReviewSessions(state);
@@ -949,38 +948,22 @@ export function paintReview(state: ReviewTabState): void {
 
 /** Close a repository's review tab and, if it was visible, fall back to the graph. */
 export function closeReviewTab(repoId: string): void {
-  const state = store.reviewTabs.get(repoId);
-  if (!state) return;
+  const tab = store.tabs.find((t) => t.id === repoId);
+  const state = tab?.review;
+  if (!tab || !state) return;
   window.clearTimeout(state.poll);
   window.clearTimeout(state.saveTimer);
   // Only the visible tab owns mounted excerpt editors; drop them on close.
-  if (store.activeReviewId === repoId) disposeExcerptEditors();
-  store.reviewTabs.delete(repoId);
-  if (store.activeReviewId === repoId) {
-    store.activeReviewId = null;
-    updateReviewVisibility();
+  const wasShown = isReviewShown(state);
+  if (wasShown) disposeExcerptEditors();
+  tab.review = null;
+  if (wasShown) {
+    store.activePanel = { kind: 'graph' };
+    applyPanel();
     renderCached();
   }
   renderTabs();
   persistReviewTabs();
-}
-
-/** Toggle the columns and the review view to match `store.activeReviewId`. */
-export function updateReviewVisibility(): void {
-  const shown = store.activeReviewId !== null;
-  reviewView.hidden = !shown;
-  // The terminal is a competing main view; showing review dismisses it.
-  if (shown && store.activeTerminalPath !== null) {
-    dismissTerminalView();
-  }
-  // When the review is hidden, the terminal (or the graph) owns the columns.
-  if (!shown && store.activeTerminalPath !== null) {
-    updateTerminalVisibility();
-    return;
-  }
-  $('#graph-wrap').hidden = shown;
-  $('#detail-resizer').hidden = shown;
-  $('#detail-pane').hidden = shown;
 }
 
 export function initReview(): void {

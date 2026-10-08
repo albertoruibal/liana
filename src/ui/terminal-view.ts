@@ -3,7 +3,7 @@
 // keeps the xterm/PTY lifecycle in ./terminal.
 
 import { renderCached } from './graph-view';
-import { store } from './store';
+import { store, terminalForPath } from './store';
 import { toast } from './toast';
 import { $ } from './dom';
 import {
@@ -25,10 +25,11 @@ interface SavedTerminal {
 
 /** Show the terminal view for `path` and make sure its shell is running. */
 async function showTerminal(path: string): Promise<void> {
-  store.activeTerminalPath = path;
+  const term = terminalForPath(path);
+  if (!term) return;
+  store.activePanel = { kind: 'terminal', repoId: term.repoId, path };
   // A terminal and the code-review view are mutually exclusive main views.
-  store.activeReviewId = null;
-  updateTerminalVisibility();
+  applyPanel();
   await ensureTerminalSession(path);
   focusTerminal(path);
   persistTerminalTabs();
@@ -51,54 +52,53 @@ export async function openTerminalTab(path: string): Promise<void> {
 
 /** Focus a terminal that is already open, preserving its session. */
 export async function activateTerminal(path: string): Promise<void> {
-  if (!store.terminals.has(path)) return;
+  if (!terminalForPath(path)) return;
   await showTerminal(path);
 }
 
 /** Close a terminal: dispose its session and fall back to the graph if visible. */
 export function closeTerminal(path: string): void {
+  const term = terminalForPath(path);
+  if (!term) return;
   disposeTerminal(path);
-  store.terminals.delete(path);
-  if (store.activeTerminalPath === path) {
-    store.activeTerminalPath = null;
-    updateTerminalVisibility();
+  const owner = store.tabs.find((t) => t.id === term.repoId);
+  owner?.terminals.delete(path);
+  const panel = store.activePanel;
+  if (panel.kind === 'terminal' && panel.path === path) {
+    store.activePanel = { kind: 'graph' };
+    applyPanel();
     renderCached();
   }
   persistTerminalTabs();
 }
 
-/** Keep `#terminal-view` and the graph columns in step with the active terminal. */
-export function updateTerminalVisibility(): void {
-  const path = store.activeTerminalPath;
-  const shown = path !== null && store.terminals.has(path);
-  $('#terminal-view').hidden = !shown;
-  if (shown && path) {
-    // Never show the terminal and the review view at once.
-    $('#review-view').hidden = true;
-  }
-  $('#graph-wrap').hidden = shown;
-  $('#detail-resizer').hidden = shown;
-  $('#detail-pane').hidden = shown;
-}
-
 /**
- * Dismiss the visible terminal (its shell keeps running) and bring the graph
- * columns back. Used when another view takes over.
+ * Apply `store.activePanel` across the mutually exclusive main views: the graph
+ * columns, the code-review view, and the terminal view. The single discriminant
+ * is the source of truth, so one call repaints all three.
  */
-export function dismissTerminalView(): void {
-  store.activeTerminalPath = null;
-  updateTerminalVisibility();
+export function applyPanel(): void {
+  const panel = store.activePanel;
+  const reviewOn = panel.kind === 'review';
+  const termOn = panel.kind === 'terminal' && !!terminalForPath(panel.path);
+  const graphOn = !reviewOn && !termOn;
+  $('#review-view').hidden = !reviewOn;
+  $('#terminal-view').hidden = !termOn;
+  $('#graph-wrap').hidden = !graphOn;
+  $('#detail-resizer').hidden = !graphOn;
+  $('#detail-pane').hidden = !graphOn;
 }
 
 export function persistTerminalTabs(): void {
   try {
-    const saved: SavedTerminal[] = [...store.terminals.values()].map((s) => ({
-      path: s.path,
-      repoPath: s.repoPath,
-    }));
+    const saved: SavedTerminal[] = [];
+    for (const tab of store.tabs) {
+      for (const s of tab.terminals.values()) saved.push({ path: s.path, repoPath: s.repoPath });
+    }
     localStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify(saved));
-    if (store.activeTerminalPath) {
-      localStorage.setItem(TERMINAL_ACTIVE_KEY, store.activeTerminalPath);
+    const panel = store.activePanel;
+    if (panel.kind === 'terminal') {
+      localStorage.setItem(TERMINAL_ACTIVE_KEY, panel.path);
     } else {
       localStorage.removeItem(TERMINAL_ACTIVE_KEY);
     }
@@ -148,7 +148,8 @@ export function restoreTerminals(): void {
 /** Refocus the visible terminal when the window regains focus. */
 export function initTerminal(): void {
   window.addEventListener('focus', () => {
-    if (store.activeTerminalPath) focusTerminal(store.activeTerminalPath);
+    const panel = store.activePanel;
+    if (panel.kind === 'terminal') focusTerminal(panel.path);
   });
   // A reload/navigation tears down the renderer; reap its PTYs so dev reloads
   // don't leak shells (the sessions are keyed by content and recreated on load).

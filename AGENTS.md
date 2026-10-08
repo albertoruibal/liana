@@ -105,17 +105,20 @@ in the packaged app.
   uses `AbortController` timeouts, and surfaces upstream error bodies unchanged. Secrets live in the 0600 config file or
   env vars and are never returned to the renderer.
 - The review UI is a **main view** (`#review-view`), not a dialog, shown in place of the graph/detail columns and
-  surfaced as a `#repo-tabs` pill. Each open repository can have **its own review tab**: `reviewTabs: Map<repoId,
-  ReviewTabState>` holds the per-repo MR/job/session/edit state, and `activeReviewId` marks which one is visible (`null`
-  = graph view). Opening Code review on a repo that already has a tab focuses it (state preserved); switching to another
-  repo tab hides the review while its background polling continues (DOM writes are guarded by `activeReviewId ===
-  state.repoId`). The tab strip renders each review tab right after its repo tab. All review/forge calls go through
-  `reviewApi(state, …)`, scoped to `state.repoId` rather than the active tab, so background status polling survives a
-  tab switch. The Saved-review picker defaults to none; choosing a session calls `restoreSession`, which applies both
-  its MR (`state.mrIid`, pinned as a "(not open)" option when the request is no longer open) and its job, so a paused
-  session shows the resume state. Open review tabs and the active one are persisted in `localStorage`
-  (`liana-review-tabs` / `liana-review-active`, migrating the old `liana-review-repo`) so they reopen after a reload.
-  Sessions are already keyed by absolute repo path server-side, so no backend change is needed for this.
+  surfaced as a `#repo-tabs` pill. Panels are **owned by their repository tab**: `RepoTab.review` holds the repo's
+  MR/job/session/edit state (`null` when closed) and `RepoTab.terminals` its worktree shells. A single discriminant,
+  `store.activePanel` (`{kind:'graph'|'review'|'terminal', …}`), replaces the former `activeReviewId`/`activeTerminalPath`
+  pair and marks which panel the columns show, so the graph, a review, and a terminal are mutually exclusive by
+  construction; `applyPanel()` repaints all three. Opening Code review on a repo that already has a tab focuses it
+  (state preserved); switching to another repo tab hides the panel while its background polling continues (DOM writes
+  are guarded by `isReviewShown(state)`). The tab strip renders each review tab right after its repo tab. All
+  review/forge calls go through `reviewApi(state, …)`, scoped to `state.repoId` rather than the active tab, so background
+  status polling survives a tab switch. The Saved-review picker defaults to none; choosing a session calls
+  `restoreSession`, which applies both its MR (`state.mrIid`, pinned as a "(not open)" option when the request is no
+  longer open) and its job, so a paused session shows the resume state. Open review tabs and the active panel are
+  persisted in `localStorage` (`liana-review-tabs` / `liana-review-active`, migrating the old `liana-review-repo`) so
+  they reopen after a reload. Sessions are already keyed by absolute repo path server-side, so no backend change is
+  needed for this.
 
 ## Conflict resolution & submodules
 

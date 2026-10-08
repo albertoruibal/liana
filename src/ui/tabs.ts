@@ -4,8 +4,8 @@ import { api } from './api-client';
 import { $svg } from './dom';
 import { applyTransform, renderAll, renderGraphHeader } from './graph-view';
 import { updateSyncButtons } from './remotes';
-import { closeReviewTab, paintReview, persistReviewTabs, reviewTabSubtitle, updateReviewVisibility } from './review-view';
-import { closeTerminal, activateTerminal, persistTerminalTabs, dismissTerminalView } from './terminal-view';
+import { closeReviewTab, paintReview, persistReviewTabs, reviewTabSubtitle } from './review-view';
+import { applyPanel, closeTerminal, activateTerminal, persistTerminalTabs } from './terminal-view';
 import { closeStatusHistory, renderStatusBar } from './status-bar';
 import { RepoTab, activeTab, saveActive, store } from './store';
 import { promptText } from './prompt';
@@ -109,11 +109,12 @@ export function renderTabs(): void {
     strip.appendChild(btn);
 
     // A review tab, once opened for this repository, sits right after its repo tab.
-    if (store.reviewTabs.has(tab.id)) {
+    if (tab.review) {
+      const panel = store.activePanel;
       const review = document.createElement('button');
       review.type = 'button';
-      review.className = `repo-tab repo-tab-review${tab.id === store.activeReviewId ? ' is-active' : ''}`;
-      review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(store.reviewTabs.get(tab.id))}`;
+      review.className = `repo-tab repo-tab-review${panel.kind === 'review' && panel.repoId === tab.id ? ' is-active' : ''}`;
+      review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(tab.review)}`;
       review.dataset.review = tab.id;
       review.innerHTML =
         `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
@@ -136,11 +137,11 @@ export function renderTabs(): void {
     }
 
     // One terminal pill per open worktree shell bound to this repository.
-    for (const term of store.terminals.values()) {
-      if (term.repoId !== tab.id) continue;
+    for (const term of tab.terminals.values()) {
+      const panel = store.activePanel;
       const pill = document.createElement('button');
       pill.type = 'button';
-      pill.className = `repo-tab repo-tab-terminal${term.path === store.activeTerminalPath ? ' is-active' : ''}`;
+      pill.className = `repo-tab repo-tab-terminal${panel.kind === 'terminal' && panel.path === term.path ? ' is-active' : ''}`;
       pill.title = `Terminal · ${term.name}\nA shell in the selected worktree.`;
       pill.dataset.terminal = term.path;
       pill.innerHTML =
@@ -246,6 +247,8 @@ export async function addRepo(path: string, activate: boolean): Promise<void> {
     panX: 0,
     panY: 0,
     zoom: 1,
+    review: null,
+    terminals: new Map(),
   };
   store.tabs.push(tab);
   if (activate) await activateRepo(tab.id);
@@ -257,17 +260,13 @@ export async function addRepo(path: string, activate: boolean): Promise<void> {
 
 /** Switch the active tab: paint the cached view, then refresh so its dirty dot stays accurate. */
 export async function activateRepo(id: string): Promise<void> {
-  // Selecting a repository always returns to the graph view. Any open review
-  // store.tabs keep their state; the one bound to this repo is just hidden.
-  if (store.activeReviewId !== null) {
-    store.activeReviewId = null;
-    updateReviewVisibility();
+  // Selecting a repository always returns to the graph view. Any open review or
+  // terminal panels keep their state (and keep running); they are just hidden.
+  if (store.activePanel.kind !== 'graph') {
+    store.activePanel = { kind: 'graph' };
+    applyPanel();
     renderTabs();
     persistReviewTabs();
-  }
-  // Terminals keep running in the background; only the view is dismissed.
-  if (store.activeTerminalPath !== null) {
-    dismissTerminalView();
     persistTerminalTabs();
   }
   if (id === store.activeId) {
@@ -284,27 +283,19 @@ export async function activateRepo(id: string): Promise<void> {
 
 /** Show the review tab for `repoId`, preserving its loaded MR/job state. */
 export function activateReviewTab(repoId: string): void {
-  const state = store.reviewTabs.get(repoId);
-  if (!state) return;
-  // The terminal is a competing main view; hide it before showing review.
-  if (store.activeTerminalPath !== null) {
-    dismissTerminalView();
-  }
+  const bound = store.tabs.find((t) => t.id === repoId);
+  const state = bound?.review;
+  if (!bound || !state) return;
   // The review is bound to one repository; rebind it as active so subsequent
   // review/GitLab API calls target the same repo the MR belongs to.
-  const bound = store.tabs.find((t) => t.id === repoId);
-  if (!bound) {
-    closeReviewTab(repoId);
-    return;
-  }
   if (store.activeId !== repoId) {
     saveActive();
     loadTab(bound);
     if (bound.lastResponse) renderAll(bound.lastResponse);
     void refresh();
   }
-  store.activeReviewId = repoId;
-  updateReviewVisibility();
+  store.activePanel = { kind: 'review', repoId };
+  applyPanel();
   paintReview(state);
   renderTabs();
   persistReviewTabs();
@@ -316,14 +307,13 @@ export function closeTab(id: string): void {
   const idx = store.tabs.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const wasActive = id === store.activeId;
-  store.tabs.splice(idx, 1);
+  const closing = store.tabs[idx]!;
   // Closing a repository closes its review tab and any worktree terminals too.
-  if (store.reviewTabs.has(id)) {
-    closeReviewTab(id);
-  }
-  for (const term of [...store.terminals.values()]) {
-    if (term.repoId === id) closeTerminal(term.path);
-  }
+  // The panels belong to the tab, so clean them up while the tab is still
+  // registered (the close helpers resolve it by id), then drop the tab.
+  if (closing.review) closeReviewTab(id);
+  for (const term of [...closing.terminals.values()]) closeTerminal(term.path);
+  store.tabs.splice(idx, 1);
   if (wasActive) {
     const next = store.tabs[idx] ?? store.tabs[idx - 1] ?? store.tabs[store.tabs.length - 1];
     if (next) {
@@ -338,7 +328,11 @@ export function closeTab(id: string): void {
       renderNoRepo();
     }
   }
-  updateReviewVisibility();
+  // The close helpers above already fell back to the graph if the closing tab
+  // owned the visible panel; only clear it if no tab is left. Otherwise a review
+  // or terminal owned by another repo keeps showing.
+  if (store.tabs.length === 0) store.activePanel = { kind: 'graph' };
+  applyPanel();
   renderTabs();
   persistTabs();
   persistReviewTabs();

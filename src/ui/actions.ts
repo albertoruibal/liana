@@ -4,10 +4,9 @@ import { api } from './api-client';
 import { copyToClipboard } from './clipboard';
 import { esc } from './format';
 import { renderAll } from './graph-view';
-import { updateReviewVisibility } from './review-view';
 import { StateResponse, activeTab } from './store';
 import { addRepo, persistTabs, renderNoRepo, renderTabs } from './tabs';
-import { openTerminalTab } from './terminal-view';
+import { applyPanel, openTerminalTab } from './terminal-view';
 import { toast } from './toast';
 import { $ } from './dom';
 import { store } from './store';
@@ -33,14 +32,14 @@ export async function refresh(): Promise<void> {
     if (store.activeId !== reqId) return;
     store.repoName = resp.state?.name ?? tab.name;
     tab.name = store.repoName;
-    if (store.activeReviewId === tab.id) updateReviewVisibility();
+    if (store.activePanel.kind === 'review' && store.activePanel.repoId === tab.id) applyPanel();
     tab.lastResponse = resp;
     tab.remoteStatus = remote;
     store.lastResponse = resp;
     store.remoteStatus = remote;
-    // While a review tab is shown the graph columns are hidden, so skip
-    // drawing; closing the review tab re-renders from the cached response.
-    if (store.activeReviewId === null) renderAll(resp);
+    // While a review or terminal panel is shown the graph columns are hidden, so
+    // skip drawing; closing the panel re-renders from the cached response.
+    if (store.activePanel.kind === 'graph') renderAll(resp);
     renderTabs();
     persistTabs();
     void refreshActivity();

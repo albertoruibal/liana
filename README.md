@@ -273,9 +273,9 @@ falling back to fetching the head SHA — so the read-only tools can read it; th
 the job and shows a live agent trace, the streamed model output, and a live list of the issues found: comments are
 scanned from the model's output as it streams (marked *scanning…*) and validated into the final list when the batch
 completes. The **Model log** dialog also exposes the exact prompt sent to the model at each step (the full wire
-request, capped per entry) alongside the trace and raw output. It is bound to the repository it was opened on and
-shows that repository's name in its tab and heading: switching to another repository hides it (state preserved), and
-it can be closed with its tab's ×.
+request, capped per entry) alongside the trace and raw output. It is bound to the repository it was opened on (the repo
+tab owns the review panel): switching to another repository hides it (state preserved), and it can be closed with its
+tab's ×.
 
 **Pause & resume.** A running review can be paused and continued later: **Pause** aborts the current model call at the
 nearest checkpoint, **Resume** re-issues the interrupted step and carries on. Because the checkpoint (the agent

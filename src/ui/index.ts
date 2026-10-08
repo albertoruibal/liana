@@ -23,13 +23,13 @@ import { initSettings } from './settings';
 import { initSearch } from './search';
 import { initStatusBar } from './status-bar';
 import { initWorktree } from './worktree';
-import { initTerminal, restoreTerminals, savedActiveTerminalPath, activateTerminal } from './terminal-view';
+import { initTerminal, restoreTerminals, savedActiveTerminalPath, activateTerminal, applyPanel } from './terminal-view';
 import { initPrompt } from './prompt';
 import { initCherryPick } from './cherry-pick';
 import { refresh } from './actions';
 import { api } from './api-client';
-import { REVIEW_ACTIVE_KEY, loadMergeRequests, loadReviewSessions, paintReview, persistReviewTabs, readSavedReviewPaths, updateReviewVisibility } from './review-view';
-import { ReviewTabState, saveActive } from './store';
+import { REVIEW_ACTIVE_KEY, loadMergeRequests, loadReviewSessions, paintReview, persistReviewTabs, readSavedReviewPaths } from './review-view';
+import { ReviewTabState, saveActive, terminalForPath } from './store';
 import { ACTIVE_KEY, REPOS_KEY, RepoEntry, activateRepo, addRepo, loadTab, readSavedRepos, renderNoRepo, renderTabs } from './tabs';
 
 // UI entry: starts the app. Every feature owns an `initX()` that binds its own
@@ -153,22 +153,22 @@ async function bootstrap(): Promise<void> {
       showRejected: false,
       sending: new Set(),
     };
-    store.reviewTabs.set(bound.id, state);
+    bound.review = state;
     void loadMergeRequests(state);
     void loadReviewSessions(state);
   }
   if (savedReviewActive) {
     const bound = store.tabs.find((t) => t.path === savedReviewActive);
-    const state = bound ? store.reviewTabs.get(bound.id) : undefined;
+    const state = bound?.review;
     if (bound && state) {
-      store.activeReviewId = bound.id;
+      store.activePanel = { kind: 'review', repoId: bound.id };
       // Review is a per-repo view; make its repository active so it stays bound.
       if (store.activeId !== bound.id) {
         saveActive();
         loadTab(bound);
         void refresh();
       }
-      updateReviewVisibility();
+      applyPanel();
       paintReview(state);
     }
   }
@@ -178,7 +178,7 @@ async function bootstrap(): Promise<void> {
   // takes precedence over the review view restored above.
   restoreTerminals();
   const savedTerminalActive = savedActiveTerminalPath();
-  const terminalState = savedTerminalActive ? store.terminals.get(savedTerminalActive) : undefined;
+  const terminalState = savedTerminalActive ? terminalForPath(savedTerminalActive) : undefined;
   if (savedTerminalActive && terminalState) {
     // A terminal is bound to a repository; make that repo active before showing it.
     if (store.activeId !== terminalState.repoId) {

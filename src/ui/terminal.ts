@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { $ } from './dom';
-import { store, TerminalState } from './store';
+import { store, terminalForPath, TerminalState } from './store';
 
 interface TerminalInstance {
   term: Terminal;
@@ -15,7 +15,7 @@ interface TerminalInstance {
   observer: ResizeObserver;
 }
 
-/** Live xterm instances, keyed like `store.terminals`. */
+/** Live xterm instances, keyed by the worktree path (as are the TerminalStates). */
 const instances = new Map<string, TerminalInstance>();
 
 /** Basename of a POSIX/Windows path, for the tab label. */
@@ -70,7 +70,7 @@ function wireBridge(): void {
   bridge.onData((key, _id, data) => findByKey(key)?.term.write(data));
   bridge.onExit((key, id, exitCode) => {
     const inst = findByKey(key);
-    const state = store.terminals.get(key);
+    const state = terminalForPath(key);
     if (state && state.id === id) state.id = null;
     if (inst) inst.term.write(`\r\n[process exited with code ${exitCode}]\r\n`);
   });
@@ -164,23 +164,24 @@ export function terminalAvailable(): boolean {
 
 /** Register a terminal for a worktree path (without starting its shell yet). */
 export function createTerminalState(path: string, repoId: string, repoPath: string): TerminalState {
-  const existing = store.terminals.get(path);
+  const existing = terminalForPath(path);
   if (existing) return existing;
+  const owner = store.tabs.find((t) => t.id === repoId);
   const state: TerminalState = { path, name: baseName(path), repoId, repoPath, id: null };
-  store.terminals.set(path, state);
+  owner?.terminals.set(path, state);
   return state;
 }
 
 /** Start the xterm/PTY for a terminal state if it is not already live. */
 export async function ensureTerminalSession(path: string): Promise<void> {
   wireBridge();
-  const state = store.terminals.get(path);
+  const state = terminalForPath(path);
   if (state && !instances.has(path)) await startSession(state);
 }
 
 /** Dispose a terminal's xterm instance and kill its PTY. */
 export function disposeTerminal(path: string): void {
-  const state = store.terminals.get(path);
+  const state = terminalForPath(path);
   if (state?.id) window.liana?.pty?.close(state.id);
   const inst = instances.get(path);
   if (inst) {

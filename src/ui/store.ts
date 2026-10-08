@@ -44,6 +44,12 @@ export interface RepoTab {
   panX: number;
   panY: number;
   zoom: number;
+
+  // Panels this repository owns. A review and any number of worktree terminals
+  // live with their repo, so closing/activating a repo manages them directly.
+  review: ReviewTabState | null;
+  /** Embedded terminals keyed by the worktree path the shell runs in. */
+  terminals: Map<string, TerminalState>;
 }
 
 /** One search hit: a commit plus human labels for what matched. */
@@ -82,9 +88,22 @@ export interface TerminalState {
   id: string | null;
 }
 
+/**
+ * Which panel occupies the main columns. A single discriminant replaces the
+ * former `activeReviewId`/`activeTerminalPath` pair, so the graph, a review, and
+ * a terminal are mutually exclusive by construction.
+ */
+export type ActivePanel =
+  | { kind: 'graph' }
+  | { kind: 'review'; repoId: string }
+  | { kind: 'terminal'; repoId: string; path: string };
+
 interface ViewStore {
   tabs: RepoTab[];
   activeId: string | null;
+
+  // Which panel the columns show. Panels are owned by their repository tab.
+  activePanel: ActivePanel;
 
   // Active-tab view state, mirrored into the tab record on switch.
   currentLayout: GraphLayout | null;
@@ -105,20 +124,12 @@ interface ViewStore {
 
   // Git command status bar snapshot for the active tab.
   activity: RepoActivity | null;
-
-  // Review tabs keyed by the repository id they are bound to.
-  reviewTabs: Map<string, ReviewTabState>;
-  activeReviewId: string | null;
-
-  // Embedded terminals keyed by the worktree path the shell runs in.
-  terminals: Map<string, TerminalState>;
-  /** Worktree path of the visible terminal, or null when none is shown. */
-  activeTerminalPath: string | null;
 }
 
 export const store: ViewStore = {
   tabs: [],
   activeId: null,
+  activePanel: { kind: 'graph' },
   currentLayout: null,
   selectedHash: null,
   repoName: '',
@@ -131,14 +142,32 @@ export const store: ViewStore = {
   panY: 0,
   zoom: 1,
   activity: null,
-  reviewTabs: new Map(),
-  activeReviewId: null,
-  terminals: new Map(),
-  activeTerminalPath: null,
 };
 
 export function activeTab(): RepoTab | undefined {
   return store.tabs.find((t) => t.id === store.activeId);
+}
+
+/** The terminal with this worktree path, wherever its owning repo tab is. */
+export function terminalForPath(path: string): TerminalState | undefined {
+  for (const tab of store.tabs) {
+    const term = tab.terminals.get(path);
+    if (term) return term;
+  }
+  return undefined;
+}
+
+/** True while `state`'s review is the visible panel. */
+export function isReviewShown(state: ReviewTabState): boolean {
+  const panel = store.activePanel;
+  return panel.kind === 'review' && panel.repoId === state.repoId;
+}
+
+/** The review state currently shown, if any. */
+export function activeReviewState(): ReviewTabState | null {
+  const panel = store.activePanel;
+  if (panel.kind !== 'review') return null;
+  return store.tabs.find((t) => t.id === panel.repoId)?.review ?? null;
 }
 
 /** Copy the live active-tab globals back into the tab record. */
