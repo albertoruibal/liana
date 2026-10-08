@@ -2,8 +2,10 @@
 // tab-strip pill. Mirrors review-view's shape (one terminal per worktree) but
 // keeps the xterm/PTY lifecycle in ./terminal.
 
-import { renderCached } from './graph-view';
-import { store, terminalForPath } from './store';
+import { renderAll, renderCached } from './graph-view';
+import { loadTab, renderTabs } from './tabs';
+import { refresh } from './actions';
+import { saveActive, store, terminalForPath } from './store';
 import { toast } from './toast';
 import { $ } from './dom';
 import {
@@ -27,9 +29,20 @@ interface SavedTerminal {
 async function showTerminal(path: string): Promise<void> {
   const term = terminalForPath(path);
   if (!term) return;
+  // A terminal is bound to its owning repository: rebind the active tab so the
+  // repo highlight, API scoping, and status bar all match the visible panel
+  // (mirrors activateReviewTab).
+  const owner = store.tabs.find((t) => t.id === term.repoId);
+  if (owner && store.activeId !== owner.id) {
+    saveActive();
+    loadTab(owner);
+    if (owner.lastResponse) renderAll(owner.lastResponse);
+    void refresh();
+  }
   store.activePanel = { kind: 'terminal', repoId: term.repoId, path };
   // A terminal and the code-review view are mutually exclusive main views.
   applyPanel();
+  renderTabs();
   await ensureTerminalSession(path);
   focusTerminal(path);
   persistTerminalTabs();
