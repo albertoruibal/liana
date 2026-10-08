@@ -8,8 +8,10 @@
 // the upstream error body unchanged. The token is never logged.
 
 import {
+  checkoutRequestBranch,
   fetchHeadIntoHiddenRef,
   gitRemoteOrigin,
+  hiddenHeadRef,
   projectFromRemote,
   type ReviewForge,
 } from './forge';
@@ -318,6 +320,8 @@ export const githubForge: ReviewForge = {
   listRequests: listPullRequests,
   getChanges: getPullRequestChanges,
   ensureRefs: ensurePullRequestRefs,
+  checkoutBranch: (repoPath, iid, branch) =>
+    checkoutRequestBranch(repoPath, branch, hiddenHeadRef('github', iid)),
   postComment: createReviewComment,
   approve: approvePullRequest,
   test: testGitHub,

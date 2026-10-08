@@ -6,8 +6,10 @@
 // body unchanged. The token is read from src/settings.ts and never logged.
 
 import {
+  checkoutRequestBranch,
   fetchHeadIntoHiddenRef,
   gitRemoteOrigin,
+  hiddenHeadRef,
   projectFromRemote,
   type ReviewForge,
 } from './forge';
@@ -215,6 +217,8 @@ export const gitlabForge: ReviewForge = {
   listRequests: listMergeRequests,
   getChanges: getMergeRequestChanges,
   ensureRefs: ensureMergeRequestRefs,
+  checkoutBranch: (repoPath, iid, branch) =>
+    checkoutRequestBranch(repoPath, branch, hiddenHeadRef('gitlab', iid)),
   postComment: createDiscussion,
   approve: approveMergeRequest,
   test: testGitLab,

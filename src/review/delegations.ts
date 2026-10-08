@@ -30,6 +30,16 @@ export async function ensureMergeRequestRefs(
   return forgeByKind(changes.forge).ensureRefs(repoPath, changes);
 }
 
+/** Check out the request's source branch and pull it. */
+export async function checkoutMergeRequestBranch(
+  repoPath: string,
+  forgeKind: ReviewChanges['forge'],
+  iid: number,
+  branch: string,
+): Promise<string> {
+  return forgeByKind(forgeKind).checkoutBranch(repoPath, iid, branch);
+}
+
 /** Post one approved comment on the repository's forge. */
 export async function createDiscussion(
   repoPath: string,

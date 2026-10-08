@@ -152,6 +152,7 @@ async function bootstrap(): Promise<void> {
       sessions: [],
       showRejected: false,
       sending: new Set(),
+      headWarning: null,
     };
     bound.review = state;
     void loadMergeRequests(state);

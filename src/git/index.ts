@@ -42,7 +42,7 @@ export { validRefName, remoteBranchLocalName, checkoutBranch, createBranch, dele
 export { currentBranch, loadRemotes, upstreamRef, loadRemoteStatus, pushBranch, pullBranch, testRemote } from './remotes';
 export { resetBranch } from './reset';
 export { resolveStash, createStash, applyStash, dropStash } from './stash';
-export { apiListRequests, apiGetRequestChanges, apiApproveRequest, apiTestForge } from './forge';
+export { apiListRequests, apiGetRequestChanges, apiApproveRequest, apiCheckoutRequestBranch, apiTestForge } from './forge';
 
 /**
  * Generate a commit message for the given working-tree paths (mirrors

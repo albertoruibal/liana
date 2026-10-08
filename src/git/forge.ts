@@ -1,10 +1,11 @@
-// Browser-side mirror of the /api/forge/* routes in src/api/index.ts.
+// Browser-side mirror of the /api/forge/* and /api/review/* routes in
+// src/api/index.ts.
 //
 // Node-side mirror of the forge routes: the same operations the backend exposes
 // over HTTP, callable directly. Types come from src/types.ts and are identical on
 // both sides. The browser UI still talks to /api (see src/ui/).
 
-import type { ReviewChanges, ReviewRequest } from '../types';
+import type { ForgeKind, ReviewChanges, ReviewRequest } from '../types';
 
 /** Open merge/pull requests for the repository's resolved forge. */
 export async function apiListRequests(repoPath: string): Promise<ReviewRequest[]> {
@@ -36,6 +37,17 @@ export async function apiGetRequestChanges(
 export async function apiApproveRequest(repoPath: string, iid: number): Promise<void> {
   const { resolveForge } = await import('../forges');
   await (await resolveForge(repoPath)).approve(repoPath, iid);
+}
+
+/** Check out a request's source branch and pull it. */
+export async function apiCheckoutRequestBranch(
+  repoPath: string,
+  forge: ForgeKind,
+  iid: number,
+  branch: string,
+): Promise<string> {
+  const { forgeByKind } = await import('../forges');
+  return forgeByKind(forge).checkoutBranch(repoPath, iid, branch);
 }
 
 /** Authenticated probe for the Settings "Test" button against an explicit forge. */

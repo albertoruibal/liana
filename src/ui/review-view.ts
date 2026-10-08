@@ -1,7 +1,9 @@
 // Code review main view: one tab per repository, MR/session state, jobs, and comments.
 
 import { reviewApi } from './api-client';
+import { refresh } from './actions';
 import { copyToClipboard } from './clipboard';
+import { confirmDialog } from './confirm';
 import { loadCode } from './code-loader';
 import { esc, gutter } from './format';
 import { renderCached } from './graph-view';
@@ -54,6 +56,22 @@ export function paintForgeWording(state: ReviewTabState): void {
   const { short, long } = forgeLabels(state.changes?.forge);
   $('#review-mr-label').textContent = long.charAt(0).toUpperCase() + long.slice(1);
   $('#review-approve-mr').textContent = `Approve ${short}`;
+  $<HTMLButtonElement>('#review-checkout-mr').disabled = state.changes === null;
+}
+
+/** The head-missing note the review loop records when it drops to diff-only. */
+function jobHeadWarning(job: ReviewJob | null): string | null {
+  const note = job?.trace.find((t) => t.tool === 'repo_tools');
+  return note ? note.resultSummary : null;
+}
+
+/** Show or hide the head-fetch warning banner for a review tab. */
+export function paintHeadWarning(state: ReviewTabState): void {
+  if (!isReviewShown(state)) return;
+  const el = $('#review-head-warning');
+  const message = state.headWarning ?? jobHeadWarning(state.job);
+  el.hidden = message === null;
+  el.textContent = message ?? '';
 }
 
 /** Styled confirmation before publishing a forge approval. */
@@ -187,6 +205,7 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   state.mrIid = view.changes.mr.iid;
   state.edits.clear();
   state.showRejected = false;
+  state.headWarning = null;
   for (const c of view.job.comments) {
     state.edits.set(c.id, { body: c.body, status: c.status });
   }
@@ -270,9 +289,13 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     $('#review-cancel-job').hidden = true;
     $('#review-approve-mr').hidden = false;
     $<HTMLButtonElement>('#review-show-log').disabled = true;
-    status.textContent = fetchResult?.error
-      ? `Request commit not fetched: ${fetchResult.error} — repository tools may be limited`
-      : '';
+    // A failed head fetch silently degrades the AI review to diff-only, so keep
+    // it visible: the warning offers to check out the request branch instead.
+    state.headWarning = fetchResult?.error
+      ? `The request commit could not be fetched (${fetchResult.error}); the AI review would run against the diff only.`
+      : null;
+    status.textContent = '';
+    paintHeadWarning(state);
     return true;
   } catch (err) {
     status.textContent = String(err);
@@ -811,6 +834,7 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
   if (job.comments.length > 0) renderCommentQueue(state);
+  paintHeadWarning(state);
   if (job.state === 'error') {
     $('#review-status').textContent = `Review failed: ${job.error ?? 'unknown error'}`;
   } else if (job.state === 'cancelled') {
@@ -880,6 +904,41 @@ export async function generateReview(): Promise<void> {
   }
 }
 
+/** Check out the selected request's source branch and pull it. */
+export async function checkoutMrBranch(): Promise<void> {
+  const state = activeReview();
+  const changes = state?.changes;
+  if (!state || !changes) return;
+  const branch = changes.mr.sourceBranch.trim();
+  const { short } = forgeLabels(changes.forge);
+  const status = $('#review-status');
+  const proceed = await confirmDialog({
+    title: `Checkout ${short} branch?`,
+    message:
+      `Check out "${branch}" and pull it from the remote. ` +
+      `Any local changes that conflict will make git refuse.`,
+    confirmLabel: 'Checkout & pull',
+    danger: true,
+  });
+  if (!proceed) return;
+  status.textContent = `Checking out ${branch}…`;
+  try {
+    const { output } = await reviewApi<{ output: string }>(state, '/review/checkout-branch', {
+      iid: changes.mr.iid,
+      branch,
+      forge: changes.forge,
+    });
+    await refresh();
+    // The branch is now up to date locally, so a pre-run head-fetch warning no
+    // longer applies (an already-run job keeps its own diff-only trace note).
+    state.headWarning = null;
+    paintHeadWarning(state);
+    status.textContent = output.trim() || `Checked out ${branch}.`;
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
 /** Hide the graph/detail columns and show the review view for this repository. */
 export function openReviewTab(): void {
   // Bind to the active repository; opening review with no repo is a no-op.
@@ -907,6 +966,7 @@ export function openReviewTab(): void {
     sessions: [],
     showRejected: false,
     sending: new Set(),
+    headWarning: null,
   };
   tab.review = state;
   store.activePanel = { kind: 'review', repoId: store.activeId };
@@ -926,6 +986,7 @@ export function resetReviewDom(): void {
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
   $('#review-approve-mr').hidden = true;
+  $('#review-head-warning').hidden = true;
   $<HTMLButtonElement>('#review-show-log').disabled = true;
 }
 
@@ -943,6 +1004,7 @@ export function paintReview(state: ReviewTabState): void {
   $('#review-cancel-job').hidden = true;
   $('#review-status').textContent = '';
   $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
+  paintHeadWarning(state);
   if (state.job) renderJob(state, state.job);
 }
 
@@ -987,6 +1049,8 @@ export function initReview(): void {
   });
 
   $('#review-generate').addEventListener('click', () => void generateReview());
+
+  $('#review-checkout-mr').addEventListener('click', () => void checkoutMrBranch());
 
   $('#review-show-log').addEventListener('click', () => {
     const state = activeReview();

@@ -16,6 +16,7 @@ export {
   listMergeRequests,
   getMergeRequestChanges,
   ensureMergeRequestRefs,
+  checkoutMergeRequestBranch,
   createDiscussion,
   approveMergeRequest,
   testGitLab,

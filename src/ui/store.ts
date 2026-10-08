@@ -73,6 +73,8 @@ export interface ReviewTabState {
   sessions: ReviewSession[];
   showRejected: boolean;
   sending: Set<string>;
+  /** Set when the request head is missing, so the AI review runs diff-only. */
+  headWarning: string | null;
 }
 
 /** An open embedded terminal, keyed by the worktree path it runs in. */

@@ -40,6 +40,13 @@ export interface ReviewForge {
   ensureRefs(repoPath: string, changes: ReviewChanges): Promise<{ fetched: boolean }>;
 
   /**
+   * Check out the request's source branch and pull it. Local only except the
+   * final `git pull`; returns git's combined output. The branch is created from
+   * the already-fetched hidden head ref when absent, so no second fetch is needed.
+   */
+  checkoutBranch(repoPath: string, iid: number, branch: string): Promise<string>;
+
+  /**
    * Post one approved comment. Anchors to a line when possible and degrades to a
    * general comment otherwise. Returns the forge comment/discussion id.
    */
@@ -146,6 +153,65 @@ export async function fetchHeadIntoHiddenRef(
     throw new Error(`Fetched request ref but ${sha} is still missing`);
   }
   return { fetched: true };
+}
+
+/** The hidden ref a request head is fetched into, per forge. */
+export function hiddenHeadRef(forge: ForgeKind, iid: number): string {
+  return forge === 'github' ? `refs/liana/pr/${iid}` : `refs/liana/mr/${iid}`;
+}
+
+/** Whether a local branch of this exact name exists. */
+async function hasLocalBranch(repoPath: string, branch: string): Promise<boolean> {
+  try {
+    await runGit(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The remote to use: `origin`, else the first configured one, or null. */
+async function pickRemote(repoPath: string): Promise<string | null> {
+  const remotes = (await runGit(repoPath, ['remote']))
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return remotes.includes('origin') ? 'origin' : (remotes[0] ?? null);
+}
+
+/**
+ * Check out a request's source branch and pull it. The branch is created from
+ * the already-fetched hidden head ref when it does not exist locally, then
+ * updated with `git pull`; it never rewrites history. Only `git checkout` and
+ * `git pull` are used, with the same no-prompt environment as push/pull.
+ */
+export async function checkoutRequestBranch(
+  repoPath: string,
+  branch: string,
+  hiddenRef: string,
+): Promise<string> {
+  const name = branch.trim();
+  if (!name) throw new Error('The request has no source branch');
+  // Reuse the checkout name rules: reject anything git would misread as an option.
+  if (!/^[^\s~^:?*[\\]+$/.test(name) || name.startsWith('-') || name.includes('..')) {
+    throw new Error(`Invalid branch name: ${name}`);
+  }
+  const remote = await pickRemote(repoPath);
+  if (!remote) throw new Error('No git remote configured');
+
+  if (await hasLocalBranch(repoPath, name)) {
+    await runGit(repoPath, ['checkout', name]);
+  } else if (await hasCommit(repoPath, hiddenRef).catch(() => false)) {
+    // The review already fetched the head commit; branch from it without a second fetch.
+    await runGit(repoPath, ['checkout', '-b', name, hiddenRef]);
+  } else if (await hasCommit(repoPath, `${remote}/${name}`).catch(() => false)) {
+    await runGit(repoPath, ['checkout', '-b', name, '--track', `${remote}/${name}`]);
+  } else {
+    throw new Error(
+      `Branch "${name}" is not available locally; load the request (which fetches its head) first`,
+    );
+  }
+  return (await runGit(repoPath, ['pull', remote, name])).trim();
 }
 
 /** Turn a git remote URL into an `owner/name` (or `group/project`) path, or null. */

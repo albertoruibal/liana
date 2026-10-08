@@ -7,6 +7,7 @@ import path from 'node:path';
 import { INTERACTIVE_REBASE_ENABLED } from '../config';
 import {
   cancelReviewJob,
+  checkoutMergeRequestBranch,
   createDiscussion,
   deleteReviewSession,
   generateCommitMessage,
@@ -32,6 +33,7 @@ import type {
   MergeOperation,
   RebaseTodoItem,
   ResetMode,
+  ReviewChanges,
   ReviewComment,
   ReviewRuleConfig,
   StatusEntry,
@@ -256,6 +258,24 @@ export function createApi(defaultRepo: string | null): Api {
           maxSteps: parsed.maxSteps,
         });
         return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/checkout-branch' && method === 'POST') {
+        const { iid, branch, forge } = JSON.parse(rawBody) as {
+          iid?: number;
+          branch?: string;
+          forge?: ReviewChanges['forge'];
+        };
+        if (!Number.isInteger(iid) || (iid ?? 0) < 1) {
+          return { status: 400, body: { error: 'Missing request number' } };
+        }
+        if (!branch?.trim()) return { status: 400, body: { error: 'Missing branch' } };
+        const output = await checkoutMergeRequestBranch(
+          repoPath,
+          forge === 'github' ? 'github' : 'gitlab',
+          iid as number,
+          branch.trim(),
+        );
+        return { status: 200, body: { ok: true, output } };
       }
       if (route === '/review/status' && method === 'POST') {
         const { jobId } = JSON.parse(rawBody) as { jobId?: string };

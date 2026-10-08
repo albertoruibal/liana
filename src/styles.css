@@ -3622,6 +3622,16 @@ dialog select:focus-visible {
   font-size: 13px;
 }
 
+.review-head-warning {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warning, #b58900);
+  background: color-mix(in srgb, var(--warning, #b58900) 12%, transparent);
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
 /* `display` rules otherwise beat the `hidden` attribute. */
 #review-view [hidden],
 #terminal-view [hidden] {

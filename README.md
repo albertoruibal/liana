@@ -130,6 +130,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/forge/mrs` | GET | — | Open merge/pull requests for the repo's resolved forge |
 | `/api/forge/mr` | POST | `{iid, fetch?}` | Request metadata, changed files, and diff refs; `fetch` also fetches the head commit |
 | `/api/forge/approve` | POST | `{iid}` | Approve a merge/pull request |
+| `/api/review/checkout-branch` | POST | `{iid, branch, forge}` | Check out the request's source branch (from the fetched head ref) and pull it |
 | `/api/gitlab/mrs` | GET | — | Deprecated alias for `/api/forge/mrs` forcing GitLab |
 | `/api/gitlab/mr` | POST | `{iid, fetch?}` | Deprecated alias for `/api/forge/mr` forcing GitLab |
 | `/api/gitlab/approve` | POST | `{iid}` | Deprecated alias for `/api/forge/approve` forcing GitLab |

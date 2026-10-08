@@ -151,11 +151,14 @@
           </div>
           <div class="review-options">
             <button type="button" class="btn btn-primary" id="review-generate">Review with AI</button>
+            <button type="button" class="btn" id="review-checkout-mr" disabled>Checkout branch</button>
             <button type="button" class="btn" id="review-show-log" disabled>Model log</button>
             <button type="button" class="btn" id="review-pause-job" hidden>Pause</button>
             <button type="button" class="btn" id="review-resume-job" hidden>Resume</button>
             <button type="button" class="btn" id="review-cancel-job" hidden>Cancel</button>
           </div>
+
+          <div id="review-head-warning" class="review-head-warning" hidden></div>
 
           <div id="review-progress" class="review-progress" hidden>
             <span class="sync-spinner" aria-hidden="true"></span>
