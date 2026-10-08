@@ -17,6 +17,7 @@ import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
 import { closeSearch } from './search';
 import { closeStatusHistory, statusHistory } from './status-bar';
+import { dismissTerminalView, updateTerminalVisibility } from './terminal-view';
 
 /** The review tab currently shown, if any. */
 export function activeReview(): ReviewTabState | null {
@@ -966,8 +967,12 @@ export function updateReviewVisibility(): void {
   reviewView.hidden = !shown;
   // The terminal is a competing main view; showing review dismisses it.
   if (shown && store.activeTerminalPath !== null) {
-    store.activeTerminalPath = null;
-    $('#terminal-view').hidden = true;
+    dismissTerminalView();
+  }
+  // When the review is hidden, the terminal (or the graph) owns the columns.
+  if (!shown && store.activeTerminalPath !== null) {
+    updateTerminalVisibility();
+    return;
   }
   $('#graph-wrap').hidden = shown;
   $('#detail-resizer').hidden = shown;

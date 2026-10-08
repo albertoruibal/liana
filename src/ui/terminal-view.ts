@@ -76,12 +76,20 @@ export function updateTerminalVisibility(): void {
     const state = store.terminals.get(path);
     $('#terminal-cwd').textContent = state ? ` · ${state.name}` : '';
     // Never show the terminal and the review view at once.
-    store.activeReviewId = null;
     $('#review-view').hidden = true;
   }
   $('#graph-wrap').hidden = shown;
   $('#detail-resizer').hidden = shown;
   $('#detail-pane').hidden = shown;
+}
+
+/**
+ * Dismiss the visible terminal (its shell keeps running) and bring the graph
+ * columns back. Used when another view takes over.
+ */
+export function dismissTerminalView(): void {
+  store.activeTerminalPath = null;
+  updateTerminalVisibility();
 }
 
 export function persistTerminalTabs(): void {

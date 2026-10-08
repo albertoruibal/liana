@@ -5,7 +5,7 @@ import { $svg } from './dom';
 import { applyTransform, renderAll, renderGraphHeader } from './graph-view';
 import { updateSyncButtons } from './remotes';
 import { closeReviewTab, paintReview, persistReviewTabs, updateReviewVisibility } from './review-view';
-import { closeTerminal, activateTerminal, persistTerminalTabs } from './terminal-view';
+import { closeTerminal, activateTerminal, persistTerminalTabs, dismissTerminalView } from './terminal-view';
 import { closeStatusHistory, renderStatusBar } from './status-bar';
 import { RepoTab, activeTab, saveActive, store } from './store';
 import { promptText } from './prompt';
@@ -267,8 +267,7 @@ export async function activateRepo(id: string): Promise<void> {
   }
   // Terminals keep running in the background; only the view is dismissed.
   if (store.activeTerminalPath !== null) {
-    store.activeTerminalPath = null;
-    $('#terminal-view').hidden = true;
+    dismissTerminalView();
     persistTerminalTabs();
   }
   if (id === store.activeId) {
@@ -289,8 +288,7 @@ export function activateReviewTab(repoId: string): void {
   if (!state) return;
   // The terminal is a competing main view; hide it before showing review.
   if (store.activeTerminalPath !== null) {
-    store.activeTerminalPath = null;
-    $('#terminal-view').hidden = true;
+    dismissTerminalView();
   }
   // The review is bound to one repository; rebind it as active so subsequent
   // review/GitLab API calls target the same repo the MR belongs to.
