@@ -42,7 +42,7 @@ import type {
   ReviewTraceStep,
   ToolProtocol,
 } from '../types';
-import { chatCompletion } from './ai';
+import { chatCompletion, type ChatRequest } from './ai';
 import { parseComments, parsePartialComments } from './comments';
 
 interface JobRecord {
@@ -542,8 +542,11 @@ const PROMPT_LOG_CHARS = 16000;
 const PROMPT_LOG_MAX = 40;
 
 /** Record the exact request sent to the model, capped, for the model log. */
-function recordPrompt(rec: JobRecord, step: number, wire: unknown[]): void {
-  const text = JSON.stringify(wire, null, 2);
+function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): void {
+  // Serialize tools/tool_choice before the (often huge) messages array so the
+  // offered tool catalogue survives tail truncation.
+  const { messages, ...rest } = request;
+  const text = JSON.stringify({ ...rest, messages }, null, 2);
   const truncated = text.length > PROMPT_LOG_CHARS;
   const entry: ReviewPromptStep = {
     step,
@@ -630,17 +633,18 @@ async function runBatch(
 
     const useNativeTools = adapter.native;
     const wire = messages.map(toWire(useNativeTools));
-    recordPrompt(rec, step, wire);
+    const request: ChatRequest = {
+      model: provider.model,
+      messages: wire,
+      temperature: provider.temperature,
+      max_tokens: provider.maxTokens,
+      stream: provider.stream,
+      ...(useNativeTools ? { tools: nativeTools(), tool_choice: 'auto' } : {}),
+    };
+    recordPrompt(rec, step, request);
     const result = await chatCompletion(
       provider,
-      {
-        model: provider.model,
-        messages: wire,
-        temperature: provider.temperature,
-        max_tokens: provider.maxTokens,
-        stream: provider.stream,
-        ...(useNativeTools ? { tools: nativeTools(), tool_choice: 'auto' } : {}),
-      },
+      request,
       (chunk) => {
         sawDelta = true;
         rec.job.output += chunk;
@@ -716,15 +720,16 @@ async function runBatch(
         content: 'Stop exploring. Return the final JSON review result now.',
       });
       const finalWire = messages.map(toWire(false));
-      recordPrompt(rec, step, finalWire);
+      const finalRequest: ChatRequest = {
+        model: provider.model,
+        messages: finalWire,
+        temperature: provider.temperature,
+        max_tokens: provider.maxTokens,
+      };
+      recordPrompt(rec, step, finalRequest);
       const finalResult = await chatCompletion(
         provider,
-        {
-          model: provider.model,
-          messages: finalWire,
-          temperature: provider.temperature,
-          max_tokens: provider.maxTokens,
-        },
+        finalRequest,
         undefined,
         rec.controller.signal,
       );
