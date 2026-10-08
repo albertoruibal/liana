@@ -3783,6 +3783,37 @@ dialog select:focus-visible {
   font-size: 13px;
 }
 
+.review-memory {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.review-memory > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.review-memory-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.review-memory-list li {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .review-comment-list {
   display: flex;
   flex-direction: column;

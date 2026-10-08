@@ -86,10 +86,12 @@ in the packaged app.
   stale `commit_id` (new pushes) or a non-anchorable line returns 422/404 and must degrade to a plain issue comment,
   never fail the whole post. The head fetch mirrors GitLab: `refs/pull/<n>/head` → `refs/liana/pr/<n>`, with the SHA
   fallback, writing only objects and the hidden ref.
-- The LLM harness runs **read-only tools** against the repository, defaulting to the merge request's head SHA (never the
-  local working tree). Tools resolve paths inside the repo only, truncate output, and never write to the working tree or
-  index. The agent loop is bounded by `maxSteps` and a chars/4 context budget; batching and a one-shot fallback keep
-  small local models usable.
+- The LLM harness runs **read-only repository tools** against the merge request's head SHA (never the local working
+  tree). Repository tools resolve paths inside the repo only, truncate output, and never write to the working tree or
+  index. The one side-effecting pair is the per-review memory: `remember`/`recall` append to and read a memory list
+  carried on `ToolContext.memories`, which is a live reference to `ReviewJob.memories` (persisted in the session,
+  rendered read-only in the UI). They never touch git, the working tree, or the index. The agent loop is bounded by
+  `maxSteps` and a chars/4 context budget; batching and a one-shot fallback keep small local models usable.
 - **Reviews are pausable and persistent.** `src/sessions.ts` writes the agent checkpoint (message history, batch cursor)
   to `~/.config/liana/sessions/<id>.json` — mode `0600` in a `0700` dir, keyed by absolute repo
   path, ≤12 per repo, `running` sessions reopened as `paused` at startup. Pause aborts the in-flight call but keeps the

@@ -249,6 +249,12 @@ function coerceJob(v: unknown): ReviewJob | null {
           truncated: p.truncated === true,
         }))
       : [],
+    memories: Array.isArray(v.memories)
+      ? v.memories
+          .filter(isRecord)
+          .map((m) => ({ id: str(m.id, ''), note: str(m.note, '') }))
+          .filter((m) => m.note.length > 0)
+      : [],
     comments: Array.isArray(v.comments)
       ? v.comments.filter(isRecord).map((c) => ({
           id: str(c.id, ''),

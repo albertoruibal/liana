@@ -821,7 +821,19 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
   }
 }
 
+/** Render the agent's saved memories (read-only) into the collapsible panel. */
+function renderMemories(job: ReviewJob): void {
+  const wrap = $('#review-memory-wrap');
+  const memories = job.memories;
+  wrap.hidden = memories.length === 0;
+  $('#review-memory-count').textContent = memories.length > 0 ? `(${memories.length})` : '';
+  $('#review-memory-list').innerHTML = memories
+    .map((m) => `<li>${esc(m.note)}</li>`)
+    .join('');
+}
+
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
+  renderMemories(job);
   $('#review-progress').hidden = job.state !== 'running';
   $('#review-pause-job').hidden = job.state !== 'running';
   $('#review-resume-job').hidden = job.state !== 'paused';
@@ -978,6 +990,7 @@ export function openReviewTab(): void {
 /** Clear the review view's DOM for a fresh tab. */
 export function resetReviewDom(): void {
   $('#review-queue-wrap').hidden = true;
+  $('#review-memory-wrap').hidden = true;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
@@ -994,6 +1007,7 @@ export function paintReview(state: ReviewTabState): void {
   paintForgeWording(state);
   $('#review-approve-mr').hidden = changes === null;
   $('#review-queue-wrap').hidden = true;
+  $('#review-memory-wrap').hidden = state.job === null || state.job.memories.length === 0;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
