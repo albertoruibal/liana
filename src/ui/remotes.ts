@@ -2,7 +2,6 @@
 
 import { api } from './api-client';
 import { esc } from './format';
-import { remoteLocalName } from './rebase';
 import { activeTab, store } from './store';
 import { toast } from './toast';
 import { $ } from './dom';
@@ -166,16 +165,35 @@ export function branchPillTarget(ev: Event): { kind: 'local' | 'remote'; name: s
   return { kind, name };
 }
 
-/** Check out the branch behind a pill; a no-op when it is already checked out. */
-export function checkoutBranchPill(pill: { kind: 'local' | 'remote'; name: string }): void {
-  const currentBranch = store.lastResponse?.state?.headBranch ?? '';
+/** Act on the branch behind a pill. A local branch is checked out (a no-op when
+ * it is already current); a remote branch resets the checked-out branch to the
+ * remote tip, after confirming, since that discards working-tree changes. */
+export async function checkoutBranchPill(pill: { kind: 'local' | 'remote'; name: string }): Promise<void> {
+  const state = store.lastResponse?.state;
+  const currentBranch = state?.headBranch ?? '';
   if (pill.kind === 'local') {
     if (pill.name === currentBranch) return;
-    void checkout(pill.name);
-  } else {
-    const local = remoteLocalName(pill.name);
-    if (!local || local === currentBranch) return;
-    void checkout(pill.name, true);
+    await checkout(pill.name);
+    return;
+  }
+  if (!currentBranch || state?.detachedHead) {
+    toast('Cannot reset: HEAD is detached');
+    return;
+  }
+  const ok = await confirmDialog({
+    title: 'Reset current branch?',
+    message: `Move ${currentBranch} to ${pill.name} with --hard, discarding the current working tree.`,
+    confirmLabel: 'Reset --hard',
+    danger: true,
+    warning: 'Uncommitted changes will be discarded.',
+  });
+  if (!ok) return;
+  try {
+    await api('/reset', { mode: 'hard', ref: pill.name });
+    store.selectedHash = null;
+    await refresh();
+  } catch (err) {
+    toast(`Reset failed: ${String(err)}`);
   }
 }
 
@@ -208,7 +226,7 @@ export function initRemotes(): void {
     lastPillClick = pill ? { key, at: now } : null;
     if (repeated && pill) {
       lastPillClick = null; // Don't let a third fast click re-trigger the checkout.
-      checkoutBranchPill(pill);
+      void checkoutBranchPill(pill);
       return;
     }
     // Clicking the selected row again clears the selection.
