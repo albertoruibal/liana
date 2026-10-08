@@ -4,13 +4,11 @@
 import {
   activeProvider,
   providerById,
-  rememberProtocol,
   reviewRule,
   type StoredProvider,
 } from '../settings';
 import { forgeLabel, hasCommit } from '../forge';
 import {
-  adapterFor,
   executeTool,
   extractJsonObject,
   matchesAnyGlob,
@@ -26,7 +24,6 @@ import {
   readSession,
   writeSession,
   type BatchCheckpoint,
-  type ReviewProtocol,
   type StoredReviewSession,
 } from '../sessions';
 import type {
@@ -40,7 +37,6 @@ import type {
   ReviewSession,
   ReviewSessionView,
   ReviewTraceStep,
-  ToolProtocol,
 } from '../types';
 import { chatCompletion, type ChatRequest } from './ai';
 import { parseComments, parsePartialComments } from './comments';
@@ -68,22 +64,11 @@ interface JobRecord {
   requestedMaxSteps: number | null;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
-  /** Protocols to try, in order (already resolved from `auto`). */
-  candidates: ReviewProtocol[];
   /** Enough state to resume the current batch exactly where it stopped. */
   checkpoint: BatchCheckpoint | null;
 }
 
 const jobs = new Map<string, JobRecord>();
-
-/** A protocol candidate is always concrete; never `auto`. */
-function buildCandidates(provider: StoredProvider): ReviewProtocol[] {
-  const protocol = effectiveProtocol(provider);
-  if (protocol !== 'auto') return [protocol];
-  return provider.detectedProtocol
-    ? [provider.detectedProtocol, 'react', 'json', 'none']
-    : ['native', 'react', 'json', 'none'];
-}
 
 /** Snapshot a live job as a persistable session. */
 function snapshotSession(rec: JobRecord): StoredReviewSession {
@@ -98,7 +83,6 @@ function snapshotSession(rec: JobRecord): StoredReviewSession {
     maxSteps: rec.maxSteps,
     budget: rec.budget,
     batches: rec.batches,
-    candidates: rec.candidates,
     batchIndex: Math.max(0, rec.job.batchIndex - 1),
     checkpoint: rec.checkpoint,
     job: rec.job,
@@ -228,7 +212,6 @@ function recordFromStored(s: StoredReviewSession): JobRecord {
     budget: s.budget,
     requestedMaxSteps: s.maxSteps,
     batches: s.batches,
-    candidates: s.candidates.length > 0 ? s.candidates : ['none'],
     checkpoint: s.checkpoint,
   };
 }
@@ -365,12 +348,10 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
     budget: 4096,
     requestedMaxSteps: null,
     batches: [],
-    candidates: [],
     checkpoint: null,
     job: {
       id: sessionId,
       state: 'running',
-      protocol: null,
       batchIndex: 0,
       batchTotal: 1,
       output: '',
@@ -420,12 +401,6 @@ export function startReview(opts: StartReviewOptions): ReviewJob {
   return structuredClone(rec.job);
 }
 
-/** The protocol to use: the provider's configured one, with `auto` resolved. */
-function effectiveProtocol(provider: StoredProvider): ToolProtocol {
-  if (provider.toolProtocol !== 'auto') return provider.toolProtocol;
-  return provider.detectedProtocol ?? 'auto';
-}
-
 /** Pack changed files into context-sized batches, preserving order. */
 function batchFileIndices(
   files: ReviewFile[],
@@ -461,7 +436,7 @@ function requireProvider(providerId: string | null): StoredProvider {
   return provider;
 }
 
-/** Set up the batch plan and candidate protocols on the first run. */
+/** Set up the batch plan on the first run. */
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
   rec.providerId = provider.id;
@@ -483,7 +458,6 @@ function planReview(rec: JobRecord): StoredProvider {
     ).map((b) => b.map((i) => subset[i] ?? -1).filter((i) => i >= 0));
   }
   rec.job.batchTotal = rec.batches.length;
-  if (rec.candidates.length === 0) rec.candidates = buildCandidates(provider);
   return provider;
 }
 
@@ -498,34 +472,8 @@ async function runReview(rec: JobRecord): Promise<void> {
     rec.job.batchIndex = i + 1;
     rec.job.output = '';
 
-    let lastError: Error | null = null;
-    let batchComments: ReviewComment[] | null = null;
-    const startCandidate = rec.checkpoint?.batchIndex === i ? rec.checkpoint.candidateIndex : 0;
-    for (let ci = startCandidate; ci < rec.candidates.length; ci++) {
-      if (rec.cancelled || rec.paused) return;
-      const candidate = rec.candidates[ci];
-      if (!candidate) continue;
-      try {
-        const result = await runBatch(rec, provider, candidate, maxSteps, budget, indices);
-        rec.job.protocol = candidate;
-        if (provider.toolProtocol === 'auto' && provider.detectedProtocol !== candidate) {
-          rememberProtocol(provider.id, candidate);
-          provider.detectedProtocol = candidate;
-        }
-        batchComments = result;
-        rec.checkpoint = null;
-        break;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        // A 4xx from a native tool request usually means tools are unsupported.
-        if (candidate !== 'none') continue;
-      }
-    }
-
-    if (batchComments === null) {
-      if (rec.paused || rec.cancelled) return;
-      throw lastError ?? new Error('Review failed');
-    }
+    const batchComments = await runBatch(rec, provider, maxSteps, budget, indices);
+    rec.checkpoint = null;
     syncComments(rec, batchComments, 'parsed');
     persist(rec);
     if (rec.rule.maxComments > 0 && rec.job.comments.length >= rec.rule.maxComments) break;
@@ -563,7 +511,6 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): void 
 async function runBatch(
   rec: JobRecord,
   provider: StoredProvider,
-  protocol: Exclude<ToolProtocol, 'auto'>,
   maxSteps: number,
   budget: number,
   indices: number[],
@@ -573,23 +520,25 @@ async function runBatch(
   const batch = indices.map((i) => changes.files[i]).filter((f): f is ReviewFile => f !== undefined);
   const headRef = changes.diffRefs.headSha.trim();
   // The repository tools must read the MR head, never the local working tree or a
-  // stale branch. When the head commit is missing locally we cannot verify against
-  // the right code, so we drop to a diff-only review instead of reading HEAD.
+  // stale branch. Without the head commit there is no correct code to verify
+  // against, so the review cannot run: fail with an actionable message rather
+  // than silently reviewing the diff alone.
   const headAvailable = headRef !== '' && (await hasCommit(rec.repoPath, headRef).catch(() => false));
-  const effective = headAvailable ? protocol : 'none';
-  const adapter = adapterFor(effective);
+  if (!headAvailable) {
+    throw new Error(
+      `The ${forgeLabel(changes.forge)} head commit is not available locally — ` +
+        'use "Checkout branch" to fetch it, then start the review again.',
+    );
+  }
   const ctx: ToolContext = {
     repoPath: rec.repoPath,
     headRef,
     files: changes.files,
     toolResultChars: provider.toolResultChars,
   };
-  if (!headAvailable && protocol !== 'none') {
-    noteHeadUnavailable(rec);
-  }
 
   const batchIndex = Math.max(0, rec.job.batchIndex - 1);
-  const base = buildSystemPrompt(rule, changes, batch, effective);
+  const base = buildSystemPrompt(rule, changes, batch);
   const fresh: ChatMessage[] = [
     { role: 'system', content: base },
     {
@@ -599,12 +548,10 @@ async function runBatch(
         '`comments` array. Only comment on files present in the changes.',
     },
   ];
-  // Reuse a checkpoint only when it belongs to the batch and protocol we are
-  // about to run; otherwise start this batch fresh.
-  const candidateIndex = rec.candidates.indexOf(protocol);
+  // Reuse a checkpoint only when it belongs to the batch we are about to run;
+  // otherwise start this batch fresh.
   const cp = rec.checkpoint;
-  const resume =
-    cp !== null && cp.batchIndex === batchIndex && cp.candidateIndex === candidateIndex;
+  const resume = cp !== null && cp.batchIndex === batchIndex;
   const messages: ChatMessage[] = resume ? cp.messages : fresh;
   // The checkpoint stores the step about to run; re-issue that same step.
   let step = resume ? cp.step - 1 : 0;
@@ -615,7 +562,7 @@ async function runBatch(
     pruneMessages(messages, budget);
     // Checkpoint before the model call: if we are paused mid-call, resume
     // re-issues this step rather than skipping its result.
-    rec.checkpoint = { batchIndex, candidateIndex, messages, step };
+    rec.checkpoint = { batchIndex, messages, step };
     persist(rec);
 
     // Scan the streamed text for complete comment objects and surface them as
@@ -631,15 +578,15 @@ async function runBatch(
       if (previews.length > 0) syncComments(rec, previews, 'pending');
     };
 
-    const useNativeTools = adapter.native;
-    const wire = messages.map(toWire(useNativeTools));
+    const wire = messages.map(toWire());
     const request: ChatRequest = {
       model: provider.model,
       messages: wire,
       temperature: provider.temperature,
       max_tokens: provider.maxTokens,
-      stream: provider.stream,
-      ...(useNativeTools ? { tools: nativeTools(), tool_choice: 'auto' } : {}),
+      stream: true,
+      tools: nativeTools(),
+      tool_choice: 'auto',
     };
     recordPrompt(rec, step, request);
     const result = await chatCompletion(
@@ -655,11 +602,7 @@ async function runBatch(
       rec.controller.signal,
     );
 
-    const parsed = adapter.parse(
-      useNativeTools
-        ? { content: result.content, tool_calls: result.toolCalls.map((c) => ({ id: c.id, function: { name: c.name, arguments: JSON.stringify(c.args) } })) }
-        : { content: result.content },
-    );
+    const parsed = { content: result.content, toolCalls: result.toolCalls };
 
     // Non-streamed responses never hit the delta callback; scan the whole text.
     if (parsed.content.length > 0) {
@@ -667,7 +610,7 @@ async function runBatch(
       if (previews.length > 0) syncComments(rec, previews, 'pending');
     }
     // Keep the raw output for the model log even when the provider ignored
-    // `stream: true` and returned a single JSON body.
+    // streaming and returned a single JSON body.
     if (!sawDelta && parsed.content.trim().length > 0) {
       rec.job.output = parsed.content.slice(-4000);
     }
@@ -682,11 +625,10 @@ async function runBatch(
     }
 
     if (parsed.toolCalls.length === 0) {
-      // No tool calls and no valid final JSON: try a plain extraction, else fail
-      // the candidate so the caller can fall back to another protocol.
+      // No tool calls and no valid final JSON: try a plain extraction, else fail.
       const fallback = extractJsonObject(parsed.content);
       if (fallback) return parseComments(fallback, rule, changes.files);
-      if (obj === null && parsed.content.trim().length > 0 && protocol !== 'none') {
+      if (obj === null && parsed.content.trim().length > 0) {
         throw new Error('model did not return a tool call or valid JSON');
       }
       return [];
@@ -719,7 +661,7 @@ async function runBatch(
         role: 'user',
         content: 'Stop exploring. Return the final JSON review result now.',
       });
-      const finalWire = messages.map(toWire(false));
+      const finalWire = messages.map(toWire());
       const finalRequest: ChatRequest = {
         model: provider.model,
         messages: finalWire,
@@ -739,26 +681,11 @@ async function runBatch(
   }
 }
 
-/** Record once that the MR head is missing, so the run is a diff-only review. */
-function noteHeadUnavailable(rec: JobRecord): void {
-  if (rec.job.trace.some((t) => t.tool === 'repo_tools')) return;
-  rec.job.trace.push({
-    step: rec.job.trace.length + 1,
-    tool: 'repo_tools',
-    args: {},
-    resultSummary: 'MR head commit not available locally — repository tools disabled, diff-only review',
-    durationMs: 0,
-  });
-}
-
 function buildSystemPrompt(
   rule: ReviewRuleConfig,
   changes: ReviewChanges,
   batch: ReviewFile[],
-  protocol: Exclude<ToolProtocol, 'auto'>,
 ): string {
-  const useTools = protocol !== 'none';
-  const adapter = adapterFor(protocol);
   const files = batch
     .map((f) => `- ${f.newPath}${f.newFile ? ' (new)' : ''}${f.deletedFile ? ' (deleted)' : ''}`)
     .join('\n');
@@ -778,46 +705,25 @@ function buildSystemPrompt(
     '',
     'Diff:',
     diffs,
+    '',
+    // A comment must be substantiated by the repository at the MR head, including
+    // code the diff does not show.
+    'Before writing a comment, verify the fact against the repository at the ' +
+      'merge request head — read the file and search related code, including files ' +
+      'that are not part of the diff (callers, interfaces, tests, config). Only ' +
+      'report an issue you can substantiate with a concrete file and line; if the ' +
+      'code already handles the case, do not comment.',
+    '',
+    'Use the provided tools to read the rest of the repository at the MR head ' +
+      'before finalizing your comments.',
   ];
-  if (useTools) {
-    // Same verification duty for every protocol: a comment must be substantiated
-    // by the repository at the MR head, including code the diff does not show.
-    lines.push(
-      '',
-      'Before writing a comment, verify the fact against the repository at the ' +
-        'merge request head — read the file and search related code, including files ' +
-        'that are not part of the diff (callers, interfaces, tests, config). Only ' +
-        'report an issue you can substantiate with a concrete file and line; if the ' +
-        'code already handles the case, do not comment.',
-    );
-    if (!adapter.native) {
-      lines.push(
-        '',
-        'You can read the wider repository with the tools below. Tools read the MR ' +
-          'head, not the working tree.',
-      );
-    } else {
-      lines.push(
-        '',
-        'Use the provided tools to read the rest of the repository at the MR head ' +
-          'before finalizing your comments.',
-      );
-    }
-  } else {
-    lines.push(
-      '',
-      'Repository tools are not available for this review. Review the provided diff ' +
-        'alone and do not speculate about code you cannot see.',
-    );
-  }
-  let out = lines.join('\n');
-  if (useTools) out += `\n\n${adapter.guidance(TOOLS)}`;
-  out +=
+  return (
+    lines.join('\n') +
     '\n\nReturn the final result as JSON: {"comments":[{"filePath":"…","newLine":N,' +
     '"oldLine":N,"severity":"info|warning|error","body":"…"}]}. ' +
     'newLine/oldLine are 1-based line numbers present in the diff; omit an anchor that ' +
-    'is not in the diff rather than guessing.';
-  return out;
+    'is not in the diff rather than guessing.'
+  );
 }
 
 /** Native `tools` payload sent to OpenAI-compatible endpoints. */
@@ -828,15 +734,13 @@ function nativeTools(): unknown[] {
   }));
 }
 
-/** Serialize a chat message in OpenAI wire format. */
-function toWire(native: boolean): (m: ChatMessage) => Record<string, unknown> {
+/** Serialize a chat message in OpenAI wire format (native tool calls only). */
+function toWire(): (m: ChatMessage) => Record<string, unknown> {
   return (m) => {
     if (m.role === 'tool') {
-      return native
-        ? { role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' }
-        : { role: 'user', content: `Observation: ${m.content}` };
+      return { role: 'tool', content: m.content, tool_call_id: m.toolCallId ?? '' };
     }
-    if (m.role === 'assistant' && m.toolCalls && native) {
+    if (m.role === 'assistant' && m.toolCalls) {
       return {
         role: 'assistant',
         content: m.content,

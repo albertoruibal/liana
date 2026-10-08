@@ -1,6 +1,6 @@
-// Read-only repository tools for the LLM review harness, plus the protocol
-// adapters that let small local models drive them without native function
-// calling. Node-only: imported by src/review.ts, never by the browser.
+// Read-only repository tools for the LLM review harness. The agent drives them
+// through the OpenAI-compatible native function-calling API (`tools` /
+// `tool_calls`). Node-only: imported by src/review.ts, never by the browser.
 //
 // Every tool is confined to the repository and reads at a ref (the MR head SHA
 // by default) — never the local working tree or index. Output is truncated and
@@ -8,7 +8,7 @@
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type { GitLabMrFile, ToolProtocol } from './types';
+import type { GitLabMrFile } from './types';
 
 /** One tool the model may call. */
 export interface ToolDef {
@@ -28,7 +28,7 @@ export interface ToolCall {
   args: Record<string, unknown>;
 }
 
-/** Protocol-agnostic chat message handed to an adapter. */
+/** A chat message in the agent conversation. */
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -417,149 +417,6 @@ export function messagesTokens(messages: ChatMessage[]): number {
 export function summarizeResult(result: string): string {
   const first = result.split('\n').find((l) => l.trim().length > 0) ?? '';
   return truncate(first.trim(), 120);
-}
-
-// --- protocol adapters ---
-
-/** A text protocol's request body and response parser. */
-export interface ProtocolAdapter {
-  name: Exclude<ToolProtocol, 'auto'>;
-  /** Extra system-prompt guidance describing how to call tools. */
-  guidance(tools: ToolDef[]): string;
-  /** Whether the adapter passes native `tools` in the request body. */
-  native: boolean;
-  /** Parse an assistant message (and, for text protocols, any tool call). */
-  parse(message: unknown): { content: string; toolCalls: ToolCall[] };
-}
-
-/** Render the tool catalogue as readable text for prompt-only protocols. */
-function toolText(tools: ToolDef[]): string {
-  return tools
-    .map((t) => {
-      const params = Object.entries(t.parameters.properties)
-        .map(([k, v]) => {
-          const desc = (v as { description?: string }).description ?? '';
-          return `      ${k}: ${desc}`;
-        })
-        .join('\n');
-      return `- ${t.name}: ${t.description}\n    parameters:\n${params || '      (none)'}`;
-    })
-    .join('\n');
-}
-
-let reactCounter = 0;
-
-const nativeAdapter: ProtocolAdapter = {
-  name: 'native',
-  native: true,
-  guidance: () => '',
-  parse(message) {
-    const m = (message ?? {}) as {
-      content?: unknown;
-      tool_calls?: Array<{
-        id?: string;
-        function?: { name?: string; arguments?: string };
-      }>;
-    };
-    const toolCalls: ToolCall[] = [];
-    for (const call of m.tool_calls ?? []) {
-      const fn = call.function;
-      if (!fn?.name) continue;
-      let args: Record<string, unknown> = {};
-      try {
-        const parsed = JSON.parse(fn.arguments || '{}') as unknown;
-        if (typeof parsed === 'object' && parsed !== null) args = parsed as Record<string, unknown>;
-      } catch {
-        args = {};
-      }
-      toolCalls.push({ id: call.id ?? `call_${reactCounter++}`, name: fn.name, args });
-    }
-    return { content: typeof m.content === 'string' ? m.content : '', toolCalls };
-  },
-};
-
-const reactAdapter: ProtocolAdapter = {
-  name: 'react',
-  native: false,
-  guidance(tools) {
-    return (
-      'You may inspect the repository with the tools below. To call one, reply with EXACTLY:\n' +
-      'Thought: <brief reasoning>\n' +
-      'Action: <tool name>\n' +
-      'Action Input: <a single-line JSON object of arguments>\n' +
-      'Then stop and wait for the Observation. When you have enough information, reply with\n' +
-      'Thought: I have finished\n' +
-      'Final Answer: <the JSON review result>\n\n' +
-      `Available tools:\n${toolText(tools)}`
-    );
-  },
-  parse(message) {
-    const m = (message ?? {}) as { content?: unknown };
-    const content = typeof m.content === 'string' ? m.content : '';
-    const action = content.match(/Action:\s*(.+)/i)?.[1]?.trim();
-    const inputRaw = content.match(/Action Input:\s*(.+)/i)?.[1]?.trim();
-    if (!action || !/^[a-z_]+$/i.test(action)) return { content, toolCalls: [] };
-    let args: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(inputRaw ?? '{}') as unknown;
-      if (typeof parsed === 'object' && parsed !== null) args = parsed as Record<string, unknown>;
-    } catch {
-      args = {};
-    }
-    return {
-      content,
-      toolCalls: [{ id: `react_${reactCounter++}`, name: action, args }],
-    };
-  },
-};
-
-const jsonAdapter: ProtocolAdapter = {
-  name: 'json',
-  native: false,
-  guidance(tools) {
-    return (
-      'You inspect the repository by replying with a single JSON object and nothing else.\n' +
-      'To call a tool: {"tool": "<name>", "args": { … }}.\n' +
-      'When finished, reply with the review result: {"comments": [ … ]}.\n\n' +
-      `Available tools:\n${toolText(tools)}`
-    );
-  },
-  parse(message) {
-    const m = (message ?? {}) as { content?: unknown };
-    const content = typeof m.content === 'string' ? m.content : '';
-    const obj = extractJsonObject(content);
-    if (obj && typeof obj.tool === 'string') {
-      const args = (typeof obj.args === 'object' && obj.args !== null
-        ? obj.args
-        : {}) as Record<string, unknown>;
-      return { content, toolCalls: [{ id: `json_${reactCounter++}`, name: obj.tool, args }] };
-    }
-    return { content, toolCalls: [] };
-  },
-};
-
-const noneAdapter: ProtocolAdapter = {
-  name: 'none',
-  native: false,
-  guidance: () => 'Do not call tools. Review the provided changes directly.',
-  parse(message) {
-    const m = (message ?? {}) as { content?: unknown };
-    return { content: typeof m.content === 'string' ? m.content : '', toolCalls: [] };
-  },
-};
-
-/** Look up an adapter by negotiated/forced protocol. */
-export function adapterFor(protocol: Exclude<ToolProtocol, 'auto'>): ProtocolAdapter {
-  switch (protocol) {
-    case 'native':
-      return nativeAdapter;
-    case 'react':
-      return reactAdapter;
-    case 'json':
-      return jsonAdapter;
-    case 'none':
-      return noneAdapter;
-  }
 }
 
 /**

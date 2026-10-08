@@ -301,12 +301,6 @@ export interface WorktreeInfo {
 // --- Code review, AI providers & GitLab ---
 
 /**
- * How the review agent talks to a model about tools. `auto` probes native
- * function calling once and falls back to a text protocol; the others force a
- * specific protocol (mostly for small local models).
- */
-export type ToolProtocol = 'auto' | 'native' | 'react' | 'json' | 'none';
-
 /** Severity attached to a proposed review comment. */
 export type ReviewSeverity = 'info' | 'warning' | 'error';
 
@@ -325,14 +319,9 @@ export interface AiProviderConfig {
   contextWindow: number;
   maxTokens: number;
   temperature: number;
-  /** Requested protocol; `auto` negotiates at run time. */
-  toolProtocol: ToolProtocol;
-  /** Protocol that last succeeded, remembered to skip probing. */
-  detectedProtocol: Exclude<ToolProtocol, 'auto'> | null;
   /** Output bytes kept per tool result before pruning. */
   toolResultChars: number;
   maxSteps: number;
-  stream: boolean;
 }
 
 /** Reviewer instructions and policy ("revision rule") applied to every review. */
@@ -499,8 +488,6 @@ export type ReviewJobState = 'running' | 'paused' | 'done' | 'error' | 'cancelle
 export interface ReviewJob {
   id: string;
   state: ReviewJobState;
-  /** Protocol actually used, once negotiated. */
-  protocol: Exclude<ToolProtocol, 'auto'> | null;
   batchIndex: number;
   batchTotal: number;
   /** Latest streamed model output (may be partial). */

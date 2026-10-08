@@ -15,7 +15,6 @@ import type {
   ForgeKind,
   ReviewRuleConfig,
   ReviewSeverity,
-  ToolProtocol,
 } from './types';
 
 /** One provider as stored on disk (includes the secret key). */
@@ -28,11 +27,8 @@ export interface StoredProvider {
   contextWindow: number;
   maxTokens: number;
   temperature: number;
-  toolProtocol: ToolProtocol;
-  detectedProtocol: Exclude<ToolProtocol, 'auto'> | null;
   toolResultChars: number;
   maxSteps: number;
-  stream: boolean;
 }
 
 interface StoredSettings {
@@ -56,7 +52,6 @@ interface StoredSettings {
 }
 
 const SEVERITIES: ReviewSeverity[] = ['info', 'warning', 'error'];
-const PROTOCOLS: ToolProtocol[] = ['auto', 'native', 'react', 'json', 'none'];
 const FORGES: Array<ForgeKind | 'auto'> = ['auto', 'gitlab', 'github'];
 
 /** Location of the config file (`XDG_CONFIG_HOME` aware). */
@@ -102,11 +97,8 @@ function defaultProvider(): StoredProvider {
     contextWindow: 8192,
     maxTokens: 1024,
     temperature: 0.1,
-    toolProtocol: 'auto',
-    detectedProtocol: null,
     toolResultChars: 2000,
     maxSteps: 8,
-    stream: true,
   };
 }
 
@@ -146,16 +138,6 @@ function severity(v: unknown, fallback: ReviewSeverity): ReviewSeverity {
     : fallback;
 }
 
-function protocol(v: unknown, fallback: ToolProtocol): ToolProtocol {
-  return typeof v === 'string' && (PROTOCOLS as string[]).includes(v)
-    ? (v as ToolProtocol)
-    : fallback;
-}
-
-function detected(v: unknown): Exclude<ToolProtocol, 'auto'> | null {
-  return v === 'native' || v === 'react' || v === 'json' || v === 'none' ? v : null;
-}
-
 function globs(v: unknown, fallback: string[]): string[] {
   if (!Array.isArray(v)) return fallback;
   return v.filter((x): x is string => typeof x === 'string');
@@ -179,11 +161,8 @@ function parseProviders(v: unknown): StoredProvider[] {
       contextWindow: int(p.contextWindow, base.contextWindow, 512),
       maxTokens: int(p.maxTokens, base.maxTokens, 1),
       temperature: num(p.temperature, base.temperature),
-      toolProtocol: protocol(p.toolProtocol, base.toolProtocol),
-      detectedProtocol: detected(p.detectedProtocol),
       toolResultChars: int(p.toolResultChars, base.toolResultChars, 200),
       maxSteps: int(p.maxSteps, base.maxSteps, 1),
-      stream: bool(p.stream, base.stream),
     });
   }
   return out;
@@ -290,11 +269,8 @@ export function publicSettings(): AppSettings {
         contextWindow: p.contextWindow,
         maxTokens: p.maxTokens,
         temperature: p.temperature,
-        toolProtocol: p.toolProtocol,
-        detectedProtocol: p.detectedProtocol,
         toolResultChars: p.toolResultChars,
         maxSteps: p.maxSteps,
-        stream: p.stream,
       })),
       activeProviderId: s.ai.activeProviderId,
     },
@@ -358,11 +334,8 @@ export function saveSettings(input: unknown): AppSettings {
         contextWindow: int(p.contextWindow, prev?.contextWindow ?? base.contextWindow, 512),
         maxTokens: int(p.maxTokens, prev?.maxTokens ?? base.maxTokens, 1),
         temperature: num(p.temperature, prev?.temperature ?? base.temperature),
-        toolProtocol: protocol(p.toolProtocol, prev?.toolProtocol ?? base.toolProtocol),
-        detectedProtocol: detected(p.detectedProtocol ?? prev?.detectedProtocol ?? null),
         toolResultChars: int(p.toolResultChars, prev?.toolResultChars ?? base.toolResultChars, 200),
         maxSteps: int(p.maxSteps, prev?.maxSteps ?? base.maxSteps, 1),
-        stream: bool(p.stream, prev?.stream ?? base.stream),
       });
     }
     current.ai.providers = next;
@@ -470,17 +443,4 @@ export function reviewRule(): ReviewRuleConfig {
 /** The effective AI commit-message rule. */
 export function commitRule(): CommitMessageConfig {
   return readStored().commit;
-}
-
-/** Remember the protocol that last worked for a provider. */
-export function rememberProtocol(providerId: string, protocol: Exclude<ToolProtocol, 'auto'>): void {
-  const s = readStored();
-  const p = s.ai.providers.find((x) => x.id === providerId);
-  if (!p || p.detectedProtocol === protocol) return;
-  p.detectedProtocol = protocol;
-  try {
-    writeStored(s);
-  } catch {
-    // A read-only config dir must not fail a review.
-  }
 }

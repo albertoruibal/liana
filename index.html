@@ -602,9 +602,10 @@
           </div>
           <ul id="settings-providers" class="provider-list"></ul>
           <p class="muted hint">
-            An OpenAI-compatible endpoint (Ollama, llama.cpp, LM Studio, …). Set the
-            protocol to <em>Auto</em> to let Liana probe for tool support and remember
-            the result.
+            An OpenAI-compatible endpoint (llama.cpp, Ollama, LM Studio, vLLM, …). The
+            model must support native function calling (<code>tools</code> /
+            <code>tool_calls</code>); the diff-only review of models without it is not
+            supported.
           </p>
         </section>
 

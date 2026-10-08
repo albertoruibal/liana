@@ -40,15 +40,6 @@ export function renderProviderList(): void {
           <input type="password" class="pf-key" autocomplete="off"
             placeholder="${p.hasKey ? 'Token saved — leave blank to keep' : 'API token (optional for local models)'}" />
           <div class="provider-row">
-            <label class="pf-small">Protocol
-              <select class="pf-protocol">
-                <option value="auto">auto</option>
-                <option value="native">native</option>
-                <option value="react">react</option>
-                <option value="json">json</option>
-                <option value="none">none</option>
-              </select>
-            </label>
             <label class="pf-small">Context
               <input type="number" class="pf-context" min="512" value="${p.contextWindow}" />
             </label>
@@ -66,25 +57,13 @@ export function renderProviderList(): void {
             <label class="pf-small">Temperature
               <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
             </label>
-            <label class="pf-checkbox">
-              <input type="checkbox" class="pf-stream" ${p.stream ? 'checked' : ''} /> Stream
-            </label>
             <button type="button" class="btn pf-test">Test</button>
             <button type="button" class="btn pf-remove">Remove</button>
           </div>
-          <p class="muted hint pf-detected">${
-            p.detectedProtocol ? `Last successful protocol: ${esc(p.detectedProtocol)}` : ''
-          }</p>
         </div>
       </li>`,
     )
     .join('');
-
-  const selects = ul.querySelectorAll<HTMLSelectElement>('.pf-protocol');
-  settingsProviders.forEach((p, i) => {
-    const sel = selects[i];
-    if (sel) sel.value = p.toolProtocol;
-  });
 }
 
 /** Pull the current DOM values back into `settingsProviders`. */
@@ -104,11 +83,6 @@ export function readProviderInputs(): void {
     p.toolResultChars =
       Number(q<HTMLInputElement>('.pf-resultchars')?.value) || p.toolResultChars;
     p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
-    p.stream = q<HTMLInputElement>('.pf-stream')?.checked ?? p.stream;
-    const proto = q<HTMLSelectElement>('.pf-protocol')?.value;
-    if (proto === 'auto' || proto === 'native' || proto === 'react' || proto === 'json' || proto === 'none') {
-      p.toolProtocol = proto;
-    }
     const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
     if (radio?.checked) settingsActiveProviderId = p.id;
   });
@@ -190,11 +164,8 @@ export function collectSettingsPatch(): Record<string, unknown> {
       contextWindow: p.contextWindow,
       maxTokens: p.maxTokens,
       temperature: p.temperature,
-      toolProtocol: p.toolProtocol,
-      detectedProtocol: p.detectedProtocol,
       toolResultChars: p.toolResultChars,
       maxSteps: p.maxSteps,
-      stream: p.stream,
     };
     const key = settingsNewKeys.get(p.id);
     if (key) out.apiKey = key;
@@ -302,11 +273,8 @@ export function initSettings(): void {
       contextWindow: 8192,
       maxTokens: 1024,
       temperature: 0.1,
-      toolProtocol: 'auto',
-      detectedProtocol: null,
       toolResultChars: 2000,
       maxSteps: 8,
-      stream: true,
     });
     if (!settingsActiveProviderId) settingsActiveProviderId = id;
     renderProviderList();

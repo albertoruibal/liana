@@ -24,6 +24,7 @@ import {
   testProvider,
 } from '../review';
 import { forgeByKind, resolveForge } from '../forges';
+import { forgeLabel, hasCommit } from '../forge';
 import { markInterruptedSessions } from '../sessions';
 import { applyConflictFix, proposeConflictFix } from '../conflict-fix';
 import { activeProvider, commitRule, providerById, publicSettings, saveSettings } from '../settings';
@@ -246,10 +247,27 @@ export function createApi(defaultRepo: string | null): Api {
         }
         const forge = await resolveForge(repoPath);
         const changes = await forge.getChanges(repoPath, parsed.iid as number);
-        await forge.ensureRefs(repoPath, changes).catch(() => {
-          // Best effort: without the objects the agent's repo tools degrade, but the
-          // diff-based review still runs.
-        });
+        // The review reads the repository at the request head and refuses to run
+        // without it, so fetch it up front and fail with an actionable message
+        // rather than starting a job that cannot succeed.
+        let headMissing: string | null = null;
+        try {
+          await forge.ensureRefs(repoPath, changes);
+        } catch (err) {
+          headMissing = err instanceof Error ? err.message : String(err);
+        }
+        const headSha = changes.diffRefs.headSha.trim();
+        if (headMissing || !headSha || !(await hasCommit(repoPath, headSha).catch(() => false))) {
+          return {
+            status: 400,
+            body: {
+              error:
+                `The ${forgeLabel(changes.forge)} head commit is not available locally` +
+                (headMissing ? ` (${headMissing})` : '') +
+                ' — use "Checkout branch" to fetch it, then start the review again.',
+            },
+          };
+        }
         const job = startReview({
           repoPath,
           changes,

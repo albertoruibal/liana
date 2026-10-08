@@ -25,14 +25,16 @@ export interface ChatRequest {
   messages: unknown[];
   temperature: number;
   max_tokens: number;
+  /** Request SSE streaming; an endpoint that ignores it still gets the JSON fallback. */
   stream?: boolean;
   tools?: unknown;
   tool_choice?: string;
 }
 
 /**
- * Call `/chat/completions`, streaming when the provider opts in. Streamed text
- * is appended to `onDelta` so a job can show partial output.
+ * Call `/chat/completions`. Streamed text is appended to `onDelta` so a job can
+ * show partial output; a server that ignores streaming still gets a plain JSON
+ * response handled below.
  */
 export async function chatCompletion(
   provider: StoredProvider,
@@ -68,10 +70,10 @@ export async function chatCompletion(
       throw err;
     }
 
-    // Some local servers ignore `stream: true` and return a normal JSON body;
-    // only treat the response as SSE when it actually says so.
+    // Some local servers ignore streaming and return a normal JSON body; only
+    // treat the response as SSE when it actually says so.
     const contentType = res.headers.get('content-type') ?? '';
-    if (request.stream && res.body && contentType.includes('text/event-stream')) {
+    if (res.body && contentType.includes('text/event-stream')) {
       return await readStream(res.body, onDelta);
     }
     const raw = (await res.json()) as unknown;
@@ -221,7 +223,7 @@ export async function completeText(
       ],
       temperature: provider.temperature,
       max_tokens: opts.maxTokens ?? provider.maxTokens,
-      stream: provider.stream,
+      stream: true,
     },
     opts.onDelta,
     opts.signal,

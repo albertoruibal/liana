@@ -3500,30 +3500,6 @@ dialog select:focus-visible {
   width: 78px;
 }
 
-.pf-checkbox {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 7px;
-  margin: 0 !important;
-  padding-bottom: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--fg-faint);
-  cursor: pointer;
-}
-
-.pf-checkbox input[type='checkbox'] {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.pf-detected:empty {
-  display: none;
-}
-
 .pf-remove {
   margin-left: auto;
   align-self: flex-end;

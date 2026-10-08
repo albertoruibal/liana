@@ -59,7 +59,7 @@ export function paintForgeWording(state: ReviewTabState): void {
   $<HTMLButtonElement>('#review-checkout-mr').disabled = state.changes === null;
 }
 
-/** The head-missing note the review loop records when it drops to diff-only. */
+/** Legacy head-missing note from sessions written before reviews refused to run. */
 function jobHeadWarning(job: ReviewJob | null): string | null {
   const note = job?.trace.find((t) => t.tool === 'repo_tools');
   return note ? note.resultSummary : null;
@@ -313,9 +313,7 @@ let logOutput = '';
 
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
-  $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
-    job.protocol ? ` · ${job.protocol}` : ''
-  }`;
+  $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
   $('#review-log-trace-count').textContent = String(job.trace.length);
   const traceSig = job.trace
     .map((t) => `${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
@@ -828,9 +826,7 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $('#review-pause-job').hidden = job.state !== 'running';
   $('#review-resume-job').hidden = job.state !== 'paused';
   $('#review-cancel-job').hidden = job.state !== 'running' && job.state !== 'paused';
-  $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}${
-    job.protocol ? ` · ${job.protocol}` : ''
-  }`;
+  $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
   if (job.comments.length > 0) renderCommentQueue(state);

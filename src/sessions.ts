@@ -12,17 +12,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatMessage } from './review-tools';
-import type { ForgeKind, ReviewChanges, ReviewJob, ReviewRuleConfig, ToolProtocol } from './types';
-
-/** A concrete protocol (never `auto`) that a review may run with. */
-export type ReviewProtocol = Exclude<ToolProtocol, 'auto'>;
+import type { ForgeKind, ReviewChanges, ReviewJob, ReviewRuleConfig } from './types';
 
 /** In-flight agent checkpoint inside the current batch, sufficient to resume. */
 export interface BatchCheckpoint {
   /** Zero-based index into `batches`. */
   batchIndex: number;
-  /** Index into `candidates` of the protocol being attempted. */
-  candidateIndex: number;
   messages: ChatMessage[];
   step: number;
 }
@@ -40,7 +35,6 @@ export interface StoredReviewSession {
   budget: number;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
-  candidates: ReviewProtocol[];
   /** Zero-based batch currently being (or next to be) processed. */
   batchIndex: number;
   checkpoint: BatchCheckpoint | null;
@@ -232,14 +226,9 @@ function coerceJob(v: unknown): ReviewJob | null {
   ) {
     return null;
   }
-  const protocol = v.protocol;
   return {
     id: str(v.id, ''),
     state,
-    protocol:
-      protocol === 'native' || protocol === 'react' || protocol === 'json' || protocol === 'none'
-        ? protocol
-        : null,
     batchIndex: Math.max(0, Math.floor(num(v.batchIndex, 0))),
     batchTotal: Math.max(1, Math.floor(num(v.batchTotal, 1))),
     output: str(v.output, ''),
@@ -304,7 +293,6 @@ function coerceCheckpoint(v: unknown): BatchCheckpoint | null {
   }
   return {
     batchIndex: Math.max(0, Math.floor(num(v.batchIndex, 0))),
-    candidateIndex: Math.max(0, Math.floor(num(v.candidateIndex, 0))),
     messages,
     step: Math.max(0, Math.floor(num(v.step, 0))),
   };
@@ -317,12 +305,6 @@ function coerceSession(raw: unknown): StoredReviewSession | null {
   const changes = coerceChanges(raw.changes);
   const job = coerceJob(raw.job);
   if (!id || !repoPath || !changes || !job) return null;
-  const candidates = Array.isArray(raw.candidates)
-    ? raw.candidates.filter(
-        (c): c is ReviewProtocol =>
-          c === 'native' || c === 'react' || c === 'json' || c === 'none',
-      )
-    : [];
   const batches = Array.isArray(raw.batches)
     ? raw.batches.map((b: unknown) =>
         Array.isArray(b) ? b.map((i) => Math.floor(num(i, -1))).filter((i) => i >= 0) : [],
@@ -339,7 +321,6 @@ function coerceSession(raw: unknown): StoredReviewSession | null {
     maxSteps: Math.max(1, Math.floor(num(raw.maxSteps, 8))),
     budget: Math.max(1024, Math.floor(num(raw.budget, 4096))),
     batches,
-    candidates,
     batchIndex: Math.max(0, Math.floor(num(raw.batchIndex, 0))),
     checkpoint: coerceCheckpoint(raw.checkpoint),
     job,

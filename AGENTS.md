@@ -90,14 +90,16 @@ in the packaged app.
   local working tree). Tools resolve paths inside the repo only, truncate output, and never write to the working tree or
   index. The agent loop is bounded by `maxSteps` and a chars/4 context budget; batching and a one-shot fallback keep
   small local models usable.
-- **Reviews are pausable and persistent.** `src/sessions.ts` writes the agent checkpoint (message history, batch cursor,
-  negotiated protocol) to `~/.config/liana/sessions/<id>.json` — mode `0600` in a `0700` dir, keyed by absolute repo
+- **Reviews are pausable and persistent.** `src/sessions.ts` writes the agent checkpoint (message history, batch cursor)
+  to `~/.config/liana/sessions/<id>.json` — mode `0600` in a `0700` dir, keyed by absolute repo
   path, ≤12 per repo, `running` sessions reopened as `paused` at startup. Pause aborts the in-flight call but keeps the
   checkpoint; cancel is terminal; resume re-enters the same step. The checkpoint is written *before* each model call so
   a mid-call pause re-issues that step. Session ids are also the `jobId`; `/review/status|cancel|pause|resume|session*`
   must check the job/session's `repoPath` against the request's `x-liana-repo`.
-- Protocol support is negotiated per provider: native OpenAI `tools`/`tool_calls` with fallbacks to a text ReAct loop or
-  a single-JSON protocol; the choice is remembered per provider after the first successful run.
+- The review agent uses **native OpenAI function calling only** (`tools`/`tool_calls`). The endpoint/model must support
+  it; there is no text ReAct / single-JSON protocol and no diff-only fallback. If the request head commit is not present
+  locally, the review refuses to run (the route returns an actionable 400) rather than reasoning about code it cannot
+  read. Streaming is always requested; a non-SSE JSON reply is still handled.
 - GitLab and GitHub are read + review-comment + approve only (list/read MRs and PRs, create discussions / review
   comments, approve). Liana never merges, pushes code, or manages GitLab/GitHub projects. Review comments are posted
   **only after per-comment user approval**.

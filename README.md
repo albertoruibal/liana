@@ -280,7 +280,7 @@ tab's ×.
 
 **Pause & resume.** A running review can be paused and continued later: **Pause** aborts the current model call at the
 nearest checkpoint, **Resume** re-issues the interrupted step and carries on. Because the checkpoint (the agent
-conversation, the batch cursor, and the negotiated protocol) is persisted, a review also survives a page reload and a
+conversation and the batch cursor) is persisted, a review also survives a page reload and a
 full server/Electron restart. A **Saved review** picker lists the repository's sessions (newest first, up to 12 per
 repository), defaults to none, and can delete one; choosing a saved review restores both its merge/pull request and its
 job — so a paused session immediately shows *Review paused — resume to continue* with **Resume** available. Pausing is
@@ -300,19 +300,15 @@ never merges, pushes code, or manages GitLab or GitHub projects.
 
 ### Small local models
 
-The settings for each provider include a **protocol**; a review always uses the active provider's configured protocol:
-
-- `native` — OpenAI `tools` / `tool_calls` function calling.
-- `react` — a text ReAct loop, for servers without a tool API.
-- `json` — a single-JSON-per-turn protocol.
-- `none` — one-shot review of the diff, no tools (tiny models / very small context).
-- `auto` (default) — try native function calling, fall back through `react`, `json`, and `none`, and remember what
-  worked for that provider.
+The review agent talks to the model through **native OpenAI function calling**: it sends the read-only tools as
+`tools` and reads tool calls back from `tool_calls`. The endpoint and model **must** support this — llama.cpp, Ollama,
+LM Studio, and vLLM do. A model that only emits plain text (no tool calls) cannot drive the agent, and there is no
+diff-only fallback: the review refuses to run rather than reason about code it cannot read.
 
 Because small models have small context windows, the review splits the changed files into batches that fit the
 provider's **context window** (a chars/4 estimate), prunes old tool results, and caps each tool result. If the agent
-loop fails or runs out of steps it degrades to a single-shot review. Token-level streaming is used when the endpoint
-supports SSE (a plain JSON response is still handled).
+loop runs out of steps it asks the model for a final JSON result from what it has gathered. Streaming is requested so
+the model log fills in live, but an endpoint that ignores it still works: a plain (non-SSE) JSON response is handled.
 
 ### AI commit messages
 
