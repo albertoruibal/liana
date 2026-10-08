@@ -305,6 +305,8 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
 
 // Signatures of the last model-log render, so a poll tick only rebuilds the
 // parts that changed (and doesn't reset the user's scroll while streaming).
+let logMemorySig = '';
+
 let logTraceSig = '';
 
 let logPromptsSig = '';
@@ -313,6 +315,7 @@ let logOutput = '';
 
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
+  renderMemories(job);
   $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
   $('#review-log-trace-count').textContent = String(job.trace.length);
   const traceSig = job.trace
@@ -821,26 +824,20 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
   }
 }
 
-/** Render the agent's saved memories (read-only) into the collapsible panel. */
+/** Render the agent's saved memories (read-only) into the model-log dialog. */
 function renderMemories(job: ReviewJob): void {
-  const wrap = $<HTMLDetailsElement>('#review-memory-wrap');
   const memories = job.memories;
-  wrap.hidden = false;
-  $('#review-memory-count').textContent = memories.length > 0 ? `(${memories.length})` : '';
-  $('#review-memory-list').innerHTML =
+  const sig = memories.map((m) => m.note).join('\u0001');
+  if (sig === logMemorySig) return;
+  logMemorySig = sig;
+  $('#review-log-memory-count').textContent = String(memories.length);
+  $('#review-log-memory').innerHTML =
     memories.length > 0
       ? memories.map((m) => `<li>${esc(m.note)}</li>`).join('')
       : '<li class="muted">No notes saved yet.</li>';
-  // Auto-open once when notes first appear, so the latest findings are visible
-  // without a click; the user can still collapse it and a poll won't re-open it.
-  if (memories.length > 0 && !wrap.dataset.autoOpened) {
-    wrap.open = true;
-    wrap.dataset.autoOpened = '1';
-  }
 }
 
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
-  renderMemories(job);
   $('#review-progress').hidden = job.state !== 'running';
   $('#review-pause-job').hidden = job.state !== 'running';
   $('#review-resume-job').hidden = job.state !== 'paused';
@@ -997,10 +994,6 @@ export function openReviewTab(): void {
 /** Clear the review view's DOM for a fresh tab. */
 export function resetReviewDom(): void {
   $('#review-queue-wrap').hidden = true;
-  const memory = $<HTMLDetailsElement>('#review-memory-wrap');
-  memory.hidden = true;
-  memory.open = false;
-  delete memory.dataset.autoOpened;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;
@@ -1017,7 +1010,6 @@ export function paintReview(state: ReviewTabState): void {
   paintForgeWording(state);
   $('#review-approve-mr').hidden = changes === null;
   $('#review-queue-wrap').hidden = true;
-  $('#review-memory-wrap').hidden = state.job === null;
   $('#review-progress').hidden = true;
   $('#review-pause-job').hidden = true;
   $('#review-resume-job').hidden = true;

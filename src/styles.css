@@ -3788,22 +3788,8 @@ dialog select:focus-visible {
   font-size: 13px;
 }
 
-.review-memory {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elev-2);
-  padding: 8px 12px;
-  margin-bottom: 12px;
-}
-
-.review-memory > summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .review-memory-list {
-  margin: 8px 0 0;
+  margin: 0;
   padding-left: 18px;
   display: flex;
   flex-direction: column;

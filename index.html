@@ -173,11 +173,6 @@
             <div id="review-comment-list" class="review-comment-list"></div>
           </div>
 
-          <details id="review-memory-wrap" class="review-memory" hidden>
-            <summary>Agent memory <span id="review-memory-count" class="muted"></span></summary>
-            <ul id="review-memory-list" class="review-memory-list"></ul>
-          </details>
-
           <div id="review-status" class="dialog-status"></div>
           <div class="review-actions">
             <button class="btn" id="review-approve-mr" hidden>Approve MR</button>          </div>
@@ -560,6 +555,10 @@
         </button>
       </div>
       <div id="review-log-body" class="review-log-body">
+        <section id="review-log-memory-wrap">
+          <h4>Agent memory (<span id="review-log-memory-count">0</span>)</h4>
+          <ul id="review-log-memory" class="review-memory-list"></ul>
+        </section>
         <section id="review-log-trace-wrap">
           <h4>Agent trace (<span id="review-log-trace-count">0</span>)</h4>
           <ol id="review-log-trace" class="review-log-trace"></ol>
