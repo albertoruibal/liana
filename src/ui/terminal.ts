@@ -59,6 +59,25 @@ function findByKey(key: string): TerminalInstance | undefined {
   return instances.get(key);
 }
 
+/**
+ * Re-fit `inst` only when it is actually laid out. Hiding a terminal sets its
+ * box to zero, and `FitAddon` does not detect that: it reads the parent's
+ * computed height through `parseInt`, which turns the unresolvable `100%` into
+ * `100` rather than `NaN`, so it happily resizes to a bogus handful of rows.
+ * Skipping unseen terminals leaves the buffer untouched; the observer refits
+ * once the box grows back.
+ */
+function fitIfVisible(inst: TerminalInstance): void {
+  if (inst.el.hidden) return;
+  const rect = inst.el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  try {
+    inst.fit.fit();
+  } catch {
+    // ignore transient zero-size measurements
+  }
+}
+
 // PTY output is fanned out with the client key (the worktree path); route it to
 // the owning terminal. This is race-free: the key is known before `open` returns.
 let wired = false;
@@ -98,11 +117,7 @@ async function startSession(state: TerminalState): Promise<void> {
   term.open(el);
   // Re-fit whenever the pane changes size (window resize, resizer, tab switch).
   const observer = new ResizeObserver(() => {
-    try {
-      fit.fit();
-    } catch {
-      // ignore transient zero-size measurements
-    }
+    fitIfVisible(inst);
   });
   observer.observe(el);
   const inst: TerminalInstance = { term, fit, el, observer };
@@ -110,11 +125,7 @@ async function startSession(state: TerminalState): Promise<void> {
 
   // Size once the element has layout, then start the shell at that size.
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  try {
-    fit.fit();
-  } catch {
-    // The host may still be zero-sized; the ResizeObserver will correct it.
-  }
+  fitIfVisible(inst);
   const id = await bridge.open({
     repoPath: state.repoPath,
     cwd: state.path,
@@ -147,11 +158,7 @@ export function focusTerminal(path: string): void {
   // has laid the terminal out, and only then focus.
   requestAnimationFrame(() => {
     if (instances.get(path) !== inst || inst.el.hidden) return;
-    try {
-      inst.fit.fit();
-    } catch {
-      // ignore transient zero-size measurements
-    }
+    fitIfVisible(inst);
     inst.term.focus();
   });
 }
