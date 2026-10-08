@@ -6,6 +6,7 @@ import { remoteLocalName } from './rebase';
 import { activeTab, store } from './store';
 import { toast } from './toast';
 import { $ } from './dom';
+import { confirmDialog } from './confirm';
 import { refresh } from './actions';
 import { checkout } from './rebase';
 import { $svg } from './dom';
@@ -96,7 +97,14 @@ export async function doPush(force = false): Promise<void> {
     const message = String(err);
     if (!force && /non-fast-forward|\[rejected\]|fetch first/i.test(message)) {
       const branchName = rs.currentBranch ?? 'this branch';
-      if (confirm(`Push rejected: the remote has commits you don't have.\n\nForce-push ${branchName} with --force-with-lease?`)) {
+      if (
+        await confirmDialog({
+          title: 'Push rejected',
+          message: `The remote has commits you don't have. Force-push ${branchName} with --force-with-lease?`,
+          confirmLabel: 'Force-push',
+          danger: true,
+        })
+      ) {
         await doPush(true);
       }
       return;

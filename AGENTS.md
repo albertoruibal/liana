@@ -144,3 +144,8 @@ in the packaged app.
   `NET_ENV`. Opening a worktree is just `addRepo(path)` — it registers as an ordinary repository. `Remove` deletes the
   working directory and is blocked by uncommitted changes unless `force` is passed; never remove the main or current
   worktree from the UI.
+- **No native `window.confirm()` / `window.prompt()`.** Every confirmation goes through `confirmDialog` in
+  `src/ui/confirm.ts`, every single-text prompt through `promptText` in `src/ui/prompt.ts` (`tabs.ts` still prefers
+  Electron's native folder picker). The cherry-pick options dialog lives in `src/ui/cherry-pick.ts` and reuses the
+  existing `/cherry-pick` route — `mainline` is selected only for merge commits, `-x` is a checkbox. Styling reuses the
+  shared `dialog` / `.dialog-head` / `dialog menu` / `.btn-danger` classes; destructive actions use `danger: true`.

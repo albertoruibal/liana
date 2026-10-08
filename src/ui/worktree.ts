@@ -4,32 +4,10 @@ import { $ } from './dom';
 import { refresh } from './actions';
 import { api } from './api-client';
 import { addRepo } from './tabs';
+import { confirmDialog } from './confirm';
 import { toast } from './toast';
 
 let wtRef = '';
-
-/** Pending resolver for the single-text prompt, or null when no prompt is open. */
-let inputResolve: ((value: string | null) => void) | null = null;
-
-/**
- * Modal single-text prompt (Electron has no window.prompt). Resolves to the
- * trimmed value (possibly empty), or null when cancelled.
- */
-export function promptText(title: string, label: string, value = ''): Promise<string | null> {
-  $('#wt-input-title').textContent = title;
-  $('#wt-input-subtitle').textContent = '';
-  $('#wt-input-label').textContent = label;
-  $('#wt-input-error').textContent = '';
-  const field = $<HTMLInputElement>('#wt-input-field');
-  field.value = value;
-  const dlg = $<HTMLDialogElement>('#wt-input-dialog');
-  return new Promise((resolve) => {
-    inputResolve = resolve;
-    dlg.showModal();
-    field.focus();
-    field.select();
-  });
-}
 
 /**
  * Open the create-worktree dialog. `ref` is the start point the new branch is
@@ -70,7 +48,13 @@ export function initWorktree(): void {
         await api('/worktree-add', { path: dest, branch, ref });
         $<HTMLDialogElement>('#worktree-dialog').close();
         await refresh();
-        if (confirm(`Worktree created at ${dest}.\n\nOpen it in a new tab?`)) {
+        if (
+          await confirmDialog({
+            title: 'Worktree created',
+            message: `Worktree created at ${dest}. Open it in a new tab?`,
+            confirmLabel: 'Open in new tab',
+          })
+        ) {
           try {
             await addRepo(dest, true);
           } catch (err) {
@@ -85,21 +69,5 @@ export function initWorktree(): void {
 
   $('#worktree-cancel').addEventListener('click', () => {
     $<HTMLDialogElement>('#worktree-dialog').close();
-  });
-
-  const resolveInput = (value: string | null): void => {
-    const resolve = inputResolve;
-    inputResolve = null;
-    resolve?.(value);
-  };
-  $('#wt-input-form').addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    const value = $<HTMLInputElement>('#wt-input-field').value;
-    $<HTMLDialogElement>('#wt-input-dialog').close();
-    resolveInput(value);
-  });
-  $<HTMLDialogElement>('#wt-input-dialog').addEventListener('close', () => resolveInput(null));
-  $('#wt-input-cancel').addEventListener('click', () => {
-    $<HTMLDialogElement>('#wt-input-dialog').close();
   });
 }

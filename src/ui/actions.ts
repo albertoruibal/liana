@@ -13,7 +13,8 @@ import { store } from './store';
 import { RemoteStatus } from '../types';
 import { openAiConflictDialog } from './ai-conflict';
 import { openConflictDialog, openSubmoduleHistory } from './conflicts';
-import { promptText } from './worktree';
+import { confirmDialog } from './confirm';
+import { promptText } from './prompt';
 import { refreshActivity } from './status-bar';
 export async function refresh(): Promise<void> {
   const reqId = store.activeId;
@@ -60,7 +61,15 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
       await api('/stash-drop', { hash: store.selectedHash });
       store.selectedHash = null;
     } else if (act === 'stash-drop') {
-      if (!confirm('Drop this stash entry? The saved changes are discarded.')) return;
+      if (
+        !(await confirmDialog({
+          title: 'Drop stash?',
+          message: 'Drop this stash entry? The saved changes are discarded.',
+          confirmLabel: 'Drop stash',
+          danger: true,
+        }))
+      )
+        return;
       await api('/stash-drop', { hash: store.selectedHash });
       store.selectedHash = null;
     } else if (act === 'view-conflict') {
@@ -70,20 +79,50 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
       await openAiConflictDialog(path);
       return;
     } else if (act === 'take-ours') {
-      if (!confirm(`Resolve ${path} using our version?`)) return;
+      if (
+        !(await confirmDialog({
+          title: 'Resolve conflict',
+          message: `Resolve ${path} using our version?`,
+          confirmLabel: 'Use ours',
+        }))
+      )
+        return;
       await api('/conflict-resolve', { path, resolution: 'ours' });
     } else if (act === 'take-theirs') {
-      if (!confirm(`Resolve ${path} using their version?`)) return;
+      if (
+        !(await confirmDialog({
+          title: 'Resolve conflict',
+          message: `Resolve ${path} using their version?`,
+          confirmLabel: 'Use theirs',
+        }))
+      )
+        return;
       await api('/conflict-resolve', { path, resolution: 'theirs' });
     } else if (act === 'mark-resolved') {
       await api('/conflict-resolve', { path, resolution: 'resolved' });
     } else if (act === 'op-continue') {
       await api('/conflict-continue', {});
     } else if (act === 'op-skip') {
-      if (!confirm('Skip this patch? Its changes are discarded.')) return;
+      if (
+        !(await confirmDialog({
+          title: 'Skip patch?',
+          message: 'Skip this patch? Its changes are discarded.',
+          confirmLabel: 'Skip',
+          danger: true,
+        }))
+      )
+        return;
       await api('/conflict-skip', {});
     } else if (act === 'op-abort') {
-      if (!confirm('Abort the in-progress operation? The working tree is restored first.')) return;
+      if (
+        !(await confirmDialog({
+          title: 'Abort operation?',
+          message: 'Abort the in-progress operation? The working tree is restored first.',
+          confirmLabel: 'Abort',
+          danger: true,
+        }))
+      )
+        return;
       await api('/conflict-abort', {});
     } else if (act === 'sub-log') {
       await openSubmoduleHistory(path);
@@ -94,17 +133,41 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
     } else if (act === 'sub-sync') {
       await api('/submodule-sync', {});
     } else if (act === 'sub-deinit') {
-      if (!confirm(`Deinitialize ${path}? Its working tree is removed (the recorded commit is kept).`)) return;
+      if (
+        !(await confirmDialog({
+          title: 'Deinitialize submodule?',
+          message: `Deinitialize ${path}? Its working tree is removed (the recorded commit is kept).`,
+          confirmLabel: 'Deinit',
+          danger: true,
+        }))
+      )
+        return;
       await api('/submodule-deinit', { path, force: true });
     } else if (act === 'wt-open') {
       await addRepo(path, true);
       return;
     } else if (act === 'wt-remove') {
-      if (!confirm(`Remove worktree ${path}? Its working directory is deleted. Uncommitted changes will block this.`)) return;
+      if (
+        !(await confirmDialog({
+          title: 'Remove worktree?',
+          message: `Remove worktree ${path}? Its working directory is deleted. Uncommitted changes will block this.`,
+          confirmLabel: 'Remove',
+          danger: true,
+        }))
+      )
+        return;
       try {
         await api('/worktree-remove', { path });
       } catch (err) {
-        if (confirm(`${String(err)}\n\nForce removal? Uncommitted changes in that worktree are discarded.`)) {
+        if (
+          await confirmDialog({
+            title: 'Force removal?',
+            message: `${String(err)}\n\nForce removal? Uncommitted changes in that worktree are discarded.`,
+            confirmLabel: 'Force remove',
+            danger: true,
+            warning: 'Force removal discards uncommitted changes in that worktree.',
+          })
+        ) {
           await api('/worktree-remove', { path, force: true });
         } else {
           return;

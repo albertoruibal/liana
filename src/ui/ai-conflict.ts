@@ -5,6 +5,7 @@ import { esc } from './format';
 import { $ } from './dom';
 import { AiConflictFix } from '../types';
 import { refresh } from './actions';
+import { confirmDialog } from './confirm';
 
 // --- AI conflict resolution dialog ---
 /** The last model proposal, applied when the user confirms. */
@@ -79,7 +80,14 @@ export async function applyAiConflictFix(): Promise<void> {
   const applyBtn = $<HTMLButtonElement>('#ai-conflict-apply');
   applyBtn.disabled = true;
   const verb = fix.kind === 'delete' ? 'remove' : 'overwrite';
-  if (!confirm(`Apply the AI merge? This will ${verb} ${fix.path} and stage it.`)) {
+  if (
+    !(await confirmDialog({
+      title: 'Apply AI merge?',
+      message: `Apply the AI merge? This will ${verb} ${fix.path} and stage it.`,
+      confirmLabel: 'Apply',
+      danger: fix.kind === 'delete',
+    }))
+  ) {
     applyBtn.disabled = false;
     return;
   }

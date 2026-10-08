@@ -12,6 +12,8 @@ import { INTERACTIVE_REBASE_ENABLED } from '../config';
 import { ResetMode } from '../types';
 import { refresh } from './actions';
 import { checkout, openRebaseDialog } from './rebase';
+import { openCherryPickDialog } from './cherry-pick';
+import { confirmDialog } from './confirm';
 import { openWorktreeDialog } from './worktree';
 import { openCodeViewer } from './code-viewer';
 import { openSubprojectDialog } from './conflicts';
@@ -78,20 +80,7 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
   if (hash && currentBranch && !detached) {
     if (!isHeadTip) {
       items.push({ separator: true });
-      if (commit && commit.parents.length >= 2) {
-        commit.parents.forEach((_p, i) => {
-          items.push({
-            label: `Cherry-pick ${short} onto ${currentBranch} (-m ${i + 1})`,
-            action: () => void cherryPickFromMenu(hash, i + 1),
-          });
-        });
-      } else {
-        items.push({ label: `Cherry-pick ${short} onto ${currentBranch}`, action: () => void cherryPickFromMenu(hash) });
-        items.push({
-          label: `Cherry-pick ${short} onto ${currentBranch} (record source -x)`,
-          action: () => void cherryPickFromMenu(hash, undefined, true),
-        });
-      }
+      items.push({ label: `Cherry-pick ${short} onto ${currentBranch}…`, action: () => openCherryPickDialog(hash) });
       if (INTERACTIVE_REBASE_ENABLED) {
         items.push({
           label: `Interactive rebase onto ${short}…`,
@@ -200,7 +189,15 @@ export function targetFromSvg(el: Element | null): ContextTarget {
 
 export async function rebaseOntoBranch(name: string): Promise<void> {
   const branch = store.lastResponse?.state?.headBranch ?? 'the current branch';
-  if (!confirm(`Rebase ${branch} onto ${name}?`)) return;
+  if (
+    !(await confirmDialog({
+      title: 'Rebase branch?',
+      message: `Rebase ${branch} onto ${name}?`,
+      confirmLabel: 'Rebase',
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/rebase', { onto: name });
     await refresh();
@@ -209,22 +206,19 @@ export async function rebaseOntoBranch(name: string): Promise<void> {
   }
 }
 
-export async function cherryPickFromMenu(hash: string, mainline?: number, record?: boolean): Promise<void> {
-  const branch = store.lastResponse?.state?.headBranch ?? 'the current branch';
-  const what = mainline !== undefined ? `commit ${hash.slice(0, 8)} (-m ${mainline})` : `commit ${hash.slice(0, 8)}`;
-  if (!confirm(`Cherry-pick ${what} onto ${branch}?`)) return;
-  try {
-    await api('/cherry-pick', { ref: hash, mainline, record });
-    await refresh();
-  } catch (err) {
-    toast(`Cherry-pick failed: ${String(err)}`);
-  }
-}
-
 export async function revertFromMenu(hash: string, mainline?: number): Promise<void> {
   const branch = store.lastResponse?.state?.headBranch ?? 'the current branch';
   const what = mainline !== undefined ? `commit ${hash.slice(0, 8)} (-m ${mainline})` : `commit ${hash.slice(0, 8)}`;
-  if (!confirm(`Revert ${what} on ${branch}? This creates a new commit undoing its changes.`)) return;
+  if (
+    !(await confirmDialog({
+      title: 'Revert commit?',
+      message: `Revert ${what} on ${branch}? This creates a new commit undoing its changes.`,
+      confirmLabel: 'Revert',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/revert', { ref: hash, mainline });
     await refresh();
@@ -235,7 +229,15 @@ export async function revertFromMenu(hash: string, mainline?: number): Promise<v
 
 export async function mergeIntoCurrent(name: string): Promise<void> {
   const branch = store.lastResponse?.state?.headBranch ?? 'the current branch';
-  if (!confirm(`Merge ${name} into ${branch}?`)) return;
+  if (
+    !(await confirmDialog({
+      title: 'Merge branch?',
+      message: `Merge ${name} into ${branch}?`,
+      confirmLabel: 'Merge',
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/merge', { ref: name });
     await refresh();
@@ -246,7 +248,16 @@ export async function mergeIntoCurrent(name: string): Promise<void> {
 
 export async function deleteBranch(name: string, remote: boolean): Promise<void> {
   const noun = remote ? `remote branch "${name}"` : `branch "${name}"`;
-  if (!confirm(`Delete ${noun}?`)) return;
+  if (
+    !(await confirmDialog({
+      title: 'Delete branch?',
+      message: `Delete ${noun}?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/branch-delete', { name, remote });
     await refresh();
@@ -256,7 +267,16 @@ export async function deleteBranch(name: string, remote: boolean): Promise<void>
 }
 
 export async function deleteTag(name: string): Promise<void> {
-  if (!confirm(`Delete tag "${name}"?`)) return;
+  if (
+    !(await confirmDialog({
+      title: 'Delete tag?',
+      message: `Delete tag "${name}"?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/tag-delete', { name });
     await refresh();
@@ -286,7 +306,16 @@ export async function popStash(hash: string): Promise<void> {
 }
 
 export async function dropStash(hash: string): Promise<void> {
-  if (!confirm('Drop this stash entry? The saved changes are discarded.')) return;
+  if (
+    !(await confirmDialog({
+      title: 'Drop stash?',
+      message: 'Drop this stash entry? The saved changes are discarded.',
+      confirmLabel: 'Drop stash',
+      danger: true,
+    }))
+  ) {
+    return;
+  }
   try {
     await api('/stash-drop', { hash });
     store.selectedHash = null;

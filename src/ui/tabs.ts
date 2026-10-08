@@ -7,6 +7,7 @@ import { updateSyncButtons } from './remotes';
 import { closeReviewTab, paintReview, persistReviewTabs, updateReviewVisibility } from './review-view';
 import { closeStatusHistory, renderStatusBar } from './status-bar';
 import { RepoTab, activeTab, saveActive, store } from './store';
+import { promptText } from './prompt';
 import { toast } from './toast';
 import { $ } from './dom';
 import { refresh } from './actions';
@@ -171,10 +172,11 @@ export function renderNoRepo(): void {
 
 /** Open a folder picker and add the chosen repository as a tab. */
 export async function openRepo(): Promise<void> {
-  // Electron has no window.prompt — use the native folder picker when available.
+  // Electron has no window.prompt — use the native folder picker when available,
+  // otherwise the styled in-app text prompt.
   const p = window.liana
     ? await window.liana.openRepoDialog()
-    : prompt('Path to git repository:', '~/workspace/my-repo');
+    : await promptText('Open repository', 'Path to git repository:', '~/workspace/my-repo');
   if (!p) return;
   try {
     await addRepo(p, true);

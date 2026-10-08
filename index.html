@@ -316,6 +316,50 @@
       </menu>
     </dialog>
 
+    <dialog id="confirm-dialog">
+      <div class="dialog-head">
+        <h3 id="confirm-title">Confirm</h3>
+        <p class="muted hint" id="confirm-message"></p>
+        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="confirm-warning" class="dirty-banner" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 1.4 13.4h13.2L8 2.2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.2M8 11.6v.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <span id="confirm-warning-text"></span>
+      </div>
+      <menu>
+        <button class="btn" id="confirm-cancel" value="cancel">Cancel</button>
+        <button class="btn btn-primary" id="confirm-ok" value="ok">Confirm</button>
+      </menu>
+    </dialog>
+
+    <dialog id="cherry-pick-dialog">
+      <form method="dialog" id="cherry-pick-form">
+        <div class="dialog-head">
+          <h3>Cherry-pick commit</h3>
+          <p class="muted hint" id="cherry-pick-subtitle"></p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <label id="cherry-pick-mainline-label" hidden>
+          Mainline parent
+          <select id="cherry-pick-mainline"></select>
+          <span class="hint" id="cherry-pick-mainline-hint">This is a merge commit; choose which parent to follow.</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="cherry-pick-record" />
+          Record source in the message (-x)
+        </label>
+        <div id="cherry-pick-status" class="dialog-status"></div>
+        <menu>
+          <button class="btn" type="button" id="cherry-pick-cancel">Cancel</button>
+          <button class="btn btn-primary" id="cherry-pick-submit" value="ok">Cherry-pick</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="stash-dialog">
       <form method="dialog" id="stash-form">
         <div class="dialog-head">

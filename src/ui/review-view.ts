@@ -1156,6 +1156,8 @@ export function initReview(): void {
     const nameDlg = $<HTMLDialogElement>('#name-dialog');
     const resetDlg = $<HTMLDialogElement>('#reset-dialog');
     const approveDlg = $<HTMLDialogElement>('#approve-dialog');
+    const confirmDlg = $<HTMLDialogElement>('#confirm-dialog');
+    const cherryPickDlg = $<HTMLDialogElement>('#cherry-pick-dialog');
     const stashDlg = $<HTMLDialogElement>('#stash-dialog');
     const aboutDlg = $<HTMLDialogElement>('#about-dialog');
     const diffDlg = $<HTMLDialogElement>('#diff-dialog');
@@ -1204,6 +1206,14 @@ export function initReview(): void {
     }
     if (approveDlg.open) {
       approveDlg.close();
+      return;
+    }
+    if (confirmDlg.open) {
+      confirmDlg.close();
+      return;
+    }
+    if (cherryPickDlg.open) {
+      cherryPickDlg.close();
       return;
     }
     if (stashDlg.open) {

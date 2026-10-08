@@ -157,12 +157,14 @@ never stored by Liana — they come from git's own credential helper or SSH agen
 stores are AI, GitLab, and GitHub tokens (see *Code review, AI, GitLab & GitHub* below), kept in a `0600` config file
 and overridable by `LIANA_AI_API_KEY` / `LIANA_GITLAB_TOKEN` / `LIANA_GITHUB_TOKEN`.
 
-Right-click a commit to create a branch/tag there, cherry-pick it onto the checked-out branch (with an optional `-x` to
-record the source hash, and `-m N` for a merge commit's parent), revert it (also `-m N` for a merge commit), or reset
-the checked-out branch to it (soft / mixed / hard, confirmed in a dialog); right-click a branch or tag chip (in the
-graph or the detail pane) to check it out, merge or rebase the checked-out branch onto it, or delete it. Double-clicking
-a branch chip in the graph also checks it out. Checking out a remote-tracking ref creates or reuses the matching local
-branch tracking it — no fetch, purely local. Deleting a remote branch runs `git push <remote> --delete`.
+Right-click a commit to create a branch/tag there, cherry-pick it onto the checked-out branch (opening a small dialog
+where a merge commit's mainline parent is chosen and `-x` optionally records the source hash), revert it (`-m N` for a
+merge commit), or reset the checked-out branch to it (soft / mixed / hard, confirmed in a dialog); right-click a branch
+or tag chip (in the graph or the detail pane) to check it out, merge or rebase the checked-out branch onto it, or delete
+it. Double-clicking a branch chip in the graph also checks it out. Checking out a remote-tracking ref creates or reuses
+the matching local branch tracking it — no fetch, purely local. Deleting a remote branch runs `git push <remote>
+--delete`. Destructive actions (and every other confirmation) use the app's own styled dialogs rather than the
+browser's native `confirm()` / `prompt()`.
 
 The toolbar's **Search** button (or `Ctrl+F` / `Cmd+F` / `/`) opens a find panel that filters commits, branches, and
 tags case-insensitively. Every whitespace-separated token must match somewhere (AND) across subject, author, hash, and
