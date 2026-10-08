@@ -36,6 +36,7 @@ import type {
   ReviewRuleConfig,
   StatusEntry,
   SubmoduleInfo,
+  WorktreeInfo,
 } from '../types';
 import { gitRun, repoActivity, GitError } from './exec';
 import { loadLog, loadStashes, loadRepoRefs, loadStatus, createCommit, dirtyGuard } from './repo';
@@ -58,6 +59,15 @@ import {
   submoduleDeinit,
   loadSubmoduleLog,
 } from './submodules';
+import {
+  loadWorktrees,
+  worktreeAdd,
+  worktreeRemove,
+  worktreeLock,
+  worktreeUnlock,
+  worktreeMove,
+  worktreePrune,
+} from './worktrees';
 import { selectedWorktreeDiffs, commitFiles, commitPatch, worktreePatch, fileContents } from './diffs';
 import { loadRebasePlan, executeRebase } from './rebase';
 import {
@@ -348,14 +358,21 @@ export function createApi(defaultRepo: string | null): Api {
         return { status: 200, body: { ok: true, results } };
       }
       if (route === '/state' && method === 'GET') {
-        const [{ stashes, hidden }, { state, fingerprint: refsPrint }, status, conflicts, submodules] =
-          await Promise.all([
-            loadStashes(repoPath),
-            loadRepoRefs(repoPath),
-            loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
-            loadConflicts(repoPath).catch(() => [] as ConflictEntry[]),
-            loadSubmodules(repoPath).catch(() => [] as SubmoduleInfo[]),
-          ]);
+        const [
+          { stashes, hidden },
+          { state, fingerprint: refsPrint },
+          status,
+          conflicts,
+          submodules,
+          worktrees,
+        ] = await Promise.all([
+          loadStashes(repoPath),
+          loadRepoRefs(repoPath),
+          loadStatus(repoPath).catch(() => ({ entries: [] as StatusEntry[] })),
+          loadConflicts(repoPath).catch(() => [] as ConflictEntry[]),
+          loadSubmodules(repoPath).catch(() => [] as SubmoduleInfo[]),
+          loadWorktrees(repoPath).catch(() => [] as WorktreeInfo[]),
+        ]);
         let operation: MergeOperation = { kind: 'none', inProgress: false, onto: null, conflictCount: 0, oursLabel: null, theirsLabel: null };
         try {
           operation = await loadMergeState(repoPath, conflicts);
@@ -374,7 +391,7 @@ export function createApi(defaultRepo: string | null): Api {
         }
         return {
           status: 200,
-          body: { configured: true, repoPath, state, commits, status, conflicts, operation, submodules },
+          body: { configured: true, repoPath, state, commits, status, conflicts, operation, submodules, worktrees },
         };
       }
       if (route === '/activity' && method === 'GET') {
@@ -484,6 +501,54 @@ export function createApi(defaultRepo: string | null): Api {
         if (!subPath?.trim()) return { status: 400, body: { error: 'Missing path' } };
         const commits = await loadSubmoduleLog(repoPath, subPath.trim());
         return { status: 200, body: { ok: true, commits } };
+      }
+      if (route === '/worktrees' && method === 'GET') {
+        const worktrees = await loadWorktrees(repoPath);
+        return { status: 200, body: { ok: true, worktrees } };
+      }
+      if (route === '/worktree-add' && method === 'POST') {
+        const { path: dest, branch, ref } = JSON.parse(rawBody) as {
+          path?: string;
+          branch?: string;
+          ref?: string;
+        };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const branchName = branch?.trim() ?? '';
+        if (!validRefName(branchName)) {
+          return { status: 400, body: { error: 'Invalid branch name' } };
+        }
+        if (!ref?.trim()) return { status: 400, body: { error: 'Missing start point' } };
+        const out = await worktreeAdd(repoPath, dest.trim(), branchName, ref.trim());
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/worktree-remove' && method === 'POST') {
+        const { path: dest, force } = JSON.parse(rawBody) as { path?: string; force?: boolean };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const out = await worktreeRemove(repoPath, dest.trim(), force === true);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/worktree-lock' && method === 'POST') {
+        const { path: dest, reason } = JSON.parse(rawBody) as { path?: string; reason?: string };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const out = await worktreeLock(repoPath, dest.trim(), reason);
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/worktree-unlock' && method === 'POST') {
+        const { path: dest } = JSON.parse(rawBody) as { path?: string };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const out = await worktreeUnlock(repoPath, dest.trim());
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/worktree-move' && method === 'POST') {
+        const { path: dest, to } = JSON.parse(rawBody) as { path?: string; to?: string };
+        if (!dest?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        if (!to?.trim()) return { status: 400, body: { error: 'Missing destination' } };
+        const out = await worktreeMove(repoPath, dest.trim(), to.trim());
+        return { status: 200, body: { ok: true, output: out } };
+      }
+      if (route === '/worktree-prune' && method === 'POST') {
+        const out = await worktreePrune(repoPath);
+        return { status: 200, body: { ok: true, output: out } };
       }
 
       if (route === '/commit' && method === 'POST') {

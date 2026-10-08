@@ -276,6 +276,28 @@ export interface SubmoduleInfo {
   status: 'current' | 'modified' | 'uninitialized' | 'conflicted' | 'untracked';
 }
 
+/** A linked working tree of a repository (`git worktree list --porcelain`). */
+export interface WorktreeInfo {
+  /** Absolute path of the working tree. */
+  path: string;
+  /** HEAD commit checked out in the worktree, or null for bare/prunable entries. */
+  head: string | null;
+  /** Short branch name, or null when detached or bare. */
+  branch: string | null;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  /** Reason recorded with the lock, or null when unlocked/unspecified. */
+  lockReason: string | null;
+  /** True when git considers the worktree prunable (its directory is gone). */
+  prunable: boolean;
+  prunableReason: string | null;
+  /** True for the main working tree (the first entry of `git worktree list`). */
+  isMain: boolean;
+  /** True when this is the repository the request was scoped to. */
+  isCurrent: boolean;
+}
+
 // --- Code review, AI providers & GitLab ---
 
 /**

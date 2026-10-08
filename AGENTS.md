@@ -28,8 +28,9 @@ in the packaged app.
 ## Non-negotiables
 
 - **`src/git/` and `src/api/` duplicate git wrappers on purpose.** Each is split by functionality into the same
-  module names (`exec`, `paths`, `repo`, `operations`, `conflicts`, `submodules`, `diffs`, `rebase`, `branches`,
-  `remotes`, `reset`, `stash`); `src/api/index.ts` adds the router and `src/git/forge.ts` mirrors the forge routes.
+  module names (`exec`, `paths`, `repo`, `operations`, `conflicts`, `submodules`, `worktrees`, `diffs`, `rebase`,
+  `branches`, `remotes`, `reset`, `stash`); `src/api/index.ts` adds the router and `src/git/forge.ts` mirrors the forge
+  routes.
   `src/api/` is Node-only and is imported by `dev.ts`, `electron/server.ts`, and nothing in the browser bundle;
   the browser must never import it (it would pull
   Node modules into the client). When changing a git command, mirror it in the matching modules of both trees and keep
@@ -138,3 +139,8 @@ in the packaged app.
 - Submodule network access (`init`/`update`/`sync`/`add`) uses the same `GIT_TERMINAL_PROMPT=0` environment as push/pull
   and stores no credentials.
 - Gitlink (mode 160000) and submodule changes are rendered explicitly ("Subproject commit …"), never as a line diff.
+- **Worktrees are managed locally.** `src/api/worktrees.ts` (mirrored in `src/git/`) wraps `git worktree
+  add/remove/lock/unlock/move/prune` and the read-only `git worktree list --porcelain`; none touch the network, so no
+  `NET_ENV`. Opening a worktree is just `addRepo(path)` — it registers as an ordinary repository. `Remove` deletes the
+  working directory and is blocked by uncommitted changes unless `force` is passed; never remove the main or current
+  worktree from the UI.

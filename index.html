@@ -232,6 +232,58 @@
       </form>
     </dialog>
 
+    <dialog id="worktree-dialog">
+      <form method="dialog" id="worktree-form">
+        <div class="dialog-head">
+          <h3>Create worktree</h3>
+          <p class="muted hint" id="worktree-subtitle"></p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <label>
+          Directory
+          <input type="text" id="worktree-path" autocomplete="off" spellcheck="false"
+            placeholder="/path/to/new-worktree" />
+        </label>
+        <label>
+          New branch
+          <input type="text" id="worktree-branch" autocomplete="off" spellcheck="false"
+            placeholder="feature-branch" />
+        </label>
+        <label>
+          Start point
+          <input type="text" id="worktree-ref" autocomplete="off" spellcheck="false" />
+        </label>
+        <div id="worktree-error" class="dialog-status"></div>
+        <menu>
+          <button class="btn" type="button" id="worktree-cancel">Cancel</button>
+          <button class="btn btn-primary" id="worktree-submit" value="ok">Create worktree</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="wt-input-dialog">
+      <form method="dialog" id="wt-input-form">
+        <div class="dialog-head">
+          <h3 id="wt-input-title">Worktree</h3>
+          <p class="muted hint" id="wt-input-subtitle"></p>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <label>
+          <span id="wt-input-label">Value</span>
+          <input type="text" id="wt-input-field" autocomplete="off" spellcheck="false" />
+        </label>
+        <div id="wt-input-error" class="dialog-status"></div>
+        <menu>
+          <button class="btn" type="button" id="wt-input-cancel">Cancel</button>
+          <button class="btn btn-primary" id="wt-input-submit" value="ok">OK</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="reset-dialog">
       <div class="dialog-head">
         <h3 id="reset-title">Reset branch</h3>

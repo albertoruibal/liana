@@ -27,6 +27,15 @@ export {
   submoduleDeinit,
   loadSubmoduleLog,
 } from './submodules';
+export {
+  loadWorktrees,
+  worktreeAdd,
+  worktreeRemove,
+  worktreeLock,
+  worktreeUnlock,
+  worktreeMove,
+  worktreePrune,
+} from './worktrees';
 export { commitFiles, commitPatch, worktreePatch, selectedWorktreeDiffs, fileContents } from './diffs';
 export { loadRebasePlan, executeRebase, type RebasePlanItem } from './rebase';
 export { validRefName, remoteBranchLocalName, checkoutBranch, createBranch, deleteBranch, deleteRemoteBranchPush, createTag, deleteTag } from './branches';

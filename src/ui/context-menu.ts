@@ -12,6 +12,7 @@ import { INTERACTIVE_REBASE_ENABLED } from '../config';
 import { ResetMode } from '../types';
 import { refresh } from './actions';
 import { checkout, openRebaseDialog } from './rebase';
+import { openWorktreeDialog } from './worktree';
 import { openCodeViewer } from './code-viewer';
 import { openSubprojectDialog } from './conflicts';
 import { openDiffDialog } from './diff-view';
@@ -65,6 +66,7 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
   if (hash) {
     items.push({ label: 'Create branch here…', action: () => openNameDialog('branch', hash) });
     items.push({ label: 'Create tag here…', action: () => openNameDialog('tag', hash) });
+    items.push({ label: 'Create worktree here…', action: () => openWorktreeDialog(hash) });
   }
   const name = target.name ?? '';
   const currentBranch = store.lastResponse?.state?.headBranch ?? '';
@@ -121,6 +123,7 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
       items.push({ label: `Merge ${name} into ${currentBranch}`, action: () => void mergeIntoCurrent(name) });
       items.push({ label: `Rebase ${currentBranch} onto ${name}`, action: () => void rebaseOntoBranch(name) });
     }
+    items.push({ label: `Create worktree from ${name}…`, action: () => openWorktreeDialog(name) });
     items.push({ label: `Delete branch ${name}`, danger: true, action: () => void deleteBranch(name, false) });
   } else if (target.kind === 'remote' && name) {
     const local = remoteLocalName(name);

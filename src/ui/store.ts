@@ -18,6 +18,7 @@ import type {
   ReviewRequest,
   ReviewSession,
   SubmoduleInfo,
+  WorktreeInfo,
 } from '../types';
 
 export interface StateResponse {
@@ -29,6 +30,7 @@ export interface StateResponse {
   conflicts?: ConflictEntry[];
   operation?: MergeOperation;
   submodules?: SubmoduleInfo[];
+  worktrees?: WorktreeInfo[];
 }
 
 /** A repository open in a tab. Holds per-tab view state so switching is instant. */

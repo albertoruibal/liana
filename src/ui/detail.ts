@@ -6,7 +6,7 @@ import { $ } from './dom';
 import { store } from './store';
 import { isoDateTime } from '../dates';
 import { displayRefs, refIconHtml, remoteBranchName } from '../refs';
-import { CommitFile, ConflictEntry, ConflictType, GitCommit, MergeOperation, RepoState, RepoStatus, StatusEntry, SubmoduleInfo } from '../types';
+import { CommitFile, ConflictEntry, ConflictType, GitCommit, MergeOperation, RepoState, RepoStatus, StatusEntry, SubmoduleInfo, WorktreeInfo } from '../types';
 import { runAction } from './actions';
 import { checkout } from './rebase';
 
@@ -132,6 +132,62 @@ export function renderSubmodules(submodules: SubmoduleInfo[]): string {
   return html;
 }
 
+/** Badges describing a worktree's state (main / current / locked / prunable). */
+function worktreeBadges(w: WorktreeInfo): string {
+  const badges: string[] = [];
+  if (w.isMain) badges.push('<span class="sub-badge sub-info">main</span>');
+  if (w.isCurrent) badges.push('<span class="sub-badge sub-info">current</span>');
+  if (w.locked) {
+    const title = w.lockReason ? ` title="${esc(w.lockReason)}"` : '';
+    badges.push(`<span class="sub-badge sub-warn"${title}>locked</span>`);
+  }
+  if (w.prunable) {
+    const title = w.prunableReason ? ` title="${esc(w.prunableReason)}"` : '';
+    badges.push(`<span class="sub-badge sub-conflict"${title}>prunable</span>`);
+  }
+  return badges.join('');
+}
+
+/**
+ * Worktree panel: each linked working tree with its branch and the local
+ * management actions. The main/current worktrees can't be removed from here,
+ * and the current one is already open so it isn't offered.
+ */
+export function renderWorktrees(worktrees: WorktreeInfo[]): string {
+  if (worktrees.length === 0) return '';
+  let html = '<h4>Worktrees</h4><ul class="worktree-list">';
+  for (const w of worktrees) {
+    const branch = w.bare ? '(bare)' : w.detached ? '(detached HEAD)' : w.branch ?? '(unknown)';
+    const short = w.head?.slice(0, 8) ?? '';
+    const removable = !w.isMain && !w.isCurrent;
+    html += `<li class="worktree-item" data-path="${esc(w.path)}">
+      <div class="worktree-row">
+        ${worktreeBadges(w)}
+        <span class="worktree-path" title="${esc(w.path)}">${esc(w.path)}</span>
+        ${short ? `<code class="sub-hash">${esc(short)}</code>` : ''}
+      </div>
+      <div class="worktree-row"><span class="worktree-branch">${esc(branch)}</span></div>
+      <div class="worktree-actions">
+        ${w.isCurrent || w.prunable || w.bare ? '' : `<button type="button" class="btn btn-sm act" data-act="wt-open" data-path="${esc(w.path)}">Open</button>`}
+        <button type="button" class="btn btn-sm act" data-act="wt-move" data-path="${esc(w.path)}">Move</button>
+        ${w.locked
+          ? `<button type="button" class="btn btn-sm act" data-act="wt-unlock" data-path="${esc(w.path)}">Unlock</button>`
+          : `<button type="button" class="btn btn-sm act" data-act="wt-lock" data-path="${esc(w.path)}">Lock</button>`}
+        ${removable ? `<button type="button" class="btn btn-sm act btn-danger" data-act="wt-remove" data-path="${esc(w.path)}">Remove</button>` : ''}
+      </div>
+    </li>`;
+  }
+  html += '</ul>';
+  const anyPrunable = worktrees.some((w) => w.prunable);
+  if (anyPrunable) {
+    html +=
+      '<div class="worktree-actions"><button type="button" class="btn btn-sm act" data-act="wt-prune">Prune stale worktrees</button></div>';
+  }
+  html +=
+    '<p class="muted hint">A worktree is a linked working directory sharing this repository. Open one to give it its own tab; Remove deletes the directory (uncommitted changes block it — commit or stash first).</p>';
+  return html;
+}
+
 export function renderDetail(commits: GitCommit[], state: RepoState | undefined, status: RepoStatus | undefined): void {
   const pane = $('#detail-pane');
   const commit = commits.find((c) => c.hash === store.selectedHash);
@@ -194,6 +250,7 @@ export function renderDetail(commits: GitCommit[], state: RepoState | undefined,
       html += '<p class="muted">Working tree clean</p>';
     }
     html += renderSubmodules(store.lastResponse?.submodules ?? []);
+    html += renderWorktrees(store.lastResponse?.worktrees ?? []);
     html += `<div class="detail-empty">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 2v7M12 15v7M2 12h7M15 12h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       <strong>No commit selected</strong>

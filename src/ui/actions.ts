@@ -6,13 +6,14 @@ import { esc } from './format';
 import { renderAll } from './graph-view';
 import { updateReviewVisibility } from './review-view';
 import { StateResponse, activeTab } from './store';
-import { persistTabs, renderNoRepo, renderTabs } from './tabs';
+import { addRepo, persistTabs, renderNoRepo, renderTabs } from './tabs';
 import { toast } from './toast';
 import { $ } from './dom';
 import { store } from './store';
 import { RemoteStatus } from '../types';
 import { openAiConflictDialog } from './ai-conflict';
 import { openConflictDialog, openSubmoduleHistory } from './conflicts';
+import { promptText } from './worktree';
 import { refreshActivity } from './status-bar';
 export async function refresh(): Promise<void> {
   const reqId = store.activeId;
@@ -95,6 +96,32 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
     } else if (act === 'sub-deinit') {
       if (!confirm(`Deinitialize ${path}? Its working tree is removed (the recorded commit is kept).`)) return;
       await api('/submodule-deinit', { path, force: true });
+    } else if (act === 'wt-open') {
+      await addRepo(path, true);
+      return;
+    } else if (act === 'wt-remove') {
+      if (!confirm(`Remove worktree ${path}? Its working directory is deleted. Uncommitted changes will block this.`)) return;
+      try {
+        await api('/worktree-remove', { path });
+      } catch (err) {
+        if (confirm(`${String(err)}\n\nForce removal? Uncommitted changes in that worktree are discarded.`)) {
+          await api('/worktree-remove', { path, force: true });
+        } else {
+          return;
+        }
+      }
+    } else if (act === 'wt-lock') {
+      const reason = await promptText(`Lock ${path}`, 'Reason (optional):');
+      if (reason === null) return;
+      await api('/worktree-lock', { path, reason });
+    } else if (act === 'wt-unlock') {
+      await api('/worktree-unlock', { path });
+    } else if (act === 'wt-move') {
+      const to = await promptText(`Move ${path}`, 'New directory:', path);
+      if (to === null || !to.trim() || to.trim() === path) return;
+      await api('/worktree-move', { path, to: to.trim() });
+    } else if (act === 'wt-prune') {
+      await api('/worktree-prune', {});
     } else if (act === 'copy-subject' || act === 'copy-hash') {
       await copyToClipboard(btn.dataset.copy ?? '');
       return;

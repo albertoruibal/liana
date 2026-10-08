@@ -1,11 +1,11 @@
 # Liana
 
-A minimal git GUI: an interactive commit graph with **commit**, **rebase**, **cherry-pick**, and **revert**, integrated
-**conflict resolution**, **submodules**, plus **push**, **pull**, and **login** for repositories that already live on
-your machine. It also reviews open GitLab merge requests and GitHub pull requests with an OpenAI-compatible model,
-proposing per-line comments you approve one by one, and can draft commit messages from the changes you're about to
-commit. A per-file **Fix with AI** action merges a conflicted file. Clone, fetch, and remote management are deliberately
-absent — this is a visual history surgeon, not a general forge client.
+A git GUI: an interactive commit graph with **commit**, **rebase**, **cherry-pick**, and **revert**, integrated
+**conflict resolution**, **submodules**, and **worktrees**, plus **push**, **pull**, and **login** for repositories that
+already live on your machine. It also reviews open GitLab merge requests and GitHub pull requests with an
+OpenAI-compatible model, proposing per-line comments you approve one by one, and can draft commit messages from the
+changes you're about to commit. A per-file **Fix with AI** action merges a conflicted file. Clone, fetch, and remote
+management are deliberately absent.
 
 > ## Disclaimer
 >
@@ -115,6 +115,13 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/submodule-add` | POST | `{url, path?, branch?}` | `git submodule add` (network) |
 | `/api/submodule-deinit` | POST | `{path, force?}` | `git submodule deinit` (local) |
 | `/api/submodule-log` | POST | `{path}` | Read-only history of an initialized submodule |
+| `/api/worktrees` | GET | — | Linked working trees (`git worktree list --porcelain`) with their state |
+| `/api/worktree-add` | POST | `{path, branch, ref}` | `git worktree add <path> -b <branch> <ref>` (local) |
+| `/api/worktree-remove` | POST | `{path, force?}` | `git worktree remove [--force] <path>` (local) |
+| `/api/worktree-lock` | POST | `{path, reason?}` | `git worktree lock` (local) |
+| `/api/worktree-unlock` | POST | `{path}` | `git worktree unlock` (local) |
+| `/api/worktree-move` | POST | `{path, to}` | `git worktree move <path> <to>` (local) |
+| `/api/worktree-prune` | POST | — | `git worktree prune` stale records (local) |
 | `/api/settings` | GET | — | AI providers, review rules, GitLab/GitHub config (secrets masked to `hasKey`/`hasToken`) |
 | `/api/settings` | POST | partial settings | Merge and persist settings; omit a secret to keep the saved one |
 | `/api/settings/test-ai` | POST | `{providerId?}` | Send a tiny completion to the OpenAI-compatible endpoint |
@@ -343,3 +350,14 @@ URL** re-reads URLs from `.gitmodules`; both are network operations that run wit
 credentials. **History** opens the submodule's own `git log` in a read-only dialog. A gitlink change (mode 160000) is
 rendered as *"Subproject commit …"* rather than a line diff. Create a repo to try it with `npm run fixture:conflict` (a
 conflicted rebase plus a local submodule).
+
+## Worktrees
+
+The detail pane also lists the repository's linked working trees (`git worktree list --porcelain`) with a badge for the
+main/current/locked/prunable ones, and per-entry **Open**, **Move**, **Lock**/**Unlock**, **Remove**, and **Prune**
+actions. **Open** registers the worktree's path as a normal repository tab, so it gets its own graph and full history
+surgery. **Create worktree here…** is offered from a commit's context menu and **Create worktree from &lt;branch&gt;…**
+from a branch's; both open a dialog taking the new directory, a new branch name, and the start point. Every operation is
+local — `git worktree add/remove/lock/unlock/move/prune`, no network — and **Remove** deletes the working directory,
+blocked by uncommitted changes unless forced. Liana never runs worktree commands against a bare repository or rewrites
+history to accommodate one.

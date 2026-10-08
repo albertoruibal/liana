@@ -82,6 +82,8 @@ function isUserInitiated(args: string[]): boolean {
   if (cmd === 'reset' && args.includes('--')) return false;
   // `submodule status` is a background read; add/update/sync/deinit are user actions.
   if (cmd === 'submodule' && args.includes('status')) return false;
+  // `worktree list` is a background read; add/remove/lock/… are user actions.
+  if (cmd === 'worktree' && args.includes('list')) return false;
   return true;
 }
 
