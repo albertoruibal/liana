@@ -141,12 +141,19 @@ export function focusTerminal(path: string): void {
   for (const [p, inst] of instances) inst.el.hidden = p !== path;
   const inst = instances.get(path);
   if (!inst) return;
-  try {
-    inst.fit.fit();
-  } catch {
-    // ignore
-  }
-  inst.term.focus();
+  // The view's ancestor may still be `display:none` at this point (the caller
+  // reveals it in the same task), so fitting now would measure a stale, often
+  // zero-sized box and leave xterm's canvas misaligned. Re-fit once the browser
+  // has laid the terminal out, and only then focus.
+  requestAnimationFrame(() => {
+    if (instances.get(path) !== inst || inst.el.hidden) return;
+    try {
+      inst.fit.fit();
+    } catch {
+      // ignore transient zero-size measurements
+    }
+    inst.term.focus();
+  });
 }
 
 /** Re-apply the current theme to every live terminal. */
