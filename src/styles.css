@@ -1493,6 +1493,10 @@ main {
   flex: 0 0 auto;
 }
 
+.dirty-banner[hidden] {
+  display: none;
+}
+
 .muted {
   color: var(--fg-dim);
 }
