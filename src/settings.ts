@@ -97,7 +97,7 @@ function defaultProvider(): StoredProvider {
     contextWindow: 8192,
     maxTokens: 1024,
     temperature: 0.1,
-    toolResultChars: 2000,
+    toolResultChars: 2048,
     maxSteps: 8,
   };
 }

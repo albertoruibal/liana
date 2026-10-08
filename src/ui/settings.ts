@@ -9,6 +9,21 @@ import { applyTheme, currentTheme } from './theme';
 import { closeMoreMenu } from './more-menu';
 
 // --- Settings dialog: AI providers, review rules, Git hosting ---
+/** K unit for the token/char fields: input is in K, stored value is ×1024. */
+const K = 1024;
+
+/** Format a stored token/char count as a K input value (e.g. 8192 → "8"). */
+function toK(n: number): string {
+  const k = n / K;
+  return String(Number.isInteger(k) ? k : Math.round(k * 10) / 10);
+}
+
+/** Parse a K input value back to a stored count (rounding to whole units). */
+function fromK(raw: string | undefined, fallback: number): number {
+  const k = Number.parseFloat(raw ?? '');
+  return Number.isFinite(k) && k > 0 ? Math.round(k * K) : fallback;
+}
+
 /** Provider list being edited; secrets stay represented by `hasKey`. */
 export let settingsProviders: AiProviderConfig[] = [];
 
@@ -40,19 +55,19 @@ export function renderProviderList(): void {
           <input type="password" class="pf-key" autocomplete="off"
             placeholder="${p.hasKey ? 'Token saved — leave blank to keep' : 'API token (optional for local models)'}" />
           <div class="provider-row">
-            <label class="pf-small">Context
-              <input type="number" class="pf-context" min="512" value="${p.contextWindow}" />
+            <label class="pf-small">Context (K)
+              <input type="number" class="pf-context" min="0.5" step="0.1" value="${toK(p.contextWindow)}" />
             </label>
-            <label class="pf-small">Max tokens
-              <input type="number" class="pf-maxtokens" min="1" value="${p.maxTokens}" />
+            <label class="pf-small">Max tokens (K)
+              <input type="number" class="pf-maxtokens" min="0.1" step="0.1" value="${toK(p.maxTokens)}" />
             </label>
             <label class="pf-small">Max steps
               <input type="number" class="pf-maxsteps" min="1" value="${p.maxSteps}" />
             </label>
           </div>
           <div class="provider-row">
-            <label class="pf-small">Result chars
-              <input type="number" class="pf-resultchars" min="200" value="${p.toolResultChars}" />
+            <label class="pf-small">Result chars (K)
+              <input type="number" class="pf-resultchars" min="0.2" step="0.1" value="${toK(p.toolResultChars)}" />
             </label>
             <label class="pf-small">Temperature
               <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
@@ -77,11 +92,10 @@ export function readProviderInputs(): void {
     p.name = q<HTMLInputElement>('.pf-name')?.value.trim() || p.name;
     p.model = q<HTMLInputElement>('.pf-model')?.value.trim() ?? p.model;
     p.baseUrl = q<HTMLInputElement>('.pf-url')?.value.trim() || p.baseUrl;
-    p.contextWindow = Number(q<HTMLInputElement>('.pf-context')?.value) || p.contextWindow;
-    p.maxTokens = Number(q<HTMLInputElement>('.pf-maxtokens')?.value) || p.maxTokens;
+    p.contextWindow = fromK(q<HTMLInputElement>('.pf-context')?.value, p.contextWindow);
+    p.maxTokens = fromK(q<HTMLInputElement>('.pf-maxtokens')?.value, p.maxTokens);
     p.maxSteps = Number(q<HTMLInputElement>('.pf-maxsteps')?.value) || p.maxSteps;
-    p.toolResultChars =
-      Number(q<HTMLInputElement>('.pf-resultchars')?.value) || p.toolResultChars;
+    p.toolResultChars = fromK(q<HTMLInputElement>('.pf-resultchars')?.value, p.toolResultChars);
     p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
     const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
     if (radio?.checked) settingsActiveProviderId = p.id;
@@ -273,7 +287,7 @@ export function initSettings(): void {
       contextWindow: 8192,
       maxTokens: 1024,
       temperature: 0.1,
-      toolResultChars: 2000,
+      toolResultChars: 2048,
       maxSteps: 8,
     });
     if (!settingsActiveProviderId) settingsActiveProviderId = id;
