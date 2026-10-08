@@ -964,6 +964,11 @@ export function closeReviewTab(repoId: string): void {
 export function updateReviewVisibility(): void {
   const shown = store.activeReviewId !== null;
   reviewView.hidden = !shown;
+  // The terminal is a competing main view; showing review dismisses it.
+  if (shown && store.activeTerminalPath !== null) {
+    store.activeTerminalPath = null;
+    $('#terminal-view').hidden = true;
+  }
   $('#graph-wrap').hidden = shown;
   $('#detail-resizer').hidden = shown;
   $('#detail-pane').hidden = shown;

@@ -2,6 +2,7 @@
 
 import { loadedCode } from './code-loader';
 import { $ } from './dom';
+import { recolorTerminals } from './terminal';
 
 // Theme picker and application.
 const THEME_KEY = 'liana-theme';
@@ -52,6 +53,8 @@ export function applyTheme(theme: string): void {
   // Keep any mounted Monaco editors in step with the theme.
   const codeModule = loadedCode();
   if (codeModule) codeModule.applyTheme();
+  // Recolor any live embedded terminals from the new CSS variables.
+  recolorTerminals();
 }
 
 function selectTheme(theme: string): void {

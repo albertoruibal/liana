@@ -180,6 +180,18 @@
             <button class="btn" id="review-approve-mr" hidden>Approve MR</button>          </div>
         </div>
       </section>
+
+      <section id="terminal-view" class="review-view terminal-view" hidden aria-label="Terminal">
+        <div class="review-inner terminal-inner">
+          <div class="review-head">
+            <h3>Terminal<span id="terminal-cwd" class="review-repo"></span></h3>
+            <p class="muted hint" id="terminal-subtitle">A shell in the selected worktree.</p>
+          </div>
+          <div id="terminal-surface" class="terminal-surface">
+            <div id="terminal-host" class="terminal-host"></div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer id="status-bar" aria-label="Git command activity">

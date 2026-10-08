@@ -12,7 +12,9 @@ const shared = {
   bundle: true,
   platform: 'node',
   target: 'node20',
-  external: ['electron'],
+  // node-pty is a native addon: keep it (and its .node binary) external so it is
+  // loaded from node_modules at runtime instead of being inlined.
+  external: ['electron', 'node-pty'],
   sourcemap: true,
   logLevel: 'info',
 };

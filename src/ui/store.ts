@@ -69,6 +69,19 @@ export interface ReviewTabState {
   sending: Set<string>;
 }
 
+/** An open embedded terminal, keyed by the worktree path it runs in. */
+export interface TerminalState {
+  /** Absolute path the shell was started in (the worktree directory). */
+  path: string;
+  /** Display name (the worktree directory's basename). */
+  name: string;
+  /** Repository the worktree belongs to, used to authorize the PTY. */
+  repoId: string;
+  repoPath: string;
+  /** Active PTY session id, or null while the session is opening. */
+  id: string | null;
+}
+
 interface ViewStore {
   tabs: RepoTab[];
   activeId: string | null;
@@ -96,6 +109,11 @@ interface ViewStore {
   // Review tabs keyed by the repository id they are bound to.
   reviewTabs: Map<string, ReviewTabState>;
   activeReviewId: string | null;
+
+  // Embedded terminals keyed by the worktree path the shell runs in.
+  terminals: Map<string, TerminalState>;
+  /** Worktree path of the visible terminal, or null when none is shown. */
+  activeTerminalPath: string | null;
 }
 
 export const store: ViewStore = {
@@ -115,6 +133,8 @@ export const store: ViewStore = {
   activity: null,
   reviewTabs: new Map(),
   activeReviewId: null,
+  terminals: new Map(),
+  activeTerminalPath: null,
 };
 
 export function activeTab(): RepoTab | undefined {

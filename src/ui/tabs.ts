@@ -5,6 +5,7 @@ import { $svg } from './dom';
 import { applyTransform, renderAll, renderGraphHeader } from './graph-view';
 import { updateSyncButtons } from './remotes';
 import { closeReviewTab, paintReview, persistReviewTabs, updateReviewVisibility } from './review-view';
+import { closeTerminal, activateTerminal, persistTerminalTabs } from './terminal-view';
 import { closeStatusHistory, renderStatusBar } from './status-bar';
 import { RepoTab, activeTab, saveActive, store } from './store';
 import { promptText } from './prompt';
@@ -133,6 +134,37 @@ export function renderTabs(): void {
       review.addEventListener('click', () => activateReviewTab(tab.id));
       strip.appendChild(review);
     }
+
+    // One terminal pill per open worktree shell bound to this repository.
+    for (const term of store.terminals.values()) {
+      if (term.repoId !== tab.id) continue;
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = `repo-tab repo-tab-terminal${term.path === store.activeTerminalPath ? ' is-active' : ''}`;
+      pill.title = `Terminal — ${term.path}`;
+      pill.dataset.terminal = term.path;
+      pill.innerHTML =
+        `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.4 6.2 6.6 8l-2.2 1.8M8.2 10.4h3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+      const name = document.createElement('span');
+      name.className = 'repo-tab-name';
+      name.textContent = `Terminal · ${term.name}`;
+      pill.appendChild(name);
+      const close = document.createElement('span');
+      close.className = 'repo-tab-close';
+      close.textContent = '\u00d7';
+      close.title = `Close terminal ${term.name}`;
+      close.setAttribute('role', 'button');
+      close.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        closeTerminal(term.path);
+        renderTabs();
+      });
+      pill.appendChild(close);
+      pill.addEventListener('click', () => {
+        void activateTerminal(term.path).then(() => renderTabs());
+      });
+      strip.appendChild(pill);
+    }
   }
 
   const add = document.createElement('button');
@@ -233,6 +265,12 @@ export async function activateRepo(id: string): Promise<void> {
     renderTabs();
     persistReviewTabs();
   }
+  // Terminals keep running in the background; only the view is dismissed.
+  if (store.activeTerminalPath !== null) {
+    store.activeTerminalPath = null;
+    $('#terminal-view').hidden = true;
+    persistTerminalTabs();
+  }
   if (id === store.activeId) {
     if (store.lastResponse) renderAll(store.lastResponse);
     return;
@@ -249,6 +287,11 @@ export async function activateRepo(id: string): Promise<void> {
 export function activateReviewTab(repoId: string): void {
   const state = store.reviewTabs.get(repoId);
   if (!state) return;
+  // The terminal is a competing main view; hide it before showing review.
+  if (store.activeTerminalPath !== null) {
+    store.activeTerminalPath = null;
+    $('#terminal-view').hidden = true;
+  }
   // The review is bound to one repository; rebind it as active so subsequent
   // review/GitLab API calls target the same repo the MR belongs to.
   const bound = store.tabs.find((t) => t.id === repoId);
@@ -276,9 +319,12 @@ export function closeTab(id: string): void {
   if (idx < 0) return;
   const wasActive = id === store.activeId;
   store.tabs.splice(idx, 1);
-  // Closing a repository closes its review tab too.
+  // Closing a repository closes its review tab and any worktree terminals too.
   if (store.reviewTabs.has(id)) {
     closeReviewTab(id);
+  }
+  for (const term of [...store.terminals.values()]) {
+    if (term.repoId === id) closeTerminal(term.path);
   }
   if (wasActive) {
     const next = store.tabs[idx] ?? store.tabs[idx - 1] ?? store.tabs[store.tabs.length - 1];

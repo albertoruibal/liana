@@ -9,6 +9,7 @@ import { displayRefs, refIconHtml, remoteBranchName } from '../refs';
 import { CommitFile, ConflictEntry, ConflictType, GitCommit, MergeOperation, RepoState, RepoStatus, StatusEntry, SubmoduleInfo, WorktreeInfo } from '../types';
 import { runAction } from './actions';
 import { checkout } from './rebase';
+import { terminalAvailable } from './terminal';
 
 /** Human label for an operation kind, used in the conflict banner. */
 export function operationLabel(kind: MergeOperation['kind']): string {
@@ -169,6 +170,7 @@ export function renderWorktrees(worktrees: WorktreeInfo[]): string {
       <div class="worktree-row"><span class="worktree-branch">${esc(branch)}</span></div>
       <div class="worktree-actions">
         ${w.isCurrent || w.prunable || w.bare ? '' : `<button type="button" class="btn btn-sm act" data-act="wt-open" data-path="${esc(w.path)}">Open</button>`}
+        ${w.prunable || w.bare || !terminalAvailable() ? '' : `<button type="button" class="btn btn-sm act" data-act="wt-terminal" data-path="${esc(w.path)}">Terminal</button>`}
         <button type="button" class="btn btn-sm act" data-act="wt-move" data-path="${esc(w.path)}">Move</button>
         ${w.locked
           ? `<button type="button" class="btn btn-sm act" data-act="wt-unlock" data-path="${esc(w.path)}">Unlock</button>`
@@ -184,7 +186,9 @@ export function renderWorktrees(worktrees: WorktreeInfo[]): string {
       '<div class="worktree-actions"><button type="button" class="btn btn-sm act" data-act="wt-prune">Prune stale worktrees</button></div>';
   }
   html +=
-    '<p class="muted hint">A worktree is a linked working directory sharing this repository. Open one to give it its own tab; Remove deletes the directory (uncommitted changes block it — commit or stash first).</p>';
+    '<p class="muted hint">A worktree is a linked working directory sharing this repository. Open one to give it its own tab; Remove deletes the directory (uncommitted changes block it — commit or stash first).' +
+    (terminalAvailable() ? ' Terminal runs a shell in it.' : '') +
+    '</p>';
   return html;
 }
 

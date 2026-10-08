@@ -3471,14 +3471,23 @@ dialog select:focus-visible {
 /* ------------------------------------------------------------------ *
  * Code review tab (a main view, not a dialog)
  * ------------------------------------------------------------------ */
-#review-view {
+#review-view,
+#terminal-view {
   flex: 1;
   min-width: 0;
   overflow: auto;
   background: var(--bg-graph);
 }
 
+/* The terminal scrolls inside xterm itself, not the view. */
+#terminal-view {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 #review-view[hidden],
+#terminal-view[hidden],
 #graph-wrap[hidden] {
   display: none;
 }
@@ -3572,7 +3581,8 @@ dialog select:focus-visible {
 }
 
 /* `display` rules otherwise beat the `hidden` attribute. */
-#review-view [hidden] {
+#review-view [hidden],
+#terminal-view [hidden] {
   display: none;
 }
 
@@ -3587,6 +3597,44 @@ dialog select:focus-visible {
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
+}
+
+.repo-tab-terminal svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ *
+ * Terminal tab (a main view styled like the code-review view)
+ * ------------------------------------------------------------------ */
+.terminal-inner {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.terminal-surface {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 4px 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+}
+
+.terminal-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+
+.terminal-host .xterm-viewport {
+  background: transparent !important;
 }
 
 .review-log-dialog {

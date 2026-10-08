@@ -10,7 +10,12 @@ files:
   - dist-electron/**
   - build/icon.png
   - package.json
+  # node-pty is a native addon kept external by the esbuild bundle; ship it.
+  - node_modules/node-pty/**
 asar: true
+# The .node binary must be loadable from disk, so keep node-pty unpacked.
+asarUnpack:
+  - node_modules/node-pty/**
 linux:
   target:
     - AppImage

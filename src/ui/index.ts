@@ -23,6 +23,7 @@ import { initSettings } from './settings';
 import { initSearch } from './search';
 import { initStatusBar } from './status-bar';
 import { initWorktree } from './worktree';
+import { initTerminal, restoreTerminals, savedActiveTerminalPath, activateTerminal } from './terminal-view';
 import { initPrompt } from './prompt';
 import { initCherryPick } from './cherry-pick';
 import { refresh } from './actions';
@@ -65,6 +66,7 @@ initPrompt();
 initCherryPick();
 initSettings();
 initReview();
+initTerminal();
 initSearch();
 initStatusBar();
 
@@ -171,6 +173,25 @@ async function bootstrap(): Promise<void> {
     }
   }
   persistReviewTabs();
+
+  // Reopen worktree terminals that were open before the reload; a visible one
+  // takes precedence over the review view restored above.
+  restoreTerminals();
+  const savedTerminalActive = savedActiveTerminalPath();
+  const terminalState = savedTerminalActive ? store.terminals.get(savedTerminalActive) : undefined;
+  if (savedTerminalActive && terminalState) {
+    // A terminal is bound to a repository; make that repo active before showing it.
+    if (store.activeId !== terminalState.repoId) {
+      const bound = store.tabs.find((t) => t.id === terminalState.repoId);
+      if (bound) {
+        saveActive();
+        loadTab(bound);
+        void refresh();
+      }
+    }
+    await activateTerminal(savedTerminalActive);
+  }
+
   renderTabs();
 }
 

@@ -7,6 +7,7 @@ import { renderAll } from './graph-view';
 import { updateReviewVisibility } from './review-view';
 import { StateResponse, activeTab } from './store';
 import { addRepo, persistTabs, renderNoRepo, renderTabs } from './tabs';
+import { openTerminalTab } from './terminal-view';
 import { toast } from './toast';
 import { $ } from './dom';
 import { store } from './store';
@@ -145,6 +146,11 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
       await api('/submodule-deinit', { path, force: true });
     } else if (act === 'wt-open') {
       await addRepo(path, true);
+      return;
+    } else if (act === 'wt-terminal') {
+      await openTerminalTab(path);
+      renderTabs();
+      if (btn.isConnected) btn.disabled = false;
       return;
     } else if (act === 'wt-remove') {
       if (

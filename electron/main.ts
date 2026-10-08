@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { startServer, type RunningServer } from './server';
+import * as ptyHost from './pty';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.LIANA_DEV_URL ?? 'http://localhost:5173';
@@ -166,6 +167,44 @@ async function bootstrap(): Promise<void> {
   }
 }
 
+// Embedded terminal: open a PTY in a worktree inside the caller's repository.
+// A rejected location resolves to null so the renderer can surface it.
+ipcMain.handle(
+  'liana:pty-open',
+  (
+    ev,
+    opts: { repoPath?: string; cwd?: string; cols?: number; rows?: number; key?: string },
+  ): string | null => {
+    const repoPath = typeof opts?.repoPath === 'string' ? opts.repoPath : '';
+    const cwd = typeof opts?.cwd === 'string' ? opts.cwd : '';
+    const cols = typeof opts?.cols === 'number' ? opts.cols : 80;
+    const rows = typeof opts?.rows === 'number' ? opts.rows : 24;
+    const key = typeof opts?.key === 'string' ? opts.key : cwd;
+    return ptyHost.open(ev.sender, repoPath, cwd, cols, rows, key);
+  },
+);
+
+ipcMain.on('liana:pty-input', (_ev, payload: { id?: string; data?: string }): void => {
+  if (typeof payload?.id === 'string' && typeof payload.data === 'string') {
+    ptyHost.write(payload.id, payload.data);
+  }
+});
+
+ipcMain.on('liana:pty-resize', (_ev, payload: { id?: string; cols?: number; rows?: number }): void => {
+  if (typeof payload?.id === 'string' && typeof payload.cols === 'number' && typeof payload.rows === 'number') {
+    ptyHost.resize(payload.id, payload.cols, payload.rows);
+  }
+});
+
+ipcMain.on('liana:pty-close', (_ev, payload: { id?: string }): void => {
+  if (typeof payload?.id === 'string') ptyHost.close(payload.id);
+});
+
+// The renderer reloads (dev) or navigates away; drop all its PTYs.
+ipcMain.on('liana:pty-close-all', (): void => {
+  ptyHost.closeAll();
+});
+
 // Native folder picker, called from the renderer's preload bridge.
 ipcMain.handle('liana:open-repo', async (): Promise<string | null> => {
   const result = await dialog.showOpenDialog({
@@ -202,6 +241,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('will-quit', () => {
+    ptyHost.closeAll();
     void server?.close();
   });
 }
