@@ -470,12 +470,6 @@ export interface ReviewComment {
   error: string | null;
 }
 
-/** One persisted note the review agent wrote for itself; survives pause/restart. */
-export interface ReviewMemory {
-  id: string;
-  note: string;
-}
-
 /** One executed tool call in the agent trace, for UI transparency. */
 export interface ReviewTraceStep {
   step: number;
@@ -519,8 +513,6 @@ export interface ReviewJob {
   /** The exact requests sent to the model, in order. */
   prompts: ReviewPromptStep[];
   comments: ReviewComment[];
-  /** Notes the agent wrote to itself for this review, in order. */
-  memories: ReviewMemory[];
   error: string | null;
 }
 

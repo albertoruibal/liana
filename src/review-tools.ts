@@ -2,17 +2,13 @@
 // through the OpenAI-compatible native function-calling API (`tools` /
 // `tool_calls`). Node-only: imported by src/review.ts, never by the browser.
 //
-// Every repository tool is confined to the repository and reads at a ref (the
-// MR head SHA by default) — never the local working tree or index. Output is
-// truncated and paths are resolved inside the repo. The only side effect is the
-// pair of in-memory memory tools (`remember`/`recall`): they append to and read
-// from the session's memory list carried on `ToolContext`, which `jobs.ts`
-// persists into the review session. They never touch git, the working tree, or
-// the index.
+// Every tool is confined to the repository and reads at a ref (the MR head SHA
+// by default) — never the local working tree or index. Output is truncated and
+// paths are resolved inside the repo; the tools never write anything.
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type { GitLabMrFile, ReviewMemory } from './types';
+import type { GitLabMrFile } from './types';
 
 /** One tool the model may call. */
 export interface ToolDef {
@@ -51,17 +47,7 @@ export interface ToolContext {
   files: GitLabMrFile[];
   /** Per-result character cap. */
   toolResultChars: number;
-  /**
-   * Live reference to the review's memory list, shared with the persisted job.
-   * The `remember`/`recall` tools read and append here; it is the only mutable
-   * state the tools touch.
-   */
-  memories: ReviewMemory[];
 }
-
-/** Upper bounds on the per-review memory list, to keep session files small. */
-export const MAX_MEMORIES = 100;
-export const MAX_MEMORY_CHARS = 2000;
 
 /** The read-only tool catalogue, described with JSON schema. */
 export const TOOLS: ToolDef[] = [
@@ -176,35 +162,6 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Optional path filter.' },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'remember',
-    description:
-      'Save a short note to this review\'s persistent memory. Use it to record findings, ' +
-      'decisions, or context worth keeping across steps and batches (for example when you ' +
-      'are about to run out of steps, or a verified fact you will cite in a comment). ' +
-      'Memories persist even if the review is paused and resumed.',
-    parameters: {
-      type: 'object',
-      properties: {
-        note: { type: 'string', description: 'The note to remember. Keep it concise and self-contained.' },
-      },
-      required: ['note'],
-    },
-  },
-  {
-    name: 'recall',
-    description:
-      'Read notes previously saved with `remember` for this review. Optionally filter by a ' +
-      'case-insensitive substring. Call this after a pause/resume or when you need to recover ' +
-      'earlier findings.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Optional case-insensitive substring to filter notes.' },
       },
       required: [],
     },
@@ -438,29 +395,6 @@ async function runTool(
         parts.push(`### ${f.newPath}${tags ? ` (${tags})` : ''}\n${f.diff || '(binary or empty diff)'}`);
       }
       return parts.join('\n\n') || '(no changed files)';
-    }
-    case 'remember': {
-      const note = (asString(args.note) ?? '').trim();
-      if (note.length === 0) return '(nothing to remember: `note` is required)';
-      if (ctx.memories.length >= MAX_MEMORIES) {
-        return `(memory full: ${MAX_MEMORIES} notes already saved for this review)`;
-      }
-      const capped = note.length > MAX_MEMORY_CHARS ? truncate(note, MAX_MEMORY_CHARS) : note;
-      const id = `m${ctx.memories.length + 1}`;
-      ctx.memories.push({ id, note: capped });
-      return `Remembered as ${id} (${ctx.memories.length} note${
-        ctx.memories.length === 1 ? '' : 's'
-      } total).`;
-    }
-    case 'recall': {
-      const query = asString(args.query)?.toLowerCase();
-      const matches = query
-        ? ctx.memories.filter((m) => m.note.toLowerCase().includes(query))
-        : ctx.memories;
-      if (matches.length === 0) {
-        return query ? `(no memories match "${query}")` : '(no memories saved yet)';
-      }
-      return matches.map((m) => `${m.id}: ${m.note}`).join('\n');
     }
     default:
       return `(unknown tool: ${name})`;

@@ -3811,23 +3811,6 @@ dialog select:focus-visible {
   font-size: 13px;
 }
 
-.review-memory-list {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.review-memory-list li {
-  font-size: 12.5px;
-  color: var(--fg-dim);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .review-comment-list {
   display: flex;
   flex-direction: column;

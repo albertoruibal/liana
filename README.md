@@ -297,11 +297,6 @@ the merge request's **head SHA** (never the local working tree), confined to the
 `search_code` is ripgrep-like: it takes an extended regex plus optional case-insensitive, whole-word, fixed-string,
 context-line, and filenames-only switches. It cannot write to the working tree or index.
 
-Alongside the repository tools the agent has a private, per-review memory: `remember` saves a concise note and `recall`
-reads notes back (optionally filtered). Notes are written into the session file, so findings survive a pause/resume,
-a long multi-batch review, and a server restart; the review tab shows them in a read-only **Agent memory** panel. This
-is the only tool pair with a side effect — it never touches git, the working tree, or the index.
-
 Every proposed comment lands in an approval list: edit the body and **Approve** / **Reject** each one (or approve/reject
 all). Only approved comments are sent, as line-level discussions (GitLab) or pull-request review comments (GitHub),
 falling back to a general note when a line can't be anchored. The request can then be approved from the same tab. Liana
@@ -345,7 +340,7 @@ outside the diff degrades the comment to a plain issue comment rather than dropp
 
 Paused/active review sessions are persisted separately, under `~/.config/liana/sessions/<id>.json` (`XDG_CONFIG_HOME`
 honored), also written atomically with mode `0600` in a `0700` directory. These files hold review content — the MR
-diffs, the agent conversation, proposed comments, and the agent's memory notes — but no secrets, and are keyed by
+diffs, the agent conversation, and proposed comments — but no secrets, and are keyed by
 absolute repository path so they survive a server restart. At most 12 are kept per repository; a session left running
 by a previous process is marked paused on startup.
 

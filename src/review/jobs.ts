@@ -362,7 +362,6 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       trace: [],
       prompts: [],
       comments: [],
-      memories: [],
       error: null,
     },
   };
@@ -568,7 +567,6 @@ async function runBatch(
     headRef,
     files: changes.files,
     toolResultChars: provider.toolResultChars,
-    memories: rec.job.memories,
   };
 
   const batchIndex = Math.max(0, rec.job.batchIndex - 1);
@@ -672,7 +670,6 @@ async function runBatch(
     }
 
     messages.push({ role: 'assistant', content: parsed.content, toolCalls: parsed.toolCalls });
-    let wroteMemory = false;
     for (const call of parsed.toolCalls) {
       if (rec.cancelled || rec.paused) return [];
       const started = Date.now();
@@ -682,7 +679,6 @@ async function runBatch(
       } catch (err) {
         output = `error: ${err instanceof Error ? err.message : String(err)}`;
       }
-      if (call.name === 'remember' && !output.startsWith('(')) wroteMemory = true;
       const trace: ReviewTraceStep = {
         step,
         tool: call.name,
@@ -693,9 +689,6 @@ async function runBatch(
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
-    // Memory writes land in the persisted job; flush them now so they survive an
-    // immediate pause, cancellation, or the max-steps exit below.
-    if (wroteMemory) persist(rec);
 
     if (step >= maxSteps) {
       // Out of steps: ask for the final JSON using what we have.
@@ -760,12 +753,6 @@ function buildSystemPrompt(
     '',
     'Use the provided tools to read the rest of the repository at the MR head ' +
       'before finalizing your comments.',
-    '',
-    // `remember`/`recall` are the one write-capable tool pair; they persist to the
-    // session so findings survive a pause/resume or a long multi-batch review.
-    'You may call `remember` to save a concise note (a verified finding, a decision, ' +
-      'or context) and `recall` to read notes back later, including after the review ' +
-      'is paused and resumed. Notes are private to this review.',
   ];
   return (
     lines.join('\n') +

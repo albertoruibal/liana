@@ -305,8 +305,6 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
 
 // Signatures of the last model-log render, so a poll tick only rebuilds the
 // parts that changed (and doesn't reset the user's scroll while streaming).
-let logMemorySig = '';
-
 let logTraceSig = '';
 
 let logPromptsSig = '';
@@ -349,7 +347,6 @@ function promptMetrics(p: ReviewPromptStep): string {
 
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
-  renderMemories(job);
   let totalCompletion = 0;
   let totalDuration = 0;
   let sawEstimated = false;
@@ -873,19 +870,6 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
   } catch (err) {
     if (shown) status.textContent = String(err);
   }
-}
-
-/** Render the agent's saved memories (read-only) into the model-log dialog. */
-function renderMemories(job: ReviewJob): void {
-  const memories = job.memories;
-  const sig = memories.map((m) => m.note).join('\u0001');
-  if (sig === logMemorySig) return;
-  logMemorySig = sig;
-  $('#review-log-memory-count').textContent = String(memories.length);
-  $('#review-log-memory').innerHTML =
-    memories.length > 0
-      ? memories.map((m) => `<li>${esc(m.note)}</li>`).join('')
-      : '<li class="muted">No notes saved yet.</li>';
 }
 
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {

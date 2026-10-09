@@ -88,10 +88,8 @@ in the packaged app.
   fallback, writing only objects and the hidden ref.
 - The LLM harness runs **read-only repository tools** against the merge request's head SHA (never the local working
   tree). Repository tools resolve paths inside the repo only, truncate output, and never write to the working tree or
-  index. The one side-effecting pair is the per-review memory: `remember`/`recall` append to and read a memory list
-  carried on `ToolContext.memories`, which is a live reference to `ReviewJob.memories` (persisted in the session,
-  rendered read-only in the UI). They never touch git, the working tree, or the index. The agent loop is bounded by
-  `maxSteps` and a chars/4 context budget; batching and a one-shot fallback keep small local models usable.
+  index. The agent loop is bounded by `maxSteps` and a chars/4 context budget; batching and a one-shot fallback keep
+  small local models usable.
 - **Reviews are pausable and persistent.** `src/sessions.ts` writes the agent checkpoint (message history, batch cursor)
   to `~/.config/liana/sessions/<id>.json` — mode `0600` in a `0700` dir, keyed by absolute repo
   path, ≤12 per repo, `running` sessions reopened as `paused` at startup. Pause aborts the in-flight call but keeps the
