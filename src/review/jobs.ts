@@ -299,14 +299,16 @@ export function pauseReviewJob(id: string): boolean {
 }
 
 /**
- * Resume a paused job. A live paused record continues from its checkpoint; a
- * record only on disk (server restart) is rebuilt and re-entered from the last
- * persisted checkpoint. Returns null when the session is gone or not paused.
+ * Resume a paused or errored job. A live record continues from its checkpoint;
+ * a record only on disk (server restart) is rebuilt and re-entered from the last
+ * persisted checkpoint. An errored job may carry no checkpoint — it then
+ * re-runs its current batch from scratch, keeping comments already collected.
+ * Returns null when the session is gone or not resumable.
  */
 export function resumeReview(repoPath: string, id: string): ReviewJob | null {
   const live = jobs.get(id);
   if (live && live.repoPath === repoPath) {
-    if (live.job.state !== 'paused') return null;
+    if (live.job.state !== 'paused' && live.job.state !== 'error') return null;
     live.paused = false;
     live.controller = new AbortController();
     live.job.state = 'running';
@@ -315,9 +317,10 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
     return structuredClone(live.job);
   }
   const s = readSession(id);
-  if (!s || s.repoPath !== repoPath || s.job.state !== 'paused') return null;
+  if (!s || s.repoPath !== repoPath || (s.job.state !== 'paused' && s.job.state !== 'error')) return null;
   const rec = recordFromStored(s);
   rec.job.state = 'running';
+  rec.job.error = null;
   jobs.set(id, rec);
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
   return structuredClone(rec.job);

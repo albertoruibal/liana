@@ -495,7 +495,7 @@ export interface ReviewPromptStep {
   usageEstimated: boolean;
 }
 
-/** Lifecycle of a review job; `paused` is resumable, `cancelled` is terminal. */
+/** Lifecycle of a review job; `paused` and `error` are resumable, `cancelled` is terminal. */
 export type ReviewJobState = 'running' | 'paused' | 'done' | 'error' | 'cancelled';
 
 /** State of an in-flight review job, polled by the UI for live progress. */

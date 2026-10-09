@@ -891,7 +891,11 @@ function renderMemories(job: ReviewJob): void {
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $('#review-progress').hidden = job.state !== 'running';
   $('#review-pause-job').hidden = job.state !== 'running';
-  $('#review-resume-job').hidden = job.state !== 'paused';
+  // Paused and errored jobs are both resumable: resume re-issues the last step
+  // (from the checkpoint when there is one, else the current batch from scratch).
+  const resumable = job.state === 'paused' || job.state === 'error';
+  $('#review-resume-job').hidden = !resumable;
+  $('#review-resume-job').textContent = job.state === 'error' ? 'Continue' : 'Resume';
   $('#review-cancel-job').hidden = job.state !== 'running' && job.state !== 'paused';
   $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;

@@ -331,7 +331,7 @@ export function createApi(defaultRepo: string | null): Api {
         const { jobId } = JSON.parse(rawBody) as { jobId?: string };
         if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
         const job = resumeReview(repoPath, jobId.trim());
-        if (!job) return { status: 404, body: { error: 'No paused review to resume' } };
+        if (!job) return { status: 404, body: { error: 'No paused or errored review to resume' } };
         return { status: 200, body: { ok: true, job } };
       }
       if (route === '/review/sessions' && method === 'GET') {

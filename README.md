@@ -138,7 +138,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/review/status` | POST | `{jobId}` | Job state, live output, agent trace, proposed comments |
 | `/api/review/cancel` | POST | `{jobId}` | Abort a running review (terminal) |
 | `/api/review/pause` | POST | `{jobId}` | Pause a running review at the next checkpoint (resumable) |
-| `/api/review/resume` | POST | `{jobId}` | Resume a paused review, from memory or from disk |
+| `/api/review/resume` | POST | `{jobId}` | Resume a paused or errored review, from memory or from disk |
 | `/api/review/sessions` | GET | — | Saved review sessions for the repository, newest first |
 | `/api/review/session` | POST | `{sessionId}` | Restore one session's MR, job, trace, and comments |
 | `/api/review/session/save` | POST | `{sessionId, comments[]}` | Persist edited comment bodies/statuses |
@@ -287,7 +287,8 @@ full server/Electron restart. A **Saved review** picker lists the repository's s
 repository), defaults to none, and can delete one; choosing a saved review restores both its merge/pull request and its
 job — so a paused session immediately shows *Review paused — resume to continue* with **Resume** available. Pausing is
 not cancellation: cancel is terminal, pause is resumable. The resumed review keeps targeting the MR head SHA it started
-on.
+on. A session that **failed** is resumable too: **Continue** re-issues the last step from its checkpoint (or re-runs the
+current batch from scratch when the failure left no checkpoint), keeping the comments already collected.
 
 The model always runs as a small read-only agent against your repository: before commenting it may call `read_file`,
 `list_files`, `search_code`, `git_log`, `git_blame`, `git_diff`, `show_commit`, and `get_mr_changes`, all resolved at
