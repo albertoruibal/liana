@@ -10,6 +10,7 @@ import {
 import { forgeLabel, hasCommit } from '../forge';
 import {
   executeTool,
+  estimateTokens,
   extractJsonObject,
   matchesAnyGlob,
   messagesTokens,
@@ -38,7 +39,7 @@ import type {
   ReviewSessionView,
   ReviewTraceStep,
 } from '../types';
-import { chatCompletion, type ChatRequest } from './ai';
+import { chatCompletion, type ChatRequest, type CompletionResult } from './ai';
 import { parseComments, parsePartialComments } from './comments';
 
 interface JobRecord {
@@ -491,7 +492,7 @@ const PROMPT_LOG_CHARS = 16000;
 const PROMPT_LOG_MAX = 40;
 
 /** Record the exact request sent to the model, capped, for the model log. */
-function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): void {
+function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): ReviewPromptStep {
   // Serialize tools/tool_choice before the (often huge) messages array so the
   // offered tool catalogue survives tail truncation.
   const { messages, ...rest } = request;
@@ -502,10 +503,38 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): void 
     text: truncated ? `${text.slice(0, PROMPT_LOG_CHARS)}\n… [truncated]` : text,
     chars: text.length,
     truncated,
+    durationMs: 0,
+    promptTokens: null,
+    completionTokens: null,
+    usageEstimated: false,
   };
   rec.job.prompts.push(entry);
   if (rec.job.prompts.length > PROMPT_LOG_MAX) {
     rec.job.prompts.splice(0, rec.job.prompts.length - PROMPT_LOG_MAX);
+  }
+  return entry;
+}
+
+/**
+ * Attach wall-clock time and token counts to a logged prompt. Real `usage`
+ * from the endpoint is preferred; when it is absent fall back to the chars/4
+ * estimate and flag it as such.
+ */
+function recordUsage(
+  entry: ReviewPromptStep,
+  startedAt: number,
+  result: CompletionResult,
+  messages: ChatMessage[],
+): void {
+  entry.durationMs = Date.now() - startedAt;
+  if (result.usage) {
+    entry.promptTokens = result.usage.promptTokens;
+    entry.completionTokens = result.usage.completionTokens;
+    entry.usageEstimated = false;
+  } else {
+    entry.promptTokens = messagesTokens(messages);
+    entry.completionTokens = estimateTokens(result.content);
+    entry.usageEstimated = true;
   }
 }
 
@@ -587,10 +616,12 @@ async function runBatch(
       temperature: provider.temperature,
       max_tokens: provider.maxTokens,
       stream: true,
+      stream_options: { include_usage: true },
       tools: nativeTools(),
       tool_choice: 'auto',
     };
-    recordPrompt(rec, step, request);
+    const promptEntry = recordPrompt(rec, step, request);
+    const modelStarted = Date.now();
     const result = await chatCompletion(
       provider,
       request,
@@ -603,6 +634,7 @@ async function runBatch(
       },
       rec.controller.signal,
     );
+    recordUsage(promptEntry, modelStarted, result, messages);
 
     const parsed = { content: result.content, toolCalls: result.toolCalls };
 
@@ -675,13 +707,15 @@ async function runBatch(
         temperature: provider.temperature,
         max_tokens: provider.maxTokens,
       };
-      recordPrompt(rec, step, finalRequest);
+      const promptEntryForFinal = recordPrompt(rec, step, finalRequest);
+      const finalStarted = Date.now();
       const finalResult = await chatCompletion(
         provider,
         finalRequest,
         undefined,
         rec.controller.signal,
       );
+      recordUsage(promptEntryForFinal, finalStarted, finalResult, messages);
       const finalObj = extractJsonObject(finalResult.content);
       return finalObj ? parseComments(finalObj, rule, changes.files) : [];
     }

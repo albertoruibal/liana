@@ -3717,6 +3717,20 @@ dialog select:focus-visible {
   gap: 8px;
 }
 
+.review-log-trace-wrap > summary {
+  cursor: pointer;
+  color: var(--fg-dim);
+}
+
+.review-log-trace-wrap[open] > summary {
+  margin-bottom: 8px;
+}
+
+.review-log-trace-wrap > summary h4 {
+  display: inline;
+  margin: 0;
+}
+
 .review-log-trace li {
   border-left: 2px solid var(--accent);
   padding-left: 8px;

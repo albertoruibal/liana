@@ -16,9 +16,16 @@ function formatTimeout(ms: number): string {
   return `${Math.round(ms / 1000)}s`;
 }
 
+export interface CompletionUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
 export interface CompletionResult {
   content: string;
   toolCalls: ToolCall[];
+  /** Real token usage when the endpoint reports it; absent otherwise. */
+  usage?: CompletionUsage;
 }
 
 export interface ChatRequest {
@@ -28,6 +35,8 @@ export interface ChatRequest {
   max_tokens: number;
   /** Request SSE streaming; an endpoint that ignores it still gets the JSON fallback. */
   stream?: boolean;
+  /** Ask a streaming endpoint to emit a final `usage` chunk; ignored by servers that don't support it. */
+  stream_options?: { include_usage?: boolean };
   tools?: unknown;
   tool_choice?: string;
 }
@@ -106,6 +115,16 @@ interface StreamDelta {
   }>;
 }
 
+/** Read OpenAI-style `usage` off a raw completion/stream chunk, when present. */
+function parseUsage(raw: unknown): CompletionUsage | undefined {
+  const usage = (raw as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }).usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  const prompt = usage.prompt_tokens;
+  const completion = usage.completion_tokens;
+  if (typeof prompt !== 'number' || typeof completion !== 'number') return undefined;
+  return { promptTokens: prompt, completionTokens: completion };
+}
+
 /** Consume an OpenAI SSE stream, accumulating content and tool-call fragments. */
 async function readStream(
   body: ReadableStream<Uint8Array>,
@@ -115,6 +134,7 @@ async function readStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
+  let usage: CompletionUsage | undefined;
   const calls = new Map<number, { id: string; name: string; args: string }>();
 
   for (;;) {
@@ -132,6 +152,7 @@ async function readStream(
       try {
         const parsed = JSON.parse(data) as { choices?: Array<{ delta?: StreamDelta }> };
         delta = parsed.choices?.[0]?.delta ?? null;
+        usage = parseUsage(parsed) ?? usage;
       } catch {
         continue;
       }
@@ -160,7 +181,7 @@ async function readStream(
     }))
     .filter((c) => c.name.length > 0);
 
-  return { content, toolCalls };
+  return usage ? { content, toolCalls, usage } : { content, toolCalls };
 }
 
 function parseCompletion(raw: unknown): CompletionResult {
@@ -182,7 +203,8 @@ function parseCompletion(raw: unknown): CompletionResult {
       });
     }
   }
-  return { content, toolCalls };
+  const usage = parseUsage(raw);
+  return usage ? { content, toolCalls, usage } : { content, toolCalls };
 }
 
 function parseArgs(raw: string): Record<string, unknown> {

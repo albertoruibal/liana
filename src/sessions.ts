@@ -160,6 +160,10 @@ function optionalString(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+function optionalCount(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null;
+}
+
 function coerceChanges(v: unknown): ReviewChanges | null {
   if (!isRecord(v) || !isRecord(v.mr) || !Array.isArray(v.files) || !isRecord(v.diffRefs)) {
     return null;
@@ -247,6 +251,10 @@ function coerceJob(v: unknown): ReviewJob | null {
           text: str(p.text, ''),
           chars: Math.max(0, Math.floor(num(p.chars, 0))),
           truncated: p.truncated === true,
+          durationMs: Math.max(0, Math.floor(num(p.durationMs, 0))),
+          promptTokens: optionalCount(p.promptTokens),
+          completionTokens: optionalCount(p.completionTokens),
+          usageEstimated: p.usageEstimated === true,
         }))
       : [],
     memories: Array.isArray(v.memories)

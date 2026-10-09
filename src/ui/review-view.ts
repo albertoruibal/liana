@@ -13,7 +13,7 @@ import { toast } from './toast';
 import { $ } from './dom';
 import { CodeHandle } from '../code';
 import { DiffLine, parsePatch } from '../diff';
-import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewFile, ReviewJob, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
+import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewFile, ReviewJob, ReviewPromptStep, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
 import { invalidateAiConflict } from './ai-conflict';
 import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
@@ -313,10 +313,59 @@ let logPromptsSig = '';
 
 let logOutput = '';
 
+/** Compact duration: `820ms`, `4.2s`, `1m03s`. */
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${String(Math.round(s - m * 60)).padStart(2, '0')}s`;
+}
+
+/** Thousands-separated count, with a `~` prefix when the value is estimated. */
+function fmtCount(n: number | null, estimated: boolean): string | null {
+  if (n === null) return null;
+  return `${estimated ? '~' : ''}${n.toLocaleString('en-US')}`;
+}
+
+/** `820 tok/s`, or '' when there is no measurable rate. */
+function fmtRate(completionTokens: number | null, durationMs: number): string {
+  if (completionTokens === null || durationMs < 250) return '';
+  return `${Math.round(completionTokens / (durationMs / 1000)).toLocaleString('en-US')} tok/s`;
+}
+
+/** One-line metrics for a logged model call. */
+function promptMetrics(p: ReviewPromptStep): string {
+  const parts = [`${p.chars.toLocaleString('en-US')} chars`];
+  if (p.truncated) parts.push('truncated');
+  parts.push(fmtDuration(p.durationMs));
+  const tokens = fmtCount(p.completionTokens, p.usageEstimated);
+  if (tokens !== null) parts.push(`${tokens} tok`);
+  const rate = fmtRate(p.completionTokens, p.durationMs);
+  if (rate) parts.push(rate);
+  return parts.join(' · ');
+}
+
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
   renderMemories(job);
-  $('#review-log-subtitle').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
+  let totalCompletion = 0;
+  let totalDuration = 0;
+  let sawEstimated = false;
+  for (const p of job.prompts) {
+    if (p.completionTokens !== null) totalCompletion += p.completionTokens;
+    if (p.durationMs > 0) totalDuration += p.durationMs;
+    if (p.usageEstimated) sawEstimated = true;
+  }
+  const totalRate = fmtRate(totalCompletion, totalDuration);
+  const summary = [
+    `Step ${job.trace.length}`,
+    `batch ${job.batchIndex}/${job.batchTotal}`,
+    totalCompletion > 0 ? `${sawEstimated ? '~' : ''}${totalCompletion.toLocaleString('en-US')} tok` : '',
+    totalRate,
+  ].filter((s) => s.length > 0);
+  $('#review-log-subtitle').textContent = summary.join(' · ');
   $('#review-log-trace-count').textContent = String(job.trace.length);
   const traceSig = job.trace
     .map((t) => `${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
@@ -332,12 +381,14 @@ export function renderReviewLog(job: ReviewJob): void {
               (t) =>
                 `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
                 `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-                `<span class="muted">${t.durationMs}ms</span></li>`,
+                `<span class="muted">${fmtDuration(t.durationMs)}</span></li>`,
             )
             .join('');
   }
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
-  const promptsSig = job.prompts.map((p) => `${p.step}:${p.chars}:${p.truncated ? 1 : 0}`).join(',');
+  const promptsSig = job.prompts
+    .map((p) => `${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+    .join(',');
   if (promptsSig !== logPromptsSig) {
     logPromptsSig = promptsSig;
     const prompts = $('#review-log-prompts');
@@ -352,7 +403,7 @@ export function renderReviewLog(job: ReviewJob): void {
         : job.prompts
             .map(
               (p, i) =>
-                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${p.chars} chars${p.truncated ? ' · truncated' : ''}</summary>` +
+                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
                 `<pre>${esc(p.text)}</pre></details>`,
             )
             .join('');
@@ -1078,7 +1129,7 @@ export function initReview(): void {
       .map((t) => `${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
       .join('\n');
     const prompts = state.job.prompts
-      .map((p) => `--- step ${p.step}${p.truncated ? ` (${p.chars} chars, truncated)` : ''} ---\n${p.text}`)
+      .map((p) => `--- step ${p.step} (${promptMetrics(p)}) ---\n${p.text}`)
       .join('\n\n');
     const text = [
       state.job.output,

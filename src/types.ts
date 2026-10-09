@@ -485,6 +485,14 @@ export interface ReviewPromptStep {
   /** Full length of the prompt before truncation. */
   chars: number;
   truncated: boolean;
+  /** Wall-clock time the model call took, in milliseconds. */
+  durationMs: number;
+  /** Prompt tokens reported by the endpoint, or estimated; null when unknown. */
+  promptTokens: number | null;
+  /** Completion tokens reported by the endpoint, or estimated; null when unknown. */
+  completionTokens: number | null;
+  /** True when the token counts are the chars/4 estimate rather than real usage. */
+  usageEstimated: boolean;
 }
 
 /** Lifecycle of a review job; `paused` is resumable, `cancelled` is terminal. */
