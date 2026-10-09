@@ -4,6 +4,7 @@
 import { providerKey, type StoredProvider } from '../settings';
 import { describeFetchError } from '../forge';
 import type { ToolCall } from '../review-tools';
+import type { AiModelInfo } from '../types';
 
 // The LLM call (including a streamed response) may take a long time on slow
 // local models, so allow up to 12 hours. Forge requests stay short.
@@ -214,6 +215,127 @@ function parseArgs(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+// Model discovery is a quick metadata probe, so cap it far below the 12h
+// completion timeout used for slow local inference.
+const LIST_TIMEOUT_MS = 30_000;
+
+/** Fetch JSON with a short timeout and the same upstream-error passthrough as `chatCompletion`. */
+async function probeJson(url: string, provider: StoredProvider, body?: unknown): Promise<unknown> {
+  const key = providerKey(provider);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: body !== undefined ? 'POST' : 'GET',
+      headers: {
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      const err = new Error(`AI endpoint ${res.status}: ${text}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return (await res.json()) as unknown;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`AI request timed out after ${formatTimeout(LIST_TIMEOUT_MS)}`);
+    }
+    if (err instanceof TypeError) {
+      throw new Error(`AI request to ${url} failed: ${describeFetchError(err)}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : null;
+}
+
+function pickNumber(...vals: unknown[]): number | undefined {
+  for (const v of vals) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return Math.floor(v);
+  }
+  return undefined;
+}
+
+/** Read model ids and any reported context/output limits from an OpenAI `/models` reply. */
+function parseOpenAiModels(raw: unknown): AiModelInfo[] {
+  const data = asRecord(raw)?.data;
+  if (!Array.isArray(data)) return [];
+  const out: AiModelInfo[] = [];
+  for (const entry of data) {
+    const m = asRecord(entry);
+    if (!m) continue;
+    const id = typeof m.id === 'string' ? m.id : typeof m.name === 'string' ? m.name : '';
+    if (!id) continue;
+    const meta = asRecord(m.meta);
+    out.push({
+      id,
+      contextWindow: pickNumber(
+        m.context_length,
+        m.max_model_len,
+        m.max_context_length,
+        meta?.n_ctx_train,
+        meta?.n_ctx,
+      ),
+      maxTokens: pickNumber(m.max_output_tokens, m.max_completion_tokens),
+    });
+  }
+  return out;
+}
+
+/** Read the context window from an Ollama `/api/show` reply (`model_info` or `num_ctx`). */
+function ollamaContext(raw: unknown): number | undefined {
+  const info = asRecord(asRecord(raw)?.model_info);
+  if (info) {
+    for (const [key, value] of Object.entries(info)) {
+      if (key === 'context_length' || key.endsWith('.context_length')) {
+        const n = pickNumber(value);
+        if (n) return n;
+      }
+    }
+  }
+  const params = asRecord(raw)?.parameters;
+  if (typeof params === 'string') {
+    const match = /num_ctx\s+(\d+)/.exec(params);
+    if (match?.[1]) return Number(match[1]);
+  }
+  return undefined;
+}
+
+/**
+ * List the models an OpenAI-compatible endpoint reports, populating the settings
+ * model picker. Context/output limits are included when the endpoint advertises
+ * them (`context_length`, `max_model_len`, …); Ollama's OpenAI shim omits them, so
+ * missing values are backfilled from its native `/api/show`.
+ */
+export async function listProviderModels(provider: StoredProvider): Promise<AiModelInfo[]> {
+  const base = provider.baseUrl.replace(/\/+$/, '');
+  const models = parseOpenAiModels(await probeJson(`${base}/models`, provider));
+  // Ollama's OpenAI shim reports no limits; backfill from its native API. Only
+  // probe when nothing reported a window, and cap the fan-out for large catalogs.
+  if (models.length > 0 && models.length <= 32 && models.every((m) => m.contextWindow === undefined)) {
+    const origin = base.replace(/\/v\d+$/i, '');
+    await Promise.all(
+      models.map(async (m) => {
+        try {
+          m.contextWindow = ollamaContext(await probeJson(`${origin}/api/show`, provider, { model: m.id }));
+        } catch {
+          // Not an Ollama server (or the model is unknown): keep the id without limits.
+        }
+      }),
+    );
+  }
+  return models;
 }
 
 /** One-shot completion used by the settings "Test AI" button. */

@@ -5,7 +5,8 @@
 // over HTTP, callable directly. Types come from src/types.ts and are identical on
 // both sides. The browser UI still talks to /api (see src/ui/).
 
-import type { ForgeKind, ReviewChanges, ReviewRequest } from '../types';
+import type { AiModelInfo, ForgeKind, ReviewChanges, ReviewRequest } from '../types';
+import type { StoredProvider } from '../settings';
 
 /** Open merge/pull requests for the repository's resolved forge. */
 export async function apiListRequests(repoPath: string): Promise<ReviewRequest[]> {
@@ -54,4 +55,14 @@ export async function apiCheckoutRequestBranch(
 export async function apiTestForge(forge: 'gitlab' | 'github'): Promise<string> {
   const { forgeByKind } = await import('../forges');
   return forgeByKind(forge).test();
+}
+
+/**
+ * List the models on a provider's OpenAI-compatible endpoint (mirrors
+ * `POST /api/settings/ai-models` in src/api/index.ts). The browser UI calls this
+ * over `/api`; this wrapper keeps the typed contract in sync.
+ */
+export async function apiListAiModels(provider: StoredProvider): Promise<AiModelInfo[]> {
+  const { listProviderModels } = await import('../review');
+  return listProviderModels(provider);
 }

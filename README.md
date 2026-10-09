@@ -125,6 +125,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/settings` | GET | — | AI providers, review rules, GitLab/GitHub config (secrets masked to `hasKey`/`hasToken`) |
 | `/api/settings` | POST | partial settings | Merge and persist settings; omit a secret to keep the saved one |
 | `/api/settings/test-ai` | POST | `{providerId?}` | Send a tiny completion to the OpenAI-compatible endpoint |
+| `/api/settings/ai-models` | POST | `{providerId?}` | List the endpoint's models (`/models`, with Ollama `/api/show` for context limits) |
 | `/api/settings/test-gitlab` | POST | — | Authenticate against GitLab (`GET /user`) |
 | `/api/settings/test-forge` | POST | `{forge?}` | Authenticate against the resolved/explicit forge |
 | `/api/forge/mrs` | GET | — | Open merge/pull requests for the repo's resolved forge |

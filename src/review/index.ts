@@ -9,7 +9,7 @@
 // This barrel preserves the surface the API router has always imported; the
 // implementation is split by concern under src/review/.
 
-export { testProvider, completeText } from './ai';
+export { testProvider, completeText, listProviderModels } from './ai';
 export { generateCommitMessage, type CommitMessageInput } from './commit-message';
 export { parseComments, parsePartialComments } from './comments';
 export {

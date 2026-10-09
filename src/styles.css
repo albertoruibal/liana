@@ -3479,6 +3479,15 @@ dialog select:focus-visible {
   min-width: 120px;
 }
 
+.pf-model-select {
+  flex: 1;
+  min-width: 140px;
+}
+
+.pf-models {
+  flex: 0 0 auto;
+}
+
 .pf-small {
   display: flex;
   flex-direction: column;

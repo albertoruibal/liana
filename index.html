@@ -610,7 +610,23 @@
           <p class="muted hint">
             An OpenAI-compatible endpoint (llama.cpp, Ollama, LM Studio, vLLM, …). The
             model must support native function calling (<code>tools</code> /
-            <code>tool_calls</code>).
+            <code>tool_calls</code>). Use <strong>Retrieve</strong> to list the
+            endpoint's models and fill in the context window and max-token fields
+            when the API reports them.
+          </p>
+          <p class="muted hint">
+            A review splits the changed files into batches so each fits the model's input
+            window: the budget is
+            <code>max(1024, Context − Max tokens − 256)</code> tokens, and files are packed
+            until roughly 70% of that budget is used. Because <strong>Max tokens</strong> (the
+            per-reply output reservation) is subtracted, once it approaches the Context (when
+            <code>Context − Max tokens − 256</code> drops to 1024 or below) the budget is pinned
+            to its 1024-token floor and changing <strong>Context</strong> no longer affects the
+            batch count. A larger Context (with a small Max tokens) means more room per batch, so
+            <em>fewer</em> batches, not more.
+            <strong>Max steps</strong> caps the tool-calling iterations inside each batch; the
+            <code>batch i/N</code> counter in the review log shows how many batches the plan
+            produced.
           </p>
         </section>
 

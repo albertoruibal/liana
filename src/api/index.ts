@@ -22,6 +22,7 @@ import {
   testForge,
   testGitLab,
   testProvider,
+  listProviderModels,
 } from '../review';
 import { forgeByKind, resolveForge } from '../forges';
 import { forgeLabel, hasCommit } from '../forge';
@@ -179,6 +180,14 @@ export function createApi(defaultRepo: string | null): Api {
         if (!provider) return { status: 400, body: { error: 'No AI provider configured' } };
         const reply = await testProvider(provider);
         return { status: 200, body: { ok: true, reply } };
+      }
+      if (route === '/settings/ai-models' && method === 'POST') {
+        const { providerId } = JSON.parse(rawBody || '{}') as { providerId?: string };
+        const provider =
+          (providerId !== undefined ? providerById(providerId) : null) ?? activeProvider();
+        if (!provider) return { status: 400, body: { error: 'No AI provider configured' } };
+        const models = await listProviderModels(provider);
+        return { status: 200, body: { ok: true, models } };
       }
       if (route === '/settings/test-forge' && method === 'POST') {
         const { forge } = JSON.parse(rawBody || '{}') as { forge?: string };

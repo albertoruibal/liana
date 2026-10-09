@@ -324,6 +324,15 @@ export interface AiProviderConfig {
   maxSteps: number;
 }
 
+/** A model discovered on an OpenAI-compatible endpoint by the settings "Retrieve" button. */
+export interface AiModelInfo {
+  id: string;
+  /** Context window in tokens, when the endpoint reports it. */
+  contextWindow?: number;
+  /** Suggested max output tokens, when the endpoint reports it. */
+  maxTokens?: number;
+}
+
 /** Reviewer instructions and policy ("revision rule") applied to every review. */
 export interface ReviewRuleConfig {
   /** Natural-language reviewer guidance prepended to the system prompt. */

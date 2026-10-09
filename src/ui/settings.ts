@@ -4,7 +4,7 @@ import { api } from './api-client';
 import { esc } from './format';
 import { buildThemeOptions } from './theme';
 import { $ } from './dom';
-import { AiProviderConfig, AppSettings } from '../types';
+import { AiModelInfo, AiProviderConfig, AppSettings } from '../types';
 import { applyTheme, currentTheme } from './theme';
 import { closeMoreMenu } from './more-menu';
 
@@ -49,7 +49,9 @@ export function renderProviderList(): void {
         <div class="provider-fields">
           <div class="provider-row">
             <input type="text" class="pf-name" placeholder="Name" value="${esc(p.name)}" />
+            <select class="pf-model-select" title="Models retrieved from the endpoint" hidden></select>
             <input type="text" class="pf-model" placeholder="Model (e.g. qwen2.5-coder:7b)" value="${esc(p.model)}" />
+            <button type="button" class="btn pf-models" title="Retrieve the model list from the endpoint">Retrieve</button>
           </div>
           <input type="text" class="pf-url" placeholder="Base URL (…/v1)" value="${esc(p.baseUrl)}" />
           <input type="password" class="pf-key" autocomplete="off"
@@ -265,6 +267,80 @@ async function testProviderItem(li: HTMLLIElement): Promise<void> {
   }
 }
 
+/** Apply model-reported context window / max tokens (in tokens) to a provider row. */
+function applyModelParams(li: HTMLLIElement, context: number, maxTokens: number): void {
+  if (Number.isFinite(context) && context > 0) {
+    const ctx = li.querySelector<HTMLInputElement>('.pf-context');
+    if (ctx) ctx.value = toK(context);
+  }
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    const mt = li.querySelector<HTMLInputElement>('.pf-maxtokens');
+    if (mt) mt.value = toK(maxTokens);
+  }
+}
+
+/** Fill a provider row's model `<select>` with retrieved models; the text input stays editable. */
+function populateModelSelect(li: HTMLLIElement, models: AiModelInfo[]): void {
+  const select = li.querySelector<HTMLSelectElement>('.pf-model-select');
+  if (!select) return;
+  const current = li.querySelector<HTMLInputElement>('.pf-model')?.value.trim() ?? '';
+  const option = (m: AiModelInfo, label = m.id): string => {
+    const ctx = m.contextWindow !== undefined ? ` data-context="${m.contextWindow}"` : '';
+    const max = m.maxTokens !== undefined ? ` data-maxtokens="${m.maxTokens}"` : '';
+    return `<option value="${esc(m.id)}"${ctx}${max}>${esc(label)}</option>`;
+  };
+  select.innerHTML = [
+    '<option value="">— pick a model —</option>',
+    ...models.map((m) => option(m)),
+    ...(current && !models.some((m) => m.id === current)
+      ? [option({ id: current }, `${current} (current)`)]
+      : []),
+  ].join('');
+  select.value = current;
+  select.hidden = false;
+  // Auto-fill the already-selected model's limits, if the API reported them.
+  const match = models.find((m) => m.id === current);
+  if (match) {
+    applyModelParams(li, match.contextWindow ?? NaN, match.maxTokens ?? NaN);
+  }
+}
+
+/**
+ * Per-provider Retrieve button: persist the edited fields, then ask the endpoint
+ * for its model list. Selecting a model fills the text input and, when the API
+ * reports them, the context window and max-token fields.
+ */
+async function retrieveModelsItem(li: HTMLLIElement): Promise<void> {
+  const status = $('#settings-status');
+  try {
+    readProviderInputs();
+    const index = li.dataset.index;
+    const provider = settingsProviders[Number(index)];
+    if (!provider) return;
+    const { id, name } = provider;
+    await persistSettings();
+    // persistSettings re-renders the list, so the original <li> is detached.
+    const fresh = document.querySelector<HTMLLIElement>(
+      `#settings-providers .provider-item[data-index="${index}"]`,
+    );
+    if (!fresh) return;
+    status.textContent = `Retrieving models from ${name}…`;
+    const res = await api<{ models: AiModelInfo[] }>(
+      '/settings/ai-models',
+      { providerId: id },
+      { scoped: false },
+    );
+    if (res.models.length === 0) {
+      status.textContent = `${name} reported no models. Enter one manually.`;
+      return;
+    }
+    populateModelSelect(fresh, res.models);
+    status.textContent = `Retrieved ${res.models.length} model(s) from ${name}.`;
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
 export function initSettings(): void {
   $('#btn-settings').addEventListener('click', () => {
     closeMoreMenu();
@@ -303,6 +379,10 @@ export function initSettings(): void {
       void testProviderItem(li);
       return;
     }
+    if (target.classList.contains('pf-models')) {
+      void retrieveModelsItem(li);
+      return;
+    }
     if (!target.classList.contains('pf-remove')) return;
     readProviderInputs();
     const i = Number(li.dataset.index);
@@ -312,6 +392,21 @@ export function initSettings(): void {
       settingsActiveProviderId = settingsProviders[0]?.id ?? null;
     }
     renderProviderList();
+  });
+
+  $('#settings-providers').addEventListener('change', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLSelectElement) || !target.classList.contains('pf-model-select')) return;
+    const li = target.closest<HTMLLIElement>('.provider-item');
+    if (!li) return;
+    const model = target.value;
+    if (!model) return;
+    const input = li.querySelector<HTMLInputElement>('.pf-model');
+    if (input) input.value = model;
+    const option = target.selectedOptions[0];
+    const context = Number(option?.dataset.context);
+    const maxTokens = Number(option?.dataset.maxtokens);
+    applyModelParams(li, context, maxTokens);
   });
 
   $('#settings-save').addEventListener('click', (ev) => {
