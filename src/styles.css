@@ -3486,6 +3486,8 @@ dialog select:focus-visible {
 
 .pf-models {
   flex: 0 0 auto;
+  align-self: stretch;
+  margin-top: 6px;
 }
 
 .pf-small {
