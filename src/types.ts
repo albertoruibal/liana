@@ -512,6 +512,8 @@ export interface ReviewJob {
   trace: ReviewTraceStep[];
   /** The exact requests sent to the model, in order. */
   prompts: ReviewPromptStep[];
+  /** Accumulated wall-clock time across every model call, in milliseconds. */
+  llmDurationMs: number;
   comments: ReviewComment[];
   error: string | null;
 }
@@ -530,6 +532,8 @@ export interface ReviewSession {
   commentCount: number;
   batchIndex: number;
   batchTotal: number;
+  /** Accumulated wall-clock time across every model call, in milliseconds. */
+  llmDurationMs: number;
   /** Forge the session was created against (defaults to gitlab for old files). */
   forge: ForgeKind;
 }

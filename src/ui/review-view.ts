@@ -162,7 +162,7 @@ export function refreshSessionSelect(state: ReviewTabState): void {
       .map(
         (s) =>
           `<option value="${esc(s.id)}"${s.id === current ? ' selected' : ''}>` +
-          `${requestNumber(s.forge, s.iid)} ${esc(s.title)} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}</option>`,
+          `${requestNumber(s.forge, s.iid)} ${esc(s.title)} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}${s.llmDurationMs > 0 ? ` · ${fmtDuration(s.llmDurationMs)}` : ''}</option>`,
       )
       .join('');
   $<HTMLButtonElement>('#review-delete-session').toggleAttribute('disabled', !current);
@@ -361,6 +361,7 @@ export function renderReviewLog(job: ReviewJob): void {
     `batch ${job.batchIndex}/${job.batchTotal}`,
     totalCompletion > 0 ? `${sawEstimated ? '~' : ''}${totalCompletion.toLocaleString('en-US')} tok` : '',
     totalRate,
+    job.llmDurationMs > 0 ? `${fmtDuration(job.llmDurationMs)} LLM` : '',
   ].filter((s) => s.length > 0);
   $('#review-log-subtitle').textContent = summary.join(' · ');
   $('#review-log-trace-count').textContent = String(job.trace.length);
@@ -1120,6 +1121,7 @@ export function initReview(): void {
       .map((p) => `--- step ${p.step} (${promptMetrics(p)}) ---\n${p.text}`)
       .join('\n\n');
     const text = [
+      state.job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---\n` : '',
       state.job.output,
       trace ? `\n\n--- agent trace ---\n${trace}` : '',
       prompts ? `\n\n--- prompts ---\n${prompts}` : '',

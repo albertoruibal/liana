@@ -277,7 +277,8 @@ scanned from the model's output as it streams (marked *scanning…*) and validat
 completes. The **Model log** dialog also exposes the exact prompt sent to the model at each step (the full wire
 request, capped per entry) alongside the trace (collapsible) and raw output. Each logged call shows its wall-clock
 time, token counts, and tokens/second — taken from the endpoint's `usage` when it reports it (`stream_options`
-asks for it) and otherwise estimated (`~`), with totals in the dialog subtitle. It is bound to the repository it was opened on (the repo
+asks for it) and otherwise estimated (`~`), with totals in the dialog subtitle, including the accumulated LLM time
+for the whole review (also shown next to each entry in the Saved review picker). It is bound to the repository it was opened on (the repo
 tab owns the review panel): switching to another repository hides it (state preserved), and it can be closed with its
 tab's ×.
 

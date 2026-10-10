@@ -111,6 +111,7 @@ export function listReviewSessions(repoPath: string): ReviewSession[] {
     commentCount: s.job.comments.length,
     batchIndex: s.job.batchIndex,
     batchTotal: s.job.batchTotal,
+    llmDurationMs: s.job.llmDurationMs,
     forge: s.changes.forge,
   }));
 }
@@ -127,6 +128,7 @@ function publicSession(s: StoredReviewSession): ReviewSession {
     commentCount: s.job.comments.length,
     batchIndex: s.job.batchIndex,
     batchTotal: s.job.batchTotal,
+    llmDurationMs: s.job.llmDurationMs,
     forge: s.changes.forge,
   };
 }
@@ -361,6 +363,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       output: '',
       trace: [],
       prompts: [],
+      llmDurationMs: 0,
       comments: [],
       error: null,
     },
@@ -523,12 +526,14 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
  * estimate and flag it as such.
  */
 function recordUsage(
+  rec: JobRecord,
   entry: ReviewPromptStep,
   startedAt: number,
   result: CompletionResult,
   messages: ChatMessage[],
 ): void {
   entry.durationMs = Date.now() - startedAt;
+  rec.job.llmDurationMs += entry.durationMs;
   if (result.usage) {
     entry.promptTokens = result.usage.promptTokens;
     entry.completionTokens = result.usage.completionTokens;
@@ -635,7 +640,7 @@ async function runBatch(
       },
       rec.controller.signal,
     );
-    recordUsage(promptEntry, modelStarted, result, messages);
+    recordUsage(rec, promptEntry, modelStarted, result, messages);
 
     const parsed = { content: result.content, toolCalls: result.toolCalls };
 
@@ -711,7 +716,7 @@ async function runBatch(
         undefined,
         rec.controller.signal,
       );
-      recordUsage(promptEntryForFinal, finalStarted, finalResult, messages);
+      recordUsage(rec, promptEntryForFinal, finalStarted, finalResult, messages);
       const finalObj = extractJsonObject(finalResult.content);
       return finalObj ? parseComments(finalObj, rule, changes.files) : [];
     }

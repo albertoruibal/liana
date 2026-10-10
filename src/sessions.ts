@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatMessage } from './review-tools';
-import type { ForgeKind, ReviewChanges, ReviewJob, ReviewRuleConfig } from './types';
+import type { ForgeKind, ReviewChanges, ReviewJob, ReviewPromptStep, ReviewRuleConfig } from './types';
 
 /** In-flight agent checkpoint inside the current batch, sufficient to resume. */
 export interface BatchCheckpoint {
@@ -230,6 +230,19 @@ function coerceJob(v: unknown): ReviewJob | null {
   ) {
     return null;
   }
+  const prompts: ReviewPromptStep[] = Array.isArray(v.prompts)
+    ? v.prompts.filter(isRecord).map((p) => ({
+        step: Math.floor(num(p.step, 0)),
+        text: str(p.text, ''),
+        chars: Math.max(0, Math.floor(num(p.chars, 0))),
+        truncated: p.truncated === true,
+        durationMs: Math.max(0, Math.floor(num(p.durationMs, 0))),
+        promptTokens: optionalCount(p.promptTokens),
+        completionTokens: optionalCount(p.completionTokens),
+        usageEstimated: p.usageEstimated === true,
+      }))
+    : [];
+  const promptsDuration = prompts.reduce((sum, p) => sum + p.durationMs, 0);
   return {
     id: str(v.id, ''),
     state,
@@ -245,18 +258,11 @@ function coerceJob(v: unknown): ReviewJob | null {
           durationMs: Math.max(0, Math.floor(num(t.durationMs, 0))),
         }))
       : [],
-    prompts: Array.isArray(v.prompts)
-      ? v.prompts.filter(isRecord).map((p) => ({
-          step: Math.floor(num(p.step, 0)),
-          text: str(p.text, ''),
-          chars: Math.max(0, Math.floor(num(p.chars, 0))),
-          truncated: p.truncated === true,
-          durationMs: Math.max(0, Math.floor(num(p.durationMs, 0))),
-          promptTokens: optionalCount(p.promptTokens),
-          completionTokens: optionalCount(p.completionTokens),
-          usageEstimated: p.usageEstimated === true,
-        }))
-      : [],
+    prompts,
+    llmDurationMs:
+      v.llmDurationMs === undefined
+        ? promptsDuration
+        : Math.max(0, Math.floor(num(v.llmDurationMs, 0))),
     comments: Array.isArray(v.comments)
       ? v.comments.filter(isRecord).map((c) => ({
           id: str(c.id, ''),
