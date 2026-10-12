@@ -40,9 +40,10 @@ export interface ReviewForge {
   ensureRefs(repoPath: string, changes: ReviewChanges): Promise<{ fetched: boolean }>;
 
   /**
-   * Check out the request's source branch and pull it. Local only except the
-   * final `git pull`; returns git's combined output. The branch is created from
-   * the already-fetched hidden head ref when absent, so no second fetch is needed.
+   * Check out the request's source branch and bring it to the request head: the
+   * hidden head ref when it was fetched, else a fresh `git fetch`. A missing
+   * local branch is created at the head; an existing one that has diverged is
+   * hard-reset to it. Local except the fetch; returns a short description.
    */
   checkoutBranch(repoPath: string, iid: number, branch: string): Promise<string>;
 
@@ -201,10 +202,12 @@ async function pickRemote(repoPath: string): Promise<string | null> {
 }
 
 /**
- * Check out a request's source branch and pull it. The branch is created from
- * the already-fetched hidden head ref when it does not exist locally, then
- * updated with `git pull`; it never rewrites history. Only `git checkout` and
- * `git pull` are used, with the same no-prompt environment as push/pull.
+ * Check out a request's source branch and bring it to the request head. The
+ * head is the already-fetched hidden ref when present, else a fresh `git fetch`
+ * of the branch. A missing local branch is created at the head; an existing one
+ * that points elsewhere is hard-reset to it (the caller confirms first). Only
+ * `git checkout`, `git fetch`, and `git reset` are used, with the same no-prompt
+ * environment as push/pull; returns a short description of a reset, else ''.
  */
 export async function checkoutRequestBranch(
   repoPath: string,
@@ -220,11 +223,25 @@ export async function checkoutRequestBranch(
   const remote = await pickRemote(repoPath);
   if (!remote) throw new Error('No git remote configured');
 
+  const hidden = hiddenRef.trim();
+  const hasHidden = !!hidden && (await hasCommit(repoPath, hidden).catch(() => false));
+  // Without the fetched head, refresh the branch so the reset target is current.
+  if (!hasHidden) {
+    await runGit(repoPath, ['fetch', '--no-tags', remote, name]);
+  }
+  const target = hasHidden ? hidden : 'FETCH_HEAD';
+  const targetSha = (await runGit(repoPath, ['rev-parse', `${target}^{commit}`])).trim();
+
   if (await hasLocalBranch(repoPath, name)) {
     await runGit(repoPath, ['checkout', name]);
-  } else if (await hasCommit(repoPath, hiddenRef).catch(() => false)) {
+    const localSha = (await runGit(repoPath, ['rev-parse', 'HEAD'])).trim();
+    if (localSha === targetSha) return '';
+    await runGit(repoPath, ['reset', '--hard', target]);
+    return `Reset ${name} to ${targetSha.slice(0, 10)}.`;
+  }
+  if (hasHidden) {
     // The review already fetched the head commit; branch from it without a second fetch.
-    await runGit(repoPath, ['checkout', '-b', name, hiddenRef]);
+    await runGit(repoPath, ['checkout', '-b', name, hidden]);
   } else if (await hasCommit(repoPath, `${remote}/${name}`).catch(() => false)) {
     await runGit(repoPath, ['checkout', '-b', name, '--track', `${remote}/${name}`]);
   } else {
@@ -232,7 +249,7 @@ export async function checkoutRequestBranch(
       `Branch "${name}" is not available locally; load the request (which fetches its head) first`,
     );
   }
-  return (await runGit(repoPath, ['pull', remote, name])).trim();
+  return '';
 }
 
 /** Turn a git remote URL into an `owner/name` (or `group/project`) path, or null. */

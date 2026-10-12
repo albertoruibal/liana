@@ -40,7 +40,7 @@ export async function apiApproveRequest(repoPath: string, iid: number): Promise<
   await (await resolveForge(repoPath)).approve(repoPath, iid);
 }
 
-/** Check out a request's source branch and pull it. */
+/** Check out a request's source branch and reset it to the request head. */
 export async function apiCheckoutRequestBranch(
   repoPath: string,
   forge: ForgeKind,

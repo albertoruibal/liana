@@ -30,7 +30,7 @@ export async function ensureMergeRequestRefs(
   return forgeByKind(changes.forge).ensureRefs(repoPath, changes);
 }
 
-/** Check out the request's source branch and pull it. */
+/** Check out the request's source branch and reset it to the request head. */
 export async function checkoutMergeRequestBranch(
   repoPath: string,
   forgeKind: ReviewChanges['forge'],

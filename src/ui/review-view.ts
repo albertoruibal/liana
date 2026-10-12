@@ -956,7 +956,7 @@ export async function generateReview(): Promise<void> {
   }
 }
 
-/** Check out the selected request's source branch and pull it. */
+/** Check out the selected request's source branch and reset it to the request head. */
 export async function checkoutMrBranch(): Promise<void> {
   const state = activeReview();
   const changes = state?.changes;
@@ -967,9 +967,9 @@ export async function checkoutMrBranch(): Promise<void> {
   const proceed = await confirmDialog({
     title: `Checkout ${short} branch?`,
     message:
-      `Check out "${branch}" and pull it from the remote. ` +
-      `Any local changes that conflict will make git refuse.`,
-    confirmLabel: 'Checkout & pull',
+      `Check out "${branch}" and reset it to the ${short} head. ` +
+      `If the local branch already exists and has diverged, its local commits and uncommitted changes will be discarded.`,
+    confirmLabel: 'Checkout & reset',
     danger: true,
   });
   if (!proceed) return;
