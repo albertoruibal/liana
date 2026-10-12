@@ -671,8 +671,8 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
       ${commentExcerptHtml(state, c)}
       <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
       <div class="review-comment-actions">
-        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>
         <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
+        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>
       </div>
     </div>`;
   const card = template.content.firstElementChild as HTMLElement;
