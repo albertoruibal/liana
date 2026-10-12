@@ -7,7 +7,7 @@ import { toast } from './toast';
 import { $ } from './dom';
 import { confirmDialog } from './confirm';
 import { refresh } from './actions';
-import { checkout } from './rebase';
+import { checkout, remoteLocalName } from './rebase';
 import { $svg } from './dom';
 import { applyTransform, renderCached } from './graph-view';
 
@@ -166,8 +166,10 @@ export function branchPillTarget(ev: Event): { kind: 'local' | 'remote'; name: s
 }
 
 /** Act on the branch behind a pill. A local branch is checked out (a no-op when
- * it is already current); a remote branch resets the checked-out branch to the
- * remote tip, after confirming, since that discards working-tree changes. */
+ * it is already current). A remote branch checks out (or creates) the local
+ * branch tracking it; when that local branch already exists and has diverged
+ * from the remote tip, it is hard-reset to the remote tip after confirming,
+ * since that discards local commits and working-tree changes. */
 export async function checkoutBranchPill(pill: { kind: 'local' | 'remote'; name: string }): Promise<void> {
   const state = store.lastResponse?.state;
   const currentBranch = state?.headBranch ?? '';
@@ -176,24 +178,31 @@ export async function checkoutBranchPill(pill: { kind: 'local' | 'remote'; name:
     await checkout(pill.name);
     return;
   }
-  if (!currentBranch || state?.detachedHead) {
-    toast('Cannot reset: HEAD is detached');
+  const local = remoteLocalName(pill.name);
+  if (!local) {
+    toast(`Not a remote branch: ${pill.name}`);
     return;
   }
-  const ok = await confirmDialog({
-    title: 'Reset current branch?',
-    message: `Move ${currentBranch} to ${pill.name} with --hard, discarding the current working tree.`,
-    confirmLabel: 'Reset --hard',
-    danger: true,
-    warning: 'Uncommitted changes will be discarded.',
-  });
-  if (!ok) return;
+  const localBranch = state?.branches.find((b) => !b.isRemote && b.name === local);
+  const remoteTip = state?.branches.find((b) => b.isRemote && b.name === pill.name)?.hash;
+  const diverged = !!localBranch && !!remoteTip && localBranch.hash !== remoteTip;
+  if (diverged) {
+    const ok = await confirmDialog({
+      title: `Reset ${local} to ${pill.name}?`,
+      message: `Check out ${local} and move it to ${pill.name} with --hard, discarding its local state.`,
+      confirmLabel: 'Reset --hard',
+      danger: true,
+      warning: `Local commits and uncommitted changes on ${local} will be discarded.`,
+    });
+    if (!ok) return;
+  }
   try {
-    await api('/reset', { mode: 'hard', ref: pill.name });
+    await checkout(pill.name, true);
+    if (diverged) await api('/reset', { mode: 'hard', ref: pill.name });
     store.selectedHash = null;
     await refresh();
   } catch (err) {
-    toast(`Reset failed: ${String(err)}`);
+    toast(`Checkout failed: ${String(err)}`);
   }
 }
 

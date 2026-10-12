@@ -164,7 +164,8 @@ where a merge commit's mainline parent is chosen and `-x` optionally records the
 merge commit), or reset the checked-out branch to it (soft / mixed / hard, confirmed in a dialog); right-click a branch
 or tag chip (in the graph or the detail pane) to check it out, merge or rebase the checked-out branch onto it, or delete
 it. Double-clicking a branch chip in the graph also checks it out. Checking out a remote-tracking ref creates or reuses
-the matching local branch tracking it — no fetch, purely local. Deleting a remote branch runs `git push <remote>
+the matching local branch tracking it — no fetch, purely local; if that local branch already exists and has diverged
+from the remote tip, the double-click hard-resets it to the remote tip after confirming. Deleting a remote branch runs `git push <remote>
 --delete`. Destructive actions (and every other confirmation) use the app's own styled dialogs rather than the
 browser's native `confirm()` / `prompt()`.
 
