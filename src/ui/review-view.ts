@@ -385,7 +385,7 @@ export function renderReviewLog(job: ReviewJob): void {
   }
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
   const promptsSig = job.prompts
-    .map((p) => `${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+    .map((p) => `${p.step}:${p.final ? 1 : 0}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
     .join(',');
   if (promptsSig !== logPromptsSig) {
     logPromptsSig = promptsSig;
@@ -401,7 +401,7 @@ export function renderReviewLog(job: ReviewJob): void {
         : job.prompts
             .map(
               (p, i) =>
-                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
+                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step}${p.final ? ' (final)' : ''} · ${promptMetrics(p)}</summary>` +
                 `<pre>${esc(p.text)}</pre></details>`,
             )
             .join('');
@@ -1118,7 +1118,7 @@ export function initReview(): void {
       .map((t) => `${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
       .join('\n');
     const prompts = state.job.prompts
-      .map((p) => `--- step ${p.step} (${promptMetrics(p)}) ---\n${p.text}`)
+      .map((p) => `--- step ${p.step}${p.final ? ' (final)' : ''} (${promptMetrics(p)}) ---\n${p.text}`)
       .join('\n\n');
     const text = [
       state.job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---\n` : '',

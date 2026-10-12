@@ -497,7 +497,12 @@ const PROMPT_LOG_CHARS = 16000;
 const PROMPT_LOG_MAX = 40;
 
 /** Record the exact request sent to the model, capped, for the model log. */
-function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): ReviewPromptStep {
+function recordPrompt(
+  rec: JobRecord,
+  step: number,
+  request: ChatRequest,
+  final = false,
+): ReviewPromptStep {
   // Serialize tools/tool_choice before the (often huge) messages array so the
   // offered tool catalogue survives tail truncation.
   const { messages, ...rest } = request;
@@ -505,6 +510,7 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
   const truncated = text.length > PROMPT_LOG_CHARS;
   const entry: ReviewPromptStep = {
     step,
+    final,
     text: truncated ? `${text.slice(0, PROMPT_LOG_CHARS)}\n… [truncated]` : text,
     chars: text.length,
     truncated,
@@ -708,7 +714,7 @@ async function runBatch(
         temperature: provider.temperature,
         max_tokens: provider.maxTokens,
       };
-      const promptEntryForFinal = recordPrompt(rec, step, finalRequest);
+      const promptEntryForFinal = recordPrompt(rec, step, finalRequest, true);
       const finalStarted = Date.now();
       const finalResult = await chatCompletion(
         provider,

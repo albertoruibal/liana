@@ -483,6 +483,8 @@ export interface ReviewTraceStep {
 export interface ReviewPromptStep {
   /** Agent-loop step this request belongs to. */
   step: number;
+  /** True for the forced "return the final JSON" request that wraps a step up. */
+  final?: boolean;
   /** Serialized wire messages, capped; see `truncated`/`chars`. */
   text: string;
   /** Full length of the prompt before truncation. */

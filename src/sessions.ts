@@ -233,6 +233,7 @@ function coerceJob(v: unknown): ReviewJob | null {
   const prompts: ReviewPromptStep[] = Array.isArray(v.prompts)
     ? v.prompts.filter(isRecord).map((p) => ({
         step: Math.floor(num(p.step, 0)),
+        final: p.final === true,
         text: str(p.text, ''),
         chars: Math.max(0, Math.floor(num(p.chars, 0))),
         truncated: p.truncated === true,
