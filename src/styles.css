@@ -3436,11 +3436,22 @@ dialog select:focus-visible {
 
 .provider-item {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--bg-elev-2);
   padding: 12px;
+}
+
+.provider-actions {
+  flex: 0 0 100%;
+  display: flex;
+  gap: 8px;
+}
+
+.provider-actions .pf-test {
+  margin-left: auto;
 }
 
 .provider-active {
@@ -3509,11 +3520,6 @@ dialog select:focus-visible {
 
 .pf-small input[type='number'] {
   width: 78px;
-}
-
-.pf-remove {
-  margin-left: auto;
-  align-self: flex-end;
 }
 
 /* ------------------------------------------------------------------ *

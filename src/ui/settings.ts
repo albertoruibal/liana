@@ -42,6 +42,10 @@ export function renderProviderList(): void {
     .map(
       (p, i) => `
       <li class="provider-item" data-index="${i}">
+        <div class="provider-actions">
+          <button type="button" class="btn pf-remove">Remove</button>
+          <button type="button" class="btn pf-test">Test</button>
+        </div>
         <label class="provider-active">
           <input type="radio" name="active-provider" ${p.id === settingsActiveProviderId ? 'checked' : ''} />
           <span class="provider-active-label">active</span>
@@ -74,8 +78,6 @@ export function renderProviderList(): void {
             <label class="pf-small">Temperature
               <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
             </label>
-            <button type="button" class="btn pf-test">Test</button>
-            <button type="button" class="btn pf-remove">Remove</button>
           </div>
         </div>
       </li>`,
