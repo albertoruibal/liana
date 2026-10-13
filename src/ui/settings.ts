@@ -42,14 +42,14 @@ export function renderProviderList(): void {
     .map(
       (p, i) => `
       <li class="provider-item" data-index="${i}">
-        <div class="provider-actions">
-          <button type="button" class="btn pf-remove">Remove</button>
-          <button type="button" class="btn pf-test">Test</button>
-        </div>
         <label class="provider-active">
           <input type="radio" name="active-provider" ${p.id === settingsActiveProviderId ? 'checked' : ''} />
           <span class="provider-active-label">active</span>
         </label>
+        <div class="provider-actions">
+          <button type="button" class="btn pf-remove">Remove</button>
+          <button type="button" class="btn pf-test">Test</button>
+        </div>
         <div class="provider-fields">
           <div class="provider-row">
             <input type="text" class="pf-name" placeholder="Name" value="${esc(p.name)}" />

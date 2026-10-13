@@ -310,12 +310,14 @@ let logPromptsSig = '';
 
 // Model-log on-demand state: the polled job carries only step metadata, so each
 // step's full prompt/response is fetched lazily from /review/log when expanded.
+// Each call exposes independent Prompt and Response toggles, tracked per part.
 let logJobId: string | null = null;
 let logRenderState: ReviewTabState | null = null;
-/** Highest step index auto-expanded, so a new in-flight call opens itself once. */
-let logAutoExpanded = -1;
+/** Full step for completed calls only; the in-flight call is never cached. */
 const logStepCache = new Map<number, ReviewPromptStep>();
-const logOpenSteps = new Set<number>();
+/** Immutable prompt text, fetched once even for the in-flight call. */
+const logTextCache = new Map<number, string>();
+const logOpenParts = new Set<string>();
 const logLoadingSteps = new Set<number>();
 
 /** Compact duration: `820ms`, `4.2s`, `1m03s`, `3h32m02s`. */
@@ -356,9 +358,9 @@ function promptMetrics(p: ReviewPromptStep): string {
   return parts.join(' · ');
 }
 
-/** Interleave a call's response segments as styled spans (reasoning vs. content). */
-function segmentsHtml(p: ReviewPromptStep): string {
-  return p.segments
+/** Interleave response segments as styled spans (reasoning vs. content). */
+function segmentsHtml(segments: ReviewOutputSegment[]): string {
+  return segments
     .map((s) => `<span class="review-log-${s.kind}">${esc(s.text)}</span>`)
     .join('');
 }
@@ -371,11 +373,11 @@ function segmentsPlain(p: ReviewPromptStep): string {
 }
 
 /** A call's response as a `<pre>`, or a muted placeholder when nothing streamed. */
-function responseHtml(p: ReviewPromptStep): string {
-  if (p.segments.length === 0) {
+function responseHtml(segments: ReviewOutputSegment[]): string {
+  if (segments.length === 0) {
     return '<pre class="review-log-response muted">(no response captured)</pre>';
   }
-  return `<pre class="review-log-response">${segmentsHtml(p)}</pre>`;
+  return `<pre class="review-log-response">${segmentsHtml(segments)}</pre>`;
 }
 
 /** Render a job's agent trace and each model call into the model-log dialog. */
@@ -429,23 +431,16 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   if (logJobId !== job.id) {
     logJobId = job.id;
     logStepCache.clear();
-    logOpenSteps.clear();
+    logTextCache.clear();
+    logOpenParts.clear();
     logLoadingSteps.clear();
-    logAutoExpanded = -1;
   }
   logRenderState = state;
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
-  // Auto-expand the in-flight call so its response streams without a manual
-  // click; each new call opens itself once, and a step the user collapses stays
-  // collapsed until the next call.
-  const lastIndex = job.prompts.length - 1;
-  if (job.state === 'running' && lastIndex > logAutoExpanded) {
-    logOpenSteps.add(lastIndex);
-    logAutoExpanded = lastIndex;
-  }
-  // The list carries only step metadata; each step's full prompt/response is
-  // fetched on demand when expanded. Excluding the response keeps the list from
-  // rebuilding on every streaming tick.
+  // The list carries only step metadata; each call's prompt and response are
+  // fetched on demand when their own toggle is expanded. Excluding the response
+  // keeps the list from rebuilding on every streaming tick. Nothing auto-opens:
+  // a call's Prompt and Response are expanded independently by the user.
   const promptsSig = job.prompts
     .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
     .join(',');
@@ -465,30 +460,53 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
           );
         }
         parts.push(
-          `<details data-idx="${i}"${logOpenSteps.has(i) ? ' open' : ''}>` +
-            `<summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
-            `<div class="review-log-step" data-idx="${i}"><p class="muted">Loading…</p></div>` +
-            `</details>`,
+          `<div class="review-log-call" data-idx="${i}">` +
+            `<div class="review-log-call-head">Step ${p.step} · ${promptMetrics(p)}</div>` +
+            `<details class="review-log-part" data-idx="${i}" data-part="prompt"${logOpenParts.has(`${i}:prompt`) ? ' open' : ''}>` +
+            `<summary>Prompt</summary></details>` +
+            `<details class="review-log-part" data-idx="${i}" data-part="response"${logOpenParts.has(`${i}:response`) ? ' open' : ''}>` +
+            `<summary>Response</summary></details>` +
+            `</div>`,
         );
       });
       prompts.innerHTML = parts.join('');
     }
   }
-  // Fill each open step; the live (last) step tracks its streamed segments.
-  for (const i of logOpenSteps) {
+  // Fill the parts the user has open. A completed call is fetched in full; the
+  // last (in-flight) call's response tracks its live streamed segments.
+  const openIndices = new Set<number>();
+  for (const key of logOpenParts) {
+    const idx = Number(key.slice(0, key.indexOf(':')));
+    if (Number.isInteger(idx)) openIndices.add(idx);
+  }
+  for (const i of openIndices) {
     const p = job.prompts[i];
     if (!p) continue;
-    const details = document.querySelector<HTMLDetailsElement>(
-      `#review-log-prompts details[data-idx="${i}"]`,
-    );
-    if (details) details.open = true;
     void fillLogStep(state, job, i, p.segments);
   }
 }
 
+/** Cached HTML of a part's body, so an unchanged re-render doesn't reset scroll. */
+const logPartHtml = new WeakMap<HTMLElement, string>();
+
+/** Replace a Prompt/Response toggle's body, keeping the toggle itself intact. */
+function setPartContent(part: HTMLElement, html: string): void {
+  let body = part.querySelector<HTMLElement>(':scope > .review-log-part-body');
+  if (!body) {
+    body = document.createElement('div');
+    body.className = 'review-log-part-body';
+    part.append(body);
+  }
+  if (logPartHtml.get(body) === html) return;
+  logPartHtml.set(body, html);
+  body.innerHTML = html;
+}
+
 /**
- * Fetch (once) a step's full prompt/response from /review/log and render it,
- * overlaying the live streamed segments when the step is the in-flight call.
+ * Render a call's prompt and response, fetching the full step from /review/log
+ * when needed. A completed call is fetched once and cached; the in-flight (last,
+ * running) call is never cached — its response comes from the lean streamed
+ * segments and only its immutable prompt text is fetched.
  */
 async function fillLogStep(
   state: ReviewTabState,
@@ -496,39 +514,71 @@ async function fillLogStep(
   index: number,
   liveSegments: ReviewOutputSegment[],
 ): Promise<void> {
-  let full = logStepCache.get(index);
-  if (!full) {
-    if (logLoadingSteps.has(index)) return;
+  const isInFlight = (): boolean => {
+    const now = state.job ?? job;
+    return index === now.prompts.length - 1 && now.state === 'running';
+  };
+  const promptOpen = logOpenParts.has(`${index}:prompt`);
+  const responseOpen = logOpenParts.has(`${index}:response`);
+  const needText = promptOpen && logTextCache.get(index) === undefined;
+  const needFull = !isInFlight() && responseOpen && !logStepCache.has(index);
+  let startedInFlight = false;
+  if ((needText || needFull) && !logLoadingSteps.has(index)) {
+    startedInFlight = isInFlight();
     logLoadingSteps.add(index);
     try {
       const { prompt } = await reviewApi<{ prompt: ReviewPromptStep }>(state, '/review/log', {
         jobId: job.id,
         index,
       });
-      logStepCache.set(index, prompt);
-      full = prompt;
+      logTextCache.set(index, prompt.text);
+      // Only cache the full step when the request was issued for an already
+      // completed call: a response fetched mid-stream can be partial, and
+      // caching it would freeze the incomplete output.
+      if (!startedInFlight) logStepCache.set(index, prompt);
     } catch {
-      const failed = document.querySelector<HTMLElement>(
-        `#review-log-prompts .review-log-step[data-idx="${index}"]`,
-      );
-      if (failed) failed.innerHTML = '<p class="muted">Could not load this step.</p>';
+      for (const part of ['prompt', 'response'] as const) {
+        if (!logOpenParts.has(`${index}:${part}`)) continue;
+        const el = document.querySelector<HTMLElement>(
+          `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="${part}"]`,
+        );
+        if (el) setPartContent(el, '<p class="muted">Could not load this step.</p>');
+      }
       return;
     } finally {
       logLoadingSteps.delete(index);
     }
+    // The call finished while a mid-stream (text) fetch was in flight: its
+    // response is now final, so fetch once more rather than rendering the
+    // potentially-partial snapshot that fetch carries.
+    if (startedInFlight && !isInFlight()) {
+      void fillLogStep(state, job, index, liveSegments);
+      return;
+    }
   }
-  if (!logOpenSteps.has(index)) return;
-  const target = document.querySelector<HTMLElement>(
-    `#review-log-prompts .review-log-step[data-idx="${index}"]`,
-  );
-  if (!target) return;
-  const isLast = index === job.prompts.length - 1;
-  const segments = isLast && liveSegments.length > 0 ? liveSegments : full.segments;
-  target.innerHTML =
-    `<div class="review-log-prompt-label">Prompt</div>` +
-    `<pre class="review-log-prompt">${esc(full.text)}</pre>` +
-    `<div class="review-log-prompt-label">Response</div>` +
-    responseHtml({ ...full, segments });
+  const full = logStepCache.get(index);
+  if (promptOpen) {
+    const promptEl = document.querySelector<HTMLDetailsElement>(
+      `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="prompt"]`,
+    );
+    if (promptEl) {
+      const text = logTextCache.get(index) ?? full?.text ?? '';
+      setPartContent(promptEl, `<pre class="review-log-prompt">${esc(text)}</pre>`);
+    }
+  }
+  if (responseOpen) {
+    const responseEl = document.querySelector<HTMLDetailsElement>(
+      `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="response"]`,
+    );
+    if (responseEl) {
+      const segments = isInFlight()
+        ? liveSegments.length > 0
+          ? liveSegments
+          : full?.segments ?? []
+        : full?.segments ?? [];
+      setPartContent(responseEl, responseHtml(segments));
+    }
+  }
 }
 
 /** Copy the full model log, fetching each step's untruncated content. */
@@ -542,6 +592,7 @@ async function copyModelLog(state: ReviewTabState): Promise<void> {
   for (let i = 0; i < job.prompts.length; i++) {
     const lean = job.prompts[i];
     if (!lean) continue;
+    const inFlight = i === job.prompts.length - 1 && job.state === 'running';
     let full = logStepCache.get(i);
     if (!full) {
       try {
@@ -551,14 +602,15 @@ async function copyModelLog(state: ReviewTabState): Promise<void> {
             index: i,
           })
         ).prompt;
-        logStepCache.set(i, full);
+        logTextCache.set(i, full.text);
+        // Never cache a response fetched while the call is still streaming.
+        if (!inFlight) logStepCache.set(i, full);
       } catch {
         // Fall back to the lean step (metadata only).
       }
     }
     const step = full ?? lean;
-    const isLast = i === job.prompts.length - 1;
-    const segments = isLast && lean.segments.length > 0 ? lean.segments : step.segments;
+    const segments = inFlight && lean.segments.length > 0 ? lean.segments : step.segments;
     const response = segmentsPlain({ ...step, segments });
     steps.push(
       `--- batch ${step.batchIndex} step ${step.step} (${promptMetrics(step)}) ---\n${step.text}` +
@@ -1281,21 +1333,24 @@ export function initReview(): void {
   });
 
   // `toggle` does not bubble, so listen in the capture phase to lazily load a
-  // step's full content the first time it is expanded.
+  // call's prompt/response the first time each part is expanded.
   $('#review-log-prompts').addEventListener(
     'toggle',
     (ev) => {
       const target = ev.target;
       if (!(target instanceof HTMLDetailsElement)) return;
+      if (!target.classList.contains('review-log-part')) return;
       const index = Number(target.dataset.idx);
-      if (!Number.isInteger(index)) return;
+      const part = target.dataset.part;
+      if (!Number.isInteger(index) || (part !== 'prompt' && part !== 'response')) return;
+      const key = `${index}:${part}`;
       if (target.open) {
-        logOpenSteps.add(index);
+        logOpenParts.add(key);
         const state = logRenderState;
         const job = state?.job;
         if (state && job) void fillLogStep(state, job, index, job.prompts[index]?.segments ?? []);
       } else {
-        logOpenSteps.delete(index);
+        logOpenParts.delete(key);
       }
     },
     true,

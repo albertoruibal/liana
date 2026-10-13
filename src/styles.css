@@ -3437,6 +3437,7 @@ dialog select:focus-visible {
 .provider-item {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 10px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -3445,13 +3446,10 @@ dialog select:focus-visible {
 }
 
 .provider-actions {
-  flex: 0 0 100%;
+  flex: 0 0 auto;
+  margin-left: auto;
   display: flex;
   gap: 8px;
-}
-
-.provider-actions .pf-test {
-  margin-left: auto;
 }
 
 .provider-active {
@@ -3470,7 +3468,7 @@ dialog select:focus-visible {
 }
 
 .provider-fields {
-  flex: 1;
+  flex: 1 0 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3769,11 +3767,24 @@ dialog select:focus-visible {
   overflow-y: auto;
 }
 
-.review-log-prompts details {
+.review-log-call {
   border-left: 2px solid var(--accent);
   padding-left: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   font-size: 12px;
+}
+
+.review-log-call-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: 2px;
+}
+
+.review-log-part {
+  margin-top: 2px;
 }
 
 .review-log-prompts summary {
@@ -3792,19 +3803,6 @@ dialog select:focus-visible {
 
 .review-log-response {
   margin-top: 4px;
-}
-
-.review-log-step {
-  margin-top: 4px;
-}
-
-.review-log-prompt-label {
-  margin-top: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--fg-dim);
 }
 
 .review-log-content {
