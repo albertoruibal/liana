@@ -308,12 +308,12 @@ let logTraceSig = '';
 
 let logPromptsSig = '';
 
-let logOutput = '';
-
 // Model-log on-demand state: the polled job carries only step metadata, so each
 // step's full prompt/response is fetched lazily from /review/log when expanded.
 let logJobId: string | null = null;
 let logRenderState: ReviewTabState | null = null;
+/** Highest step index auto-expanded, so a new in-flight call opens itself once. */
+let logAutoExpanded = -1;
 const logStepCache = new Map<number, ReviewPromptStep>();
 const logOpenSteps = new Set<number>();
 const logLoadingSteps = new Set<number>();
@@ -356,13 +356,6 @@ function promptMetrics(p: ReviewPromptStep): string {
   return parts.join(' · ');
 }
 
-/** Total characters across a call's streamed response segments. */
-function segmentsChars(p: ReviewPromptStep): number {
-  let n = 0;
-  for (const s of p.segments) n += s.text.length;
-  return n;
-}
-
 /** Interleave a call's response segments as styled spans (reasoning vs. content). */
 function segmentsHtml(p: ReviewPromptStep): string {
   return p.segments
@@ -382,11 +375,10 @@ function responseHtml(p: ReviewPromptStep): string {
   if (p.segments.length === 0) {
     return '<pre class="review-log-response muted">(no response captured)</pre>';
   }
-  const tail = p.outputTruncated ? '\n<span class="review-log-truncated">… [truncated]</span>' : '';
-  return `<pre class="review-log-response">${segmentsHtml(p)}${tail}</pre>`;
+  return `<pre class="review-log-response">${segmentsHtml(p)}</pre>`;
 }
 
-/** Render a job's agent trace and raw model output into the model-log dialog. */
+/** Render a job's agent trace and each model call into the model-log dialog. */
 export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   let totalCompletion = 0;
   let totalDuration = 0;
@@ -439,9 +431,18 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
     logStepCache.clear();
     logOpenSteps.clear();
     logLoadingSteps.clear();
+    logAutoExpanded = -1;
   }
   logRenderState = state;
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
+  // Auto-expand the in-flight call so its response streams without a manual
+  // click; each new call opens itself once, and a step the user collapses stays
+  // collapsed until the next call.
+  const lastIndex = job.prompts.length - 1;
+  if (job.state === 'running' && lastIndex > logAutoExpanded) {
+    logOpenSteps.add(lastIndex);
+    logAutoExpanded = lastIndex;
+  }
   // The list carries only step metadata; each step's full prompt/response is
   // fetched on demand when expanded. Excluding the response keeps the list from
   // rebuilding on every streaming tick.
@@ -473,30 +474,15 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
       prompts.innerHTML = parts.join('');
     }
   }
-  // Re-fill each open step; the live (last) step tracks its streamed segments.
+  // Fill each open step; the live (last) step tracks its streamed segments.
   for (const i of logOpenSteps) {
     const p = job.prompts[i];
-    if (p) void fillLogStep(state, job, i, p.segments);
-  }
-  // The live pane shows the active call's response — content and reasoning
-  // interleaved — as it streams.
-  const active: ReviewPromptStep | undefined =
-    job.prompts.length > 0 ? job.prompts[job.prompts.length - 1] : undefined;
-  const outputSig = active
-    ? `${active.batchIndex}:${active.step}:${active.segments.length}:${segmentsChars(active)}`
-    : 'none';
-  if (outputSig !== logOutput) {
-    logOutput = outputSig;
-    const el = $<HTMLPreElement>('#review-log-output');
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    const prevTop = el.scrollTop;
-    if (active && active.segments.length > 0) {
-      el.innerHTML = segmentsHtml(active);
-    } else {
-      el.textContent = '(no output captured yet)';
-    }
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-    else el.scrollTop = prevTop;
+    if (!p) continue;
+    const details = document.querySelector<HTMLDetailsElement>(
+      `#review-log-prompts details[data-idx="${i}"]`,
+    );
+    if (details) details.open = true;
+    void fillLogStep(state, job, i, p.segments);
   }
 }
 

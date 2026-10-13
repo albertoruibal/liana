@@ -504,10 +504,8 @@ export interface ReviewPromptStep {
   completionTokens: number | null;
   /** True when the token counts are the chars/4 estimate rather than real usage. */
   usageEstimated: boolean;
-  /** Streamed response, interleaved by arrival order; capped. */
+  /** Streamed response, interleaved by arrival order. */
   segments: ReviewOutputSegment[];
-  /** True when the streamed response hit the per-call character cap. */
-  outputTruncated: boolean;
 }
 
 /** Lifecycle of a review job; `paused` and `error` are resumable, `cancelled` is terminal. */

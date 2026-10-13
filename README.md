@@ -274,10 +274,9 @@ review comments. Selecting a request fetches its head commit into the repository
 <origin> +refs/merge-requests/<iid>/head:refs/liana/mr/<iid>`, GitHub via `+refs/pull/<n>/head:refs/liana/pr/<n>`, each
 falling back to fetching the head SHA — so the read-only tools can read it; this writes only objects and the hidden
 `refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree. The tab polls
-the job and shows a live agent trace, the streamed model output, and a live list of the issues found: comments are
-scanned from the model's output as it streams (marked *scanning…*) and validated into the final list when the batch
-completes. The **Model log** dialog also exposes the exact prompt sent to the model at each step (the full wire
-request, capped per entry) alongside the trace (collapsible) and raw output. Each logged call shows its wall-clock
+the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
+and each proposed comment lands in the list as it arrives. The **Model log** dialog lists every model call and loads
+each step's exact wire prompt and full response on demand, alongside the trace (collapsible). Each logged call shows its wall-clock
 time, token counts, and tokens/second — taken from the endpoint's `usage` when it reports it (`stream_options`
 asks for it) and otherwise estimated (`~`), with totals in the dialog subtitle, including the accumulated LLM time
 for the whole review (also shown next to each entry in the Saved review picker). It is bound to the repository it was opened on (the repo

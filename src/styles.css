@@ -3765,16 +3765,6 @@ dialog select:focus-visible {
   word-break: break-word;
 }
 
-.review-log-output {
-  margin: 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--fg-dim);
-}
-
 .review-log-prompts {
   overflow-y: auto;
 }
@@ -3823,11 +3813,6 @@ dialog select:focus-visible {
 
 .review-log-reasoning {
   color: var(--fg-dim);
-  font-style: italic;
-}
-
-.review-log-truncated {
-  color: var(--fg-faint);
   font-style: italic;
 }
 

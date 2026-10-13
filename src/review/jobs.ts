@@ -528,7 +528,6 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
     completionTokens: null,
     usageEstimated: false,
     segments: [],
-    outputTruncated: false,
   };
   rec.job.prompts.push(entry);
   return entry;

@@ -244,7 +244,6 @@ function coerceJob(v: unknown): ReviewJob | null {
               text: str(s.text, ''),
             }))
           : [],
-        outputTruncated: p.outputTruncated === true,
       }))
     : [];
   const promptsDuration = prompts.reduce((sum, p) => sum + p.durationMs, 0);
