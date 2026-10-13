@@ -294,7 +294,7 @@ on. A session that **failed** is resumable too: **Continue** re-issues the last 
 current batch from scratch when the failure left no checkpoint), keeping the comments already collected.
 
 The model always runs as a small read-only agent against your repository: before commenting it may call `read_file`,
-`list_files`, `search_code`, `git_log`, `git_blame`, `git_diff`, `show_commit`, and `get_mr_changes`, all resolved at
+`list_files`, `search_code`, `git_log`, and `show_commit`, all resolved at
 the merge request's **head SHA** (never the local working tree), confined to the repository, and truncated.
 `search_code` is ripgrep-like: it takes an extended regex plus optional case-insensitive, whole-word, fixed-string,
 context-line, and filenames-only switches. It cannot write to the working tree or index.

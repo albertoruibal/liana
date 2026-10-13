@@ -8,7 +8,6 @@
 
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import type { GitLabMrFile } from './types';
 
 /** One tool the model may call. */
 export interface ToolDef {
@@ -43,8 +42,6 @@ export interface ToolContext {
   repoPath: string;
   /** Ref the tools read (the MR head SHA). */
   headRef: string;
-  /** Changed files of the MR, for `get_mr_changes`. */
-  files: GitLabMrFile[];
   /** Per-result character cap. */
   toolResultChars: number;
 }
@@ -118,33 +115,6 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'git_blame',
-    description: 'Blame a line range of a file, showing the commit and author per line.',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Repository-relative path.' },
-        ref: { type: 'string', description: 'Git ref; defaults to the merge request head.' },
-        startLine: { type: 'integer', description: 'First line (1-based).' },
-        endLine: { type: 'integer', description: 'Last line (inclusive).' },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'git_diff',
-    description: 'Unified diff between two refs, optionally limited to a path.',
-    parameters: {
-      type: 'object',
-      properties: {
-        base: { type: 'string', description: 'Base ref.' },
-        head: { type: 'string', description: 'Head ref.' },
-        path: { type: 'string', description: 'Limit the diff to this path.' },
-      },
-      required: ['base', 'head'],
-    },
-  },
-  {
     name: 'show_commit',
     description: 'Show a commit message, metadata, and changed files.',
     parameters: {
@@ -153,17 +123,6 @@ export const TOOLS: ToolDef[] = [
         sha: { type: 'string', description: 'Commit SHA or ref.' },
       },
       required: ['sha'],
-    },
-  },
-  {
-    name: 'get_mr_changes',
-    description: 'List the changed files and their unified diffs for this merge request.',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Optional path filter.' },
-      },
-      required: [],
     },
   },
   {
@@ -365,36 +324,6 @@ async function runTool(
         return '(no history)';
       }
     }
-    case 'git_blame': {
-      const rel = safeRepoPath(ctx.repoPath, asString(args.path) ?? '');
-      const start = Math.max(1, asInt(args.startLine) ?? 1);
-      const end = asInt(args.endLine) ?? start + 200;
-      try {
-        return await runGit(ctx.repoPath, [
-          'blame',
-          '--date=short',
-          '-L',
-          `${start},${end}`,
-          ref,
-          '--',
-          rel,
-        ]);
-      } catch {
-        return '(blame unavailable)';
-      }
-    }
-    case 'git_diff': {
-      const base = asString(args.base) ?? '';
-      const head = asString(args.head) ?? '';
-      const rel = asString(args.path);
-      const argv = ['diff', base, head];
-      if (rel) argv.push('--', safeRepoPath(ctx.repoPath, rel));
-      try {
-        return await runGit(ctx.repoPath, argv);
-      } catch {
-        return '(diff unavailable)';
-      }
-    }
     case 'show_commit': {
       const sha = asString(args.sha) ?? '';
       try {
@@ -402,22 +331,6 @@ async function runTool(
       } catch {
         return `(commit ${sha} not found)`;
       }
-    }
-    case 'get_mr_changes': {
-      const filter = asString(args.path);
-      const parts: string[] = [];
-      for (const f of ctx.files) {
-        if (filter && f.newPath !== filter && f.oldPath !== filter) continue;
-        const tags = [
-          f.newFile ? 'new' : '',
-          f.deletedFile ? 'deleted' : '',
-          f.renamedFile ? 'renamed' : '',
-        ]
-          .filter(Boolean)
-          .join(' ');
-        parts.push(`### ${f.newPath}${tags ? ` (${tags})` : ''}\n${f.diff || '(binary or empty diff)'}`);
-      }
-      return parts.join('\n\n') || '(no changed files)';
     }
     default:
       return `(unknown tool: ${name})`;

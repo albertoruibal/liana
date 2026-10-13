@@ -582,7 +582,6 @@ async function runBatch(
   const ctx: ToolContext = {
     repoPath: rec.repoPath,
     headRef,
-    files: changes.files,
     toolResultChars: provider.toolResultChars,
   };
 
