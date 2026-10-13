@@ -463,6 +463,12 @@ function requireProvider(providerId: string | null): StoredProvider {
   return provider;
 }
 
+/**
+ * Fraction of the model budget a batch's diff may occupy; the remainder is
+ * headroom for the agent's tool results before `pruneMessages` kicks in.
+ */
+const BATCH_BUDGET_FRACTION = 0.5;
+
 /** Set up the batch plan on the first run. */
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
@@ -479,7 +485,7 @@ function planReview(rec: JobRecord): StoredProvider {
     const subset = source.map((f) => all.indexOf(f)).filter((i) => i >= 0);
     rec.batches = batchFileIndices(
       source,
-      Math.floor(rec.budget * 0.7),
+      Math.floor(rec.budget * BATCH_BUDGET_FRACTION),
       rec.rule.batchByFile,
     ).map((b) => b.map((i) => subset[i] ?? -1).filter((i) => i >= 0));
   }

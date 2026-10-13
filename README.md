@@ -311,8 +311,9 @@ The review agent talks to the model through **native OpenAI function calling**: 
 LM Studio, and vLLM do. A model that only emits plain text (no tool calls) cannot drive the agent, and there is no
 diff-only fallback: the review refuses to run rather than reason about code it cannot read.
 
-Because small models have small context windows, the review splits the changed files into batches that fit the
-provider's **context window** (a chars/4 estimate), prunes old tool results, and caps each tool result. When there is
+Because small models have small context windows, the review splits the changed files into batches that fit
+roughly half the provider's **context window** (a chars/4 estimate), leaving the rest as headroom for the agent's
+tool results, and prunes old tool results and caps each tool result. When there is
 more than one batch, each batch's prompt states which one it is ("batch N of M") and that only the files listed are
 under review there, so the model does not wander into changed files handled by another batch. If the agent
 loop runs out of steps it asks the model for a final JSON result from what it has gathered. Streaming is requested so
