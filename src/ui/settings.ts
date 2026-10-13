@@ -67,9 +67,6 @@ export function renderProviderList(): void {
             <label class="pf-small">Max tokens (K)
               <input type="number" class="pf-maxtokens" min="0.1" step="0.1" value="${toK(p.maxTokens)}" />
             </label>
-            <label class="pf-small">Max steps
-              <input type="number" class="pf-maxsteps" min="1" value="${p.maxSteps}" />
-            </label>
           </div>
           <div class="provider-row">
             <label class="pf-small">Result chars (K)
@@ -98,7 +95,6 @@ export function readProviderInputs(): void {
     p.baseUrl = q<HTMLInputElement>('.pf-url')?.value.trim() || p.baseUrl;
     p.contextWindow = fromK(q<HTMLInputElement>('.pf-context')?.value, p.contextWindow);
     p.maxTokens = fromK(q<HTMLInputElement>('.pf-maxtokens')?.value, p.maxTokens);
-    p.maxSteps = Number(q<HTMLInputElement>('.pf-maxsteps')?.value) || p.maxSteps;
     p.toolResultChars = fromK(q<HTMLInputElement>('.pf-resultchars')?.value, p.toolResultChars);
     p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
     const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
@@ -183,7 +179,6 @@ export function collectSettingsPatch(): Record<string, unknown> {
       maxTokens: p.maxTokens,
       temperature: p.temperature,
       toolResultChars: p.toolResultChars,
-      maxSteps: p.maxSteps,
     };
     const key = settingsNewKeys.get(p.id);
     if (key) out.apiKey = key;
@@ -196,7 +191,7 @@ export function collectSettingsPatch(): Record<string, unknown> {
       severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
       maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
       language: $<HTMLInputElement>('#settings-review-language').value.trim() || 'English',
-      maxSteps: Number($<HTMLInputElement>('#settings-review-maxsteps').value) || 8,
+      maxSteps: Number($<HTMLInputElement>('#settings-review-maxsteps').value) || 32,
       ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')
         .value.split('\n')
         .map((s) => s.trim())
@@ -366,7 +361,6 @@ export function initSettings(): void {
       maxTokens: 1024,
       temperature: 0.1,
       toolResultChars: 2048,
-      maxSteps: 8,
     });
     if (!settingsActiveProviderId) settingsActiveProviderId = id;
     renderProviderList();

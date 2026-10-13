@@ -321,7 +321,6 @@ export interface AiProviderConfig {
   temperature: number;
   /** Output bytes kept per tool result before pruning. */
   toolResultChars: number;
-  maxSteps: number;
 }
 
 /** A model discovered on an OpenAI-compatible endpoint by the settings "Retrieve" button. */
@@ -516,6 +515,8 @@ export interface ReviewJob {
   prompts: ReviewPromptStep[];
   /** Accumulated wall-clock time across every model call, in milliseconds. */
   llmDurationMs: number;
+  /** True once the agent hit its step cap and had to finalize early. */
+  stepLimitReached: boolean;
   comments: ReviewComment[];
   error: string | null;
 }

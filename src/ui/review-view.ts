@@ -65,11 +65,18 @@ function jobHeadWarning(job: ReviewJob | null): string | null {
   return note ? note.resultSummary : null;
 }
 
-/** Show or hide the head-fetch warning banner for a review tab. */
-export function paintHeadWarning(state: ReviewTabState): void {
+/** Note when the agent hit its configured step cap and had to finalize early. */
+function jobStepWarning(job: ReviewJob | null): string | null {
+  return job?.stepLimitReached
+    ? 'Agent step limit reached — the review was finalized early and may be incomplete. Raise "Max agent steps" in Settings to review more thoroughly.'
+    : null;
+}
+
+/** Show or hide the warning banner for a review tab (head fetch or step cap). */
+export function paintReviewWarning(state: ReviewTabState): void {
   if (!isReviewShown(state)) return;
-  const el = $('#review-head-warning');
-  const message = state.headWarning ?? jobHeadWarning(state.job);
+  const el = $('#review-warning');
+  const message = state.headWarning ?? jobHeadWarning(state.job) ?? jobStepWarning(state.job);
   el.hidden = message === null;
   el.textContent = message ?? '';
 }
@@ -294,7 +301,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
       ? `The request commit could not be fetched (${fetchResult.error}); the AI review would run against the diff only.`
       : null;
     status.textContent = '';
-    paintHeadWarning(state);
+    paintReviewWarning(state);
     return true;
   } catch (err) {
     status.textContent = String(err);
@@ -365,6 +372,7 @@ export function renderReviewLog(job: ReviewJob): void {
     totalCompletion > 0 ? `${sawEstimated ? '~' : ''}${totalCompletion.toLocaleString('en-US')} tok` : '',
     totalRate,
     job.llmDurationMs > 0 ? `${fmtDuration(job.llmDurationMs)} LLM` : '',
+    job.stepLimitReached ? 'step limit reached' : '',
   ].filter((s) => s.length > 0);
   $('#review-log-subtitle').textContent = summary.join(' · ');
   $('#review-log-trace-count').textContent = String(job.trace.length);
@@ -899,7 +907,7 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
   if (job.comments.length > 0) renderCommentQueue(state);
-  paintHeadWarning(state);
+  paintReviewWarning(state);
   if (job.state === 'error') {
     $('#review-status').textContent = `Review failed: ${job.error ?? 'unknown error'}`;
   } else if (job.state === 'cancelled') {
@@ -1000,7 +1008,7 @@ export async function checkoutMrBranch(): Promise<void> {
     // The branch is now up to date locally, so a pre-run head-fetch warning no
     // longer applies (an already-run job keeps its own diff-only trace note).
     state.headWarning = null;
-    paintHeadWarning(state);
+    paintReviewWarning(state);
     status.textContent = output.trim() || `Checked out ${branch}.`;
   } catch (err) {
     status.textContent = String(err);
@@ -1052,7 +1060,7 @@ export function resetReviewDom(): void {
   $('#review-queue-wrap').hidden = true;
   paintJobControls(null);
   $('#review-approve-mr').hidden = true;
-  $('#review-head-warning').hidden = true;
+  $('#review-warning').hidden = true;
   $<HTMLButtonElement>('#review-show-log').disabled = true;
 }
 
@@ -1067,7 +1075,7 @@ export function paintReview(state: ReviewTabState): void {
   paintJobControls(state.job);
   $('#review-status').textContent = '';
   $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
-  paintHeadWarning(state);
+  paintReviewWarning(state);
   if (state.job) renderJob(state, state.job);
 }
 

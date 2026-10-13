@@ -28,7 +28,6 @@ export interface StoredProvider {
   maxTokens: number;
   temperature: number;
   toolResultChars: number;
-  maxSteps: number;
 }
 
 interface StoredSettings {
@@ -70,7 +69,7 @@ function defaultRule(): ReviewRuleConfig {
     ignoreGlobs: ['**/dist/**', '**/node_modules/**', '**/*.lock', '**/*.min.js'],
     maxComments: 0,
     language: 'English',
-    maxSteps: 8,
+    maxSteps: 32,
     batchByFile: true,
   };
 }
@@ -98,7 +97,6 @@ function defaultProvider(): StoredProvider {
     maxTokens: 1024,
     temperature: 0.1,
     toolResultChars: 2048,
-    maxSteps: 8,
   };
 }
 
@@ -162,7 +160,6 @@ function parseProviders(v: unknown): StoredProvider[] {
       maxTokens: int(p.maxTokens, base.maxTokens, 1),
       temperature: num(p.temperature, base.temperature),
       toolResultChars: int(p.toolResultChars, base.toolResultChars, 200),
-      maxSteps: int(p.maxSteps, base.maxSteps, 1),
     });
   }
   return out;
@@ -270,7 +267,6 @@ export function publicSettings(): AppSettings {
         maxTokens: p.maxTokens,
         temperature: p.temperature,
         toolResultChars: p.toolResultChars,
-        maxSteps: p.maxSteps,
       })),
       activeProviderId: s.ai.activeProviderId,
     },
@@ -335,7 +331,6 @@ export function saveSettings(input: unknown): AppSettings {
         maxTokens: int(p.maxTokens, prev?.maxTokens ?? base.maxTokens, 1),
         temperature: num(p.temperature, prev?.temperature ?? base.temperature),
         toolResultChars: int(p.toolResultChars, prev?.toolResultChars ?? base.toolResultChars, 200),
-        maxSteps: int(p.maxSteps, prev?.maxSteps ?? base.maxSteps, 1),
       });
     }
     current.ai.providers = next;

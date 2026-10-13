@@ -339,6 +339,7 @@ function finishWithError(rec: JobRecord, err: unknown): void {
 }
 
 function newJobRecord(repoPath: string, sessionId: string): JobRecord {
+  const rule = reviewRule();
   const rec: JobRecord = {
     controller: new AbortController(),
     cancelled: false,
@@ -348,9 +349,9 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
     sessionId,
     createdAt: Date.now(),
     changes: { forge: 'gitlab', mr: { iid: 0, title: '', author: '', sourceBranch: '', targetBranch: '', state: '', webUrl: '', updatedAt: '', draft: false }, files: [], diffRefs: { baseSha: '', headSha: '', startSha: '' } },
-    rule: reviewRule(),
+    rule,
     providerId: null,
-    maxSteps: 8,
+    maxSteps: rule.maxSteps,
     budget: 4096,
     requestedMaxSteps: null,
     batches: [],
@@ -364,6 +365,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       trace: [],
       prompts: [],
       llmDurationMs: 0,
+      stepLimitReached: false,
       comments: [],
       error: null,
     },
@@ -447,7 +449,7 @@ function requireProvider(providerId: string | null): StoredProvider {
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
   rec.providerId = provider.id;
-  rec.maxSteps = Math.max(1, rec.requestedMaxSteps ?? provider.maxSteps ?? rec.rule.maxSteps);
+  rec.maxSteps = Math.max(1, rec.requestedMaxSteps ?? rec.rule.maxSteps);
   rec.budget = Math.max(1024, provider.contextWindow - provider.maxTokens - 256);
   if (rec.batches.length === 0) {
     const relevant = rec.changes.files.filter((f) => {
@@ -702,7 +704,9 @@ async function runBatch(
     }
 
     if (step >= maxSteps) {
-      // Out of steps: ask for the final JSON using what we have.
+      // Out of steps: surface it (the UI warns the review may be incomplete) and
+      // ask for the final JSON using what we have.
+      rec.job.stepLimitReached = true;
       messages.push({
         role: 'user',
         content: 'Stop exploring. Return the final JSON review result now.',
