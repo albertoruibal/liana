@@ -285,8 +285,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     refreshSessionSelect(state);
     paintForgeWording(state);
     $('#review-queue-wrap').hidden = true;
-    $('#review-progress').hidden = true;
-    $('#review-cancel-job').hidden = true;
+    paintJobControls(null);
     $('#review-approve-mr').hidden = false;
     $<HTMLButtonElement>('#review-show-log').disabled = true;
     // A failed head fetch silently degrades the AI review to diff-only, so keep
@@ -873,15 +872,25 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
   }
 }
 
+/**
+ * Toggle the review action buttons for the current job (null = no active
+ * review). An active session (running or paused) hides "Review with AI" so the
+ * row shows Pause/Cancel (or Resume/Cancel) instead.
+ */
+function paintJobControls(job: ReviewJob | null): void {
+  const state = job?.state ?? null;
+  $('#review-generate').hidden = state === 'running' || state === 'paused';
+  $('#review-pause-job').hidden = state !== 'running';
+  $('#review-resume-job').hidden = state !== 'paused' && state !== 'error';
+  $('#review-cancel-job').hidden = state !== 'running' && state !== 'paused';
+  $('#review-progress').hidden = state !== 'running';
+}
+
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
-  $('#review-progress').hidden = job.state !== 'running';
-  $('#review-pause-job').hidden = job.state !== 'running';
+  paintJobControls(job);
   // Paused and errored jobs are both resumable: resume re-issues the last step
   // (from the checkpoint when there is one, else the current batch from scratch).
-  const resumable = job.state === 'paused' || job.state === 'error';
-  $('#review-resume-job').hidden = !resumable;
   $('#review-resume-job').textContent = job.state === 'error' ? 'Continue' : 'Resume';
-  $('#review-cancel-job').hidden = job.state !== 'running' && job.state !== 'paused';
   $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
@@ -1034,9 +1043,7 @@ export function openReviewTab(): void {
 /** Clear the review view's DOM for a fresh tab. */
 export function resetReviewDom(): void {
   $('#review-queue-wrap').hidden = true;
-  $('#review-progress').hidden = true;
-  $('#review-pause-job').hidden = true;
-  $('#review-resume-job').hidden = true;
+  paintJobControls(null);
   $('#review-approve-mr').hidden = true;
   $('#review-head-warning').hidden = true;
   $<HTMLButtonElement>('#review-show-log').disabled = true;
@@ -1050,10 +1057,7 @@ export function paintReview(state: ReviewTabState): void {
   paintForgeWording(state);
   $('#review-approve-mr').hidden = changes === null;
   $('#review-queue-wrap').hidden = true;
-  $('#review-progress').hidden = true;
-  $('#review-pause-job').hidden = true;
-  $('#review-resume-job').hidden = true;
-  $('#review-cancel-job').hidden = true;
+  paintJobControls(state.job);
   $('#review-status').textContent = '';
   $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
   paintHeadWarning(state);
@@ -1159,10 +1163,7 @@ export function initReview(): void {
         state.showRejected = false;
         refreshSessionSelect(state);
         $('#review-queue-wrap').hidden = true;
-        $('#review-progress').hidden = true;
-        $('#review-pause-job').hidden = true;
-        $('#review-resume-job').hidden = true;
-        $('#review-cancel-job').hidden = true;
+        paintJobControls(null);
         $<HTMLButtonElement>('#review-show-log').disabled = true;
         $('#review-status').textContent = 'Saved review deleted.';
         renderTabs();
@@ -1215,9 +1216,7 @@ export function initReview(): void {
       .then(() => {
         window.clearTimeout(state.poll);
         if (state.job) state.job.state = 'cancelled';
-        $('#review-progress').hidden = true;
-        $('#review-cancel-job').hidden = true;
-        $('#review-pause-job').hidden = true;
+        paintJobControls(state.job);
         $('#review-status').textContent = 'Review cancelled.';
       })
       .catch((err) => {
