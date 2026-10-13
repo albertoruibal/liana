@@ -11,7 +11,6 @@
 
 export { testProvider, completeText, listProviderModels } from './ai';
 export { generateCommitMessage, type CommitMessageInput } from './commit-message';
-export { parseComments, parsePartialComments } from './comments';
 export {
   listMergeRequests,
   getMergeRequestChanges,

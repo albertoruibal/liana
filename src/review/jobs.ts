@@ -11,7 +11,6 @@ import { forgeLabel, hasCommit } from '../forge';
 import {
   executeTool,
   estimateTokens,
-  extractJsonObject,
   matchesAnyGlob,
   messagesTokens,
   summarizeResult,
@@ -40,7 +39,7 @@ import type {
   ReviewTraceStep,
 } from '../types';
 import { chatCompletion, type ChatRequest, type CompletionResult } from './ai';
-import { parseComments, parsePartialComments } from './comments';
+import { commentFromTool } from './comments';
 
 interface JobRecord {
   job: ReviewJob;
@@ -576,8 +575,8 @@ async function runBatch(
     {
       role: 'user',
       content:
-        'Review the merge request changes above and return the review result as JSON with a ' +
-        '`comments` array. Only comment on files present in the changes.',
+        'Review the merge request changes above. Report each issue by calling add_comment; ' +
+        'only comment on files present in the changes. When you are done, reply with no tool calls.',
     },
   ];
   // Reuse a checkpoint only when it belongs to the batch we are about to run;
@@ -587,6 +586,8 @@ async function runBatch(
   const messages: ChatMessage[] = resume ? cp.messages : fresh;
   // The checkpoint stores the step about to run; re-issue that same step.
   let step = resume ? cp.step - 1 : 0;
+  // Comments added this batch, accumulated across turns.
+  const batchComments: ReviewComment[] = [];
 
   for (;;) {
     if (rec.cancelled || rec.paused) return [];
@@ -598,19 +599,8 @@ async function runBatch(
     rec.checkpoint = { batchIndex, messages, step };
     persist(rec);
 
-    // Scan the streamed text for complete comment objects and surface them as
-    // pending previews so the UI list fills in while the model is still writing.
-    let liveText = '';
     let sawDelta = false;
     let sawReasoningDelta = false;
-    let lastScan = 0;
-    const scanLive = (): void => {
-      const now = Date.now();
-      if (now - lastScan < 300) return;
-      lastScan = now;
-      const previews = parsePartialComments(liveText, rule, changes.files);
-      if (previews.length > 0) syncComments(rec, previews, 'pending');
-    };
 
     const wire = messages.map(toWire());
     const request: ChatRequest = {
@@ -650,8 +640,6 @@ async function runBatch(
         rec.job.output += chunk;
         rec.job.output = rec.job.output.slice(-4000);
         appendSeg('content', chunk);
-        liveText += chunk;
-        scanLive();
       },
       rec.controller.signal,
       {},
@@ -673,34 +661,15 @@ async function runBatch(
     // Persist the completed call so its output/reasoning survives a restart.
     persist(rec);
 
-    // Non-streamed responses never hit the delta callback; scan the whole text.
-    if (parsed.content.length > 0) {
-      const previews = parsePartialComments(parsed.content, rule, changes.files);
-      if (previews.length > 0) syncComments(rec, previews, 'pending');
-    }
     // Keep the raw output for the model log even when the provider ignored
     // streaming and returned a single JSON body.
     if (!sawDelta && parsed.content.trim().length > 0) {
       rec.job.output = parsed.content.slice(-4000);
     }
 
-    const obj = extractJsonObject(parsed.content);
-    const isFinal =
-      parsed.toolCalls.length === 0 &&
-      obj !== null &&
-      ('comments' in obj || Array.isArray(obj.comments));
-    if (isFinal) {
-      return parseComments(obj, rule, changes.files);
-    }
-
+    // The model self-terminates: a turn with no tool calls means it is done.
     if (parsed.toolCalls.length === 0) {
-      // No tool calls and no valid final JSON: try a plain extraction, else fail.
-      const fallback = extractJsonObject(parsed.content);
-      if (fallback) return parseComments(fallback, rule, changes.files);
-      if (obj === null && parsed.content.trim().length > 0) {
-        throw new Error('model did not return a tool call or valid JSON');
-      }
-      return [];
+      return batchComments;
     }
 
     messages.push({ role: 'assistant', content: parsed.content, toolCalls: parsed.toolCalls });
@@ -708,10 +677,14 @@ async function runBatch(
       if (rec.cancelled || rec.paused) return [];
       const started = Date.now();
       let output: string;
-      try {
-        output = await executeTool(ctx, call.name, call.args);
-      } catch (err) {
-        output = `error: ${err instanceof Error ? err.message : String(err)}`;
+      if (call.name === 'add_comment') {
+        output = handleAddComment(rec, rule, changes.files, call.args, batchComments);
+      } else {
+        try {
+          output = await executeTool(ctx, call.name, call.args);
+        } catch (err) {
+          output = `error: ${err instanceof Error ? err.message : String(err)}`;
+        }
       }
       const trace: ReviewTraceStep = {
         batchIndex: rec.job.batchIndex,
@@ -725,6 +698,31 @@ async function runBatch(
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
   }
+}
+
+/**
+ * Validate an `add_comment` tool call, record it as a proposed comment, and
+ * return the tool result text. Rejections and anchor adjustments return a hint
+ * so the model can correct itself instead of the comment disappearing.
+ */
+function handleAddComment(
+  rec: JobRecord,
+  rule: ReviewRuleConfig,
+  files: ReviewFile[],
+  args: Record<string, unknown>,
+  batchComments: ReviewComment[],
+): string {
+  if (rule.maxComments > 0 && rec.job.comments.length >= rule.maxComments) {
+    return `comment limit reached (${rule.maxComments}); stop adding comments and reply with no tool calls`;
+  }
+  const { comment, hint } = commentFromTool(args, rule, files, '');
+  if (!comment) return `comment rejected: ${hint ?? 'invalid arguments'}`;
+  batchComments.push(comment);
+  syncComments(rec, [comment], 'parsed');
+  const anchor = comment.newLine !== null ? `:${comment.newLine}` : '';
+  return hint
+    ? `comment added for ${comment.filePath}${anchor} (${hint})`
+    : `comment added for ${comment.filePath}${anchor}`;
 }
 
 function buildSystemPrompt(
@@ -759,16 +757,16 @@ function buildSystemPrompt(
       'report an issue you can substantiate with a concrete file and line; if the ' +
       'code already handles the case, do not comment.',
     '',
-    'Use the provided tools to read the rest of the repository at the MR head ' +
-      'before finalizing your comments.',
+    'Report every issue by calling add_comment as soon as you can substantiate it — ' +
+      'never wait until the end, and never write comments in a final message. Use the ' +
+      'provided tools to read the rest of the repository at the MR head before ' +
+      'commenting. Give a line that is present in the diff, or omit the anchor for a ' +
+      'comment about the file as a whole rather than guessing a line.',
+    '',
+    'When you have covered the diff and have nothing further to report or inspect, ' +
+      'reply with no tool calls.',
   ];
-  return (
-    lines.join('\n') +
-    '\n\nReturn the final result as JSON: {"comments":[{"filePath":"…","newLine":N,' +
-    '"oldLine":N,"severity":"info|warning|error","body":"…"}]}. ' +
-    'newLine/oldLine are 1-based line numbers present in the diff; omit an anchor that ' +
-    'is not in the diff rather than guessing.'
-  );
+  return lines.join('\n');
 }
 
 /** Native `tools` payload sent to OpenAI-compatible endpoints. */

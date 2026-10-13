@@ -1,14 +1,10 @@
-// Validation and parsing of model-produced review comments. Node-only.
+// Validation of model-produced review comments. Comments arrive as `add_comment`
+// tool calls, not text; each call is validated against the changed files and the
+// diff anchors before it becomes a proposed comment. Node-only.
 
 import { matchesAnyGlob } from '../review-tools';
 import { parsePatch } from '../diff';
-import type {
-  ReviewComment,
-  ReviewCommentStage,
-  ReviewFile,
-  ReviewRuleConfig,
-  ReviewSeverity,
-} from '../types';
+import type { ReviewComment, ReviewRuleConfig, ReviewSeverity, ReviewFile } from '../types';
 
 /** Line numbers actually present in a file's diff, for anchor validation. */
 interface LineAnchors {
@@ -19,8 +15,7 @@ interface LineAnchors {
 /**
  * Collect the old/new line numbers each changed file's diff actually touches.
  * A line anchor outside this set does not exist in the diff and cannot be
- * positioned on the forge. Memoized per file list: streamed previews re-validate
- * repeatedly against the same unchanged diffs.
+ * positioned on the forge. Memoized per file list.
  */
 const anchorCache = new WeakMap<ReviewFile[], Map<string, LineAnchors>>();
 
@@ -53,120 +48,93 @@ function coerceSeverity(v: unknown): ReviewSeverity {
 
 const SEVERITY_RANK: Record<ReviewSeverity, number> = { info: 0, warning: 1, error: 2 };
 
-/** Validate and normalize one raw model comment; null when it must be dropped. */
-function validateComment(
-  raw: unknown,
-  known: Set<string>,
-  rule: ReviewRuleConfig,
-  id: string,
-  stage: ReviewCommentStage,
-  anchors: Map<string, LineAnchors>,
-): ReviewComment | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const c = raw as Record<string, unknown>;
-  const filePath = typeof c.filePath === 'string' ? c.filePath : typeof c.path === 'string' ? c.path : '';
-  const body = typeof c.body === 'string' ? c.body.trim() : typeof c.comment === 'string' ? c.comment.trim() : '';
-  if (!filePath || !body) return null;
-  if (known.size > 0 && !known.has(filePath)) return null;
-  if (matchesAnyGlob(filePath, rule.ignoreGlobs)) return null;
-  const severity = coerceSeverity(c.severity);
-  if (SEVERITY_RANK[severity] < SEVERITY_RANK[rule.severityThreshold]) return null;
-  let newLine = typeof c.newLine === 'number' && c.newLine > 0 ? Math.floor(c.newLine) : null;
-  let oldLine = typeof c.oldLine === 'number' && c.oldLine > 0 ? Math.floor(c.oldLine) : null;
-  const line = typeof c.line === 'number' && c.line > 0 ? Math.floor(c.line) : null;
-  newLine = newLine ?? (oldLine === null ? line : null);
-  // An anchor that is not present in the diff cannot be positioned: drop it so
-  // the comment degrades to a general one rather than a stale line reference.
-  const a = anchors.get(filePath);
-  if (a) {
-    if (newLine !== null && !a.newLines.has(newLine)) newLine = null;
-    if (oldLine !== null && !a.oldLines.has(oldLine)) oldLine = null;
-  }
-  return {
-    id,
-    filePath,
-    oldLine,
-    newLine,
-    severity,
-    body,
-    status: 'pending',
-    stage,
-    discussionId: null,
-    error: null,
-  };
-}
-
-/** Validate, filter, and cap the model's raw comment objects. */
-export function parseComments(
-  raw: unknown,
-  rule: ReviewRuleConfig,
-  files: ReviewFile[],
-): ReviewComment[] {
-  const container =
-    typeof raw === 'object' && raw !== null
-      ? ((raw as Record<string, unknown>).comments ?? raw)
-      : raw;
-  if (!Array.isArray(container)) return [];
-  const known = new Set(files.flatMap((f) => [f.newPath, f.oldPath]));
-  const anchors = buildAnchors(files);
-  const out: ReviewComment[] = [];
-  for (const item of container) {
-    const c = validateComment(item, known, rule, `c${out.length + 1}`, 'parsed', anchors);
-    if (c) out.push(c);
-  }
-  return rule.maxComments > 0 ? out.slice(0, rule.maxComments) : out;
-}
-
-/** Yield every complete, balanced JSON object found in text, in order. */
-function scanJsonObjects(text: string): Record<string, unknown>[] {
-  const cleaned = text.replace(/```(?:json)?/gi, '');
-  const out: Record<string, unknown>[] = [];
-  const stack: number[] = [];
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < cleaned.length; i++) {
-    const c = cleaned[i];
-    if (c === undefined) break;
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') inString = true;
-    else if (c === '{') stack.push(i);
-    else if (c === '}') {
-      const start = stack.pop();
-      if (start === undefined) continue;
-      try {
-        const parsed = JSON.parse(cleaned.slice(start, i + 1)) as unknown;
-        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-          out.push(parsed as Record<string, unknown>);
-        }
-      } catch {
-        // Incomplete or invalid fragment; ignore and keep scanning.
-      }
+/** The line in `set` closest to `n`, or null when the set is empty. */
+function nearestLine(set: Set<number>, n: number): number | null {
+  let best: number | null = null;
+  let bestDist = Infinity;
+  for (const v of set) {
+    const d = Math.abs(v - n);
+    if (d < bestDist || (d === bestDist && (best === null || v < best))) {
+      bestDist = d;
+      best = v;
     }
   }
-  return out;
+  return best;
+}
+
+/** A validated comment plus a hint explaining an adjustment, if any. */
+export interface ToolComment {
+  comment: ReviewComment | null;
+  /** Why the comment was dropped or its anchor adjusted (null when clean). */
+  hint: string | null;
 }
 
 /**
- * Scan partial model output for complete comment objects. These are previews
- * (`stage: 'pending'`) validated with the same rules as the final result, so the
- * live list can only ever show comments the final parse would also accept.
+ * Validate one `add_comment` tool call. A comment targeting an unknown or
+ * excluded file, or below the severity threshold, is dropped with a reason; an
+ * anchor not present in the diff is cleared with a hint pointing at the nearest
+ * line, so the model can correct itself instead of the comment disappearing.
  */
-export function parsePartialComments(
-  text: string,
+export function commentFromTool(
+  raw: Record<string, unknown>,
   rule: ReviewRuleConfig,
   files: ReviewFile[],
-): ReviewComment[] {
+  id: string,
+): ToolComment {
+  const filePath = typeof raw.filePath === 'string' ? raw.filePath.trim() : '';
+  const body = typeof raw.body === 'string' ? raw.body.trim() : '';
+  if (!filePath || !body) return { comment: null, hint: 'filePath and body are required' };
   const known = new Set(files.flatMap((f) => [f.newPath, f.oldPath]));
-  const anchors = buildAnchors(files);
-  const out: ReviewComment[] = [];
-  for (const obj of scanJsonObjects(text)) {
-    const c = validateComment(obj, known, rule, `p${out.length + 1}`, 'pending', anchors);
-    if (c) out.push(c);
+  if (known.size > 0 && !known.has(filePath)) {
+    return { comment: null, hint: `${filePath} is not a changed file` };
   }
-  return rule.maxComments > 0 ? out.slice(0, rule.maxComments) : out;
+  if (matchesAnyGlob(filePath, rule.ignoreGlobs)) {
+    return { comment: null, hint: `${filePath} is excluded by the ignore rules` };
+  }
+  const severity = coerceSeverity(raw.severity);
+  if (SEVERITY_RANK[severity] < SEVERITY_RANK[rule.severityThreshold]) {
+    return {
+      comment: null,
+      hint: `severity ${severity} is below the configured minimum ${rule.severityThreshold}`,
+    };
+  }
+  const hints: string[] = [];
+  let newLine = typeof raw.newLine === 'number' && raw.newLine > 0 ? Math.floor(raw.newLine) : null;
+  let oldLine = typeof raw.oldLine === 'number' && raw.oldLine > 0 ? Math.floor(raw.oldLine) : null;
+  const anchors = buildAnchors(files).get(filePath);
+  if (anchors) {
+    if (newLine !== null && !anchors.newLines.has(newLine)) {
+      const near = nearestLine(anchors.newLines, newLine);
+      hints.push(
+        near !== null
+          ? `newLine ${newLine} is not in the diff; nearest new-side line is ${near}`
+          : `newLine ${newLine} is not in the diff`,
+      );
+      newLine = null;
+    }
+    if (oldLine !== null && !anchors.oldLines.has(oldLine)) {
+      const near = nearestLine(anchors.oldLines, oldLine);
+      hints.push(
+        near !== null
+          ? `oldLine ${oldLine} is not in the diff; nearest old-side line is ${near}`
+          : `oldLine ${oldLine} is not in the diff`,
+      );
+      oldLine = null;
+    }
+  }
+  return {
+    comment: {
+      id,
+      filePath,
+      oldLine,
+      newLine,
+      severity,
+      body,
+      status: 'pending',
+      stage: 'parsed',
+      discussionId: null,
+      error: null,
+    },
+    hint: hints.length > 0 ? hints.join('; ') : null,
+  };
 }
