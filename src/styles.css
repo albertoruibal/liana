@@ -3648,6 +3648,11 @@ dialog select:focus-visible {
   flex: 0 0 auto;
 }
 
+.repo-tab-review .status-spinner {
+  width: 13px;
+  height: 13px;
+}
+
 .repo-tab-terminal svg {
   width: 15px;
   height: 15px;

@@ -913,9 +913,11 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
  */
 export async function pollJob(state: ReviewTabState): Promise<void> {
   if (!state.job) return;
+  const wasRunning = state.job.state === 'running';
   try {
     const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/status', { jobId: state.job.id });
     state.job = job;
+    if (wasRunning !== (job.state === 'running')) renderTabs();
     if (isReviewShown(state)) renderJob(state, job);
     if (job.state === 'running') {
       state.poll = window.setTimeout(() => void pollJob(state), 800);
@@ -957,6 +959,7 @@ export async function generateReview(): Promise<void> {
     $('#review-queue-wrap').hidden = true;
     status.textContent = '';
     renderJob(state, job);
+    renderTabs();
     window.clearTimeout(state.poll);
     state.poll = window.setTimeout(() => void pollJob(state), 600);
     void loadReviewSessions(state);
@@ -1183,6 +1186,7 @@ export function initReview(): void {
           state.job.state = 'paused';
           window.clearTimeout(state.poll);
           renderJob(state, state.job);
+          renderTabs();
           void loadReviewSessions(state);
         }
       })
@@ -1201,6 +1205,7 @@ export function initReview(): void {
         state.job = job;
         status.textContent = '';
         renderJob(state, job);
+        renderTabs();
         window.clearTimeout(state.poll);
         state.poll = window.setTimeout(() => void pollJob(state), 600);
       })
@@ -1217,6 +1222,7 @@ export function initReview(): void {
         window.clearTimeout(state.poll);
         if (state.job) state.job.state = 'cancelled';
         paintJobControls(state.job);
+        renderTabs();
         $('#review-status').textContent = 'Review cancelled.';
       })
       .catch((err) => {

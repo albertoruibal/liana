@@ -114,7 +114,8 @@ export function renderTabs(): void {
       const review = document.createElement('button');
       review.type = 'button';
       review.className = `repo-tab repo-tab-review${panel.kind === 'review' && panel.repoId === tab.id ? ' is-active' : ''}`;
-      review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(tab.review)}`;
+      const running = tab.review.job?.state === 'running';
+      review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(tab.review)}${running ? '\nReview running…' : ''}`;
       review.dataset.review = tab.id;
       review.innerHTML =
         `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
@@ -122,6 +123,12 @@ export function renderTabs(): void {
       name.className = 'repo-tab-name';
       name.textContent = 'Code review';
       review.appendChild(name);
+      if (running) {
+        const spinner = document.createElement('span');
+        spinner.className = 'status-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        review.appendChild(spinner);
+      }
       const close = document.createElement('span');
       close.className = 'repo-tab-close';
       close.textContent = '\u00d7';
