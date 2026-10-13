@@ -310,14 +310,18 @@ let logPromptsSig = '';
 
 let logOutput = '';
 
-/** Compact duration: `820ms`, `4.2s`, `1m03s`. */
+/** Compact duration: `820ms`, `4.2s`, `1m03s`, `3h32m02s`. */
 function fmtDuration(ms: number): string {
   if (ms <= 0) return '—';
   if (ms < 1000) return `${ms}ms`;
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m${String(Math.round(s - m * 60)).padStart(2, '0')}s`;
+  const total = Math.floor(s);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}h${pad(m)}m${pad(sec)}s` : `${m}m${pad(sec)}s`;
 }
 
 /** Thousands-separated count, with a `~` prefix when the value is estimated. */
