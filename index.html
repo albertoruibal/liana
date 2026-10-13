@@ -620,8 +620,7 @@
             to its 1024-token floor and changing <strong>Context</strong> no longer affects the
             batch count. A larger Context (with a small Max tokens) means more room per batch, so
             <em>fewer</em> batches, not more.
-            <strong>Max agent steps</strong> (on the Review rules tab) caps the tool-calling
-            iterations inside each batch; the <code>batch i/N</code> counter in the review log
+            The <code>batch i/N</code> counter in the review log
             shows how many batches the plan produced.
           </p>
         </section>
@@ -648,10 +647,6 @@
             <label>
               Language
               <input type="text" id="settings-review-language" placeholder="English" />
-            </label>
-            <label>
-              Max agent steps
-              <input type="number" id="settings-review-maxsteps" min="1" />
             </label>
           </div>
           <label>

@@ -65,18 +65,11 @@ function jobHeadWarning(job: ReviewJob | null): string | null {
   return note ? note.resultSummary : null;
 }
 
-/** Note when the agent hit its configured step cap and had to finalize early. */
-function jobStepWarning(job: ReviewJob | null): string | null {
-  return job?.stepLimitReached
-    ? 'Agent step limit reached — the review was finalized early and may be incomplete. Raise "Max agent steps" in Settings to review more thoroughly.'
-    : null;
-}
-
 /** Show or hide the warning banner for a review tab (head fetch or step cap). */
 export function paintReviewWarning(state: ReviewTabState): void {
   if (!isReviewShown(state)) return;
   const el = $('#review-warning');
-  const message = state.headWarning ?? jobHeadWarning(state.job) ?? jobStepWarning(state.job);
+  const message = state.headWarning ?? jobHeadWarning(state.job);
   el.hidden = message === null;
   el.textContent = message ?? '';
 }
@@ -367,36 +360,44 @@ export function renderReviewLog(job: ReviewJob): void {
   }
   const totalRate = fmtRate(totalCompletion, totalDuration);
   const summary = [
-    `Step ${job.trace.length}`,
-    `batch ${job.batchIndex}/${job.batchTotal}`,
+    job.batchIndex >= 1 ? `Batch ${job.batchIndex}/${job.batchTotal}` : '',
+    job.batchStep > 0 ? `Step ${job.batchStep}` : '',
     totalCompletion > 0 ? `${sawEstimated ? '~' : ''}${totalCompletion.toLocaleString('en-US')} tok` : '',
     totalRate,
     job.llmDurationMs > 0 ? `${fmtDuration(job.llmDurationMs)} LLM` : '',
-    job.stepLimitReached ? 'step limit reached' : '',
   ].filter((s) => s.length > 0);
   $('#review-log-subtitle').textContent = summary.join(' · ');
   $('#review-log-trace-count').textContent = String(job.trace.length);
   const traceSig = job.trace
-    .map((t) => `${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
+    .map((t) => `${t.batchIndex}\u0000${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
     .join('\u0001');
   if (traceSig !== logTraceSig) {
     logTraceSig = traceSig;
     const ol = $('#review-log-trace');
-    ol.innerHTML =
-      job.trace.length === 0
-        ? '<li class="muted">No tool calls yet.</li>'
-        : job.trace
-            .map(
-              (t) =>
-                `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
-                `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-                `<span class="muted">${fmtDuration(t.durationMs)}</span></li>`,
-            )
-            .join('');
+    if (job.trace.length === 0) {
+      ol.innerHTML = '<li class="muted">No tool calls yet.</li>';
+    } else {
+      const items: string[] = [];
+      let lastBatch = -1;
+      for (const t of job.trace) {
+        if (t.batchIndex !== lastBatch) {
+          lastBatch = t.batchIndex;
+          items.push(
+            `<li class="review-log-batch">Batch ${t.batchIndex}/${job.batchTotal}</li>`,
+          );
+        }
+        items.push(
+          `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
+            `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+            `<span class="muted">${fmtDuration(t.durationMs)}</span></li>`,
+        );
+      }
+      ol.innerHTML = items.join('');
+    }
   }
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
   const promptsSig = job.prompts
-    .map((p) => `${p.step}:${p.final ? 1 : 0}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
     .join(',');
   if (promptsSig !== logPromptsSig) {
     logPromptsSig = promptsSig;
@@ -406,16 +407,25 @@ export function renderReviewLog(job: ReviewJob): void {
     prompts.querySelectorAll<HTMLDetailsElement>('details[data-idx]').forEach((d) => {
       if (d.open) openIdx.add(Number(d.dataset.idx));
     });
-    prompts.innerHTML =
-      job.prompts.length === 0
-        ? '<p class="muted">No prompt sent yet.</p>'
-        : job.prompts
-            .map(
-              (p, i) =>
-                `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step}${p.final ? ' (final)' : ''} · ${promptMetrics(p)}</summary>` +
-                `<pre>${esc(p.text)}</pre></details>`,
-            )
-            .join('');
+    if (job.prompts.length === 0) {
+      prompts.innerHTML = '<p class="muted">No prompt sent yet.</p>';
+    } else {
+      const parts: string[] = [];
+      let lastBatch = -1;
+      job.prompts.forEach((p, i) => {
+        if (p.batchIndex !== lastBatch) {
+          lastBatch = p.batchIndex;
+          parts.push(
+            `<div class="review-log-batch">Batch ${p.batchIndex}/${job.batchTotal}</div>`,
+          );
+        }
+        parts.push(
+          `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
+            `<pre>${esc(p.text)}</pre></details>`,
+        );
+      });
+      prompts.innerHTML = parts.join('');
+    }
   }
   const output = job.output || '(no output captured yet)';
   if (output !== logOutput) {
@@ -903,7 +913,7 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   // Paused and errored jobs are both resumable: resume re-issues the last step
   // (from the checkpoint when there is one, else the current batch from scratch).
   $('#review-resume-job').textContent = job.state === 'error' ? 'Continue' : 'Resume';
-  $('#review-progress-text').textContent = `Step ${job.trace.length} · batch ${job.batchIndex}/${job.batchTotal}`;
+  $('#review-progress-text').textContent = `Batch ${job.batchIndex}/${job.batchTotal} · Step ${job.batchStep}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
   if (job.comments.length > 0) renderCommentQueue(state);
@@ -1134,10 +1144,10 @@ export function initReview(): void {
     const state = activeReview();
     if (!state?.job) return;
     const trace = state.job.trace
-      .map((t) => `${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
+      .map((t) => `[batch ${t.batchIndex} step ${t.step}] ${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
       .join('\n');
     const prompts = state.job.prompts
-      .map((p) => `--- step ${p.step}${p.final ? ' (final)' : ''} (${promptMetrics(p)}) ---\n${p.text}`)
+      .map((p) => `--- batch ${p.batchIndex} step ${p.step} (${promptMetrics(p)}) ---\n${p.text}`)
       .join('\n\n');
     const text = [
       state.job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---\n` : '',

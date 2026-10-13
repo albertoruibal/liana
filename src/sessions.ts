@@ -31,7 +31,6 @@ export interface StoredReviewSession {
   changes: ReviewChanges;
   rule: ReviewRuleConfig;
   providerId: string | null;
-  maxSteps: number;
   budget: number;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
@@ -213,7 +212,6 @@ function coerceRule(v: unknown): ReviewRuleConfig {
       : [],
     maxComments: Math.max(0, Math.floor(num(r.maxComments, 0))),
     language: str(r.language, 'English'),
-    maxSteps: Math.max(1, Math.floor(num(r.maxSteps, 32))),
     batchByFile: r.batchByFile !== false,
   };
 }
@@ -232,8 +230,8 @@ function coerceJob(v: unknown): ReviewJob | null {
   }
   const prompts: ReviewPromptStep[] = Array.isArray(v.prompts)
     ? v.prompts.filter(isRecord).map((p) => ({
+        batchIndex: Math.max(1, Math.floor(num(p.batchIndex, 1))),
         step: Math.floor(num(p.step, 0)),
-        final: p.final === true,
         text: str(p.text, ''),
         chars: Math.max(0, Math.floor(num(p.chars, 0))),
         truncated: p.truncated === true,
@@ -249,9 +247,11 @@ function coerceJob(v: unknown): ReviewJob | null {
     state,
     batchIndex: Math.max(0, Math.floor(num(v.batchIndex, 0))),
     batchTotal: Math.max(1, Math.floor(num(v.batchTotal, 1))),
+    batchStep: Math.max(0, Math.floor(num(v.batchStep, 0))),
     output: str(v.output, ''),
     trace: Array.isArray(v.trace)
       ? v.trace.filter(isRecord).map((t) => ({
+          batchIndex: Math.max(1, Math.floor(num(t.batchIndex, 1))),
           step: Math.floor(num(t.step, 0)),
           tool: str(t.tool, ''),
           args: isRecord(t.args) ? t.args : {},
@@ -264,7 +264,6 @@ function coerceJob(v: unknown): ReviewJob | null {
       v.llmDurationMs === undefined
         ? promptsDuration
         : Math.max(0, Math.floor(num(v.llmDurationMs, 0))),
-    stepLimitReached: v.stepLimitReached === true,
     comments: Array.isArray(v.comments)
       ? v.comments.filter(isRecord).map((c) => ({
           id: str(c.id, ''),
@@ -334,7 +333,6 @@ function coerceSession(raw: unknown): StoredReviewSession | null {
     changes,
     rule: coerceRule(raw.rule),
     providerId: optionalString(raw.providerId),
-    maxSteps: Math.max(1, Math.floor(num(raw.maxSteps, 32))),
     budget: Math.max(1024, Math.floor(num(raw.budget, 4096))),
     batches,
     batchIndex: Math.max(0, Math.floor(num(raw.batchIndex, 0))),

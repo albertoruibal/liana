@@ -344,7 +344,6 @@ export interface ReviewRuleConfig {
   maxComments: number;
   /** Preferred language for comment bodies. */
   language: string;
-  maxSteps: number;
   /** Review changed files in context-sized batches rather than one prompt. */
   batchByFile: boolean;
 }
@@ -471,6 +470,8 @@ export interface ReviewComment {
 
 /** One executed tool call in the agent trace, for UI transparency. */
 export interface ReviewTraceStep {
+  /** 1-based batch this call belongs to. */
+  batchIndex: number;
   step: number;
   tool: string;
   args: Record<string, unknown>;
@@ -480,10 +481,10 @@ export interface ReviewTraceStep {
 
 /** One model request as actually sent, for UI transparency. */
 export interface ReviewPromptStep {
-  /** Agent-loop step this request belongs to. */
+  /** 1-based batch this request belongs to. */
+  batchIndex: number;
+  /** Agent-loop step this request belongs to, within its batch. */
   step: number;
-  /** True for the forced "return the final JSON" request that wraps a step up. */
-  final?: boolean;
   /** Serialized wire messages, capped; see `truncated`/`chars`. */
   text: string;
   /** Full length of the prompt before truncation. */
@@ -508,6 +509,8 @@ export interface ReviewJob {
   state: ReviewJobState;
   batchIndex: number;
   batchTotal: number;
+  /** Current agent-loop step within the current batch (0 before the first). */
+  batchStep: number;
   /** Latest streamed model output (may be partial). */
   output: string;
   trace: ReviewTraceStep[];
@@ -515,8 +518,6 @@ export interface ReviewJob {
   prompts: ReviewPromptStep[];
   /** Accumulated wall-clock time across every model call, in milliseconds. */
   llmDurationMs: number;
-  /** True once the agent hit its step cap and had to finalize early. */
-  stepLimitReached: boolean;
   comments: ReviewComment[];
   error: string | null;
 }

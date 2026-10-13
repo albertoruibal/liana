@@ -3800,6 +3800,20 @@ dialog select:focus-visible {
   color: var(--fg-dim);
 }
 
+.review-log-batch {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin: 4px 0 2px;
+}
+
+.review-log-trace li.review-log-batch {
+  border-left: none;
+  padding-left: 0;
+}
+
 .review-queue {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);

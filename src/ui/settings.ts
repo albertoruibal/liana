@@ -134,7 +134,6 @@ export async function openSettingsDialog(): Promise<void> {
     $<HTMLSelectElement>('#settings-review-severity').value = s.review.severityThreshold;
     $<HTMLInputElement>('#settings-review-maxcomments').value = String(s.review.maxComments);
     $<HTMLInputElement>('#settings-review-language').value = s.review.language;
-    $<HTMLInputElement>('#settings-review-maxsteps').value = String(s.review.maxSteps);
     $<HTMLTextAreaElement>('#settings-review-ignore').value = s.review.ignoreGlobs.join('\n');
     $<HTMLInputElement>('#settings-review-batch').checked = s.review.batchByFile;
 
@@ -191,7 +190,6 @@ export function collectSettingsPatch(): Record<string, unknown> {
       severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
       maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
       language: $<HTMLInputElement>('#settings-review-language').value.trim() || 'English',
-      maxSteps: Number($<HTMLInputElement>('#settings-review-maxsteps').value) || 32,
       ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')
         .value.split('\n')
         .map((s) => s.trim())

@@ -69,7 +69,6 @@ function defaultRule(): ReviewRuleConfig {
     ignoreGlobs: ['**/dist/**', '**/node_modules/**', '**/*.lock', '**/*.min.js'],
     maxComments: 0,
     language: 'English',
-    maxSteps: 32,
     batchByFile: true,
   };
 }
@@ -175,7 +174,6 @@ function parseRule(v: unknown): ReviewRuleConfig {
     ignoreGlobs: globs(r.ignoreGlobs, base.ignoreGlobs),
     maxComments: int(r.maxComments, base.maxComments, 0),
     language: str(r.language, base.language),
-    maxSteps: int(r.maxSteps, base.maxSteps, 1),
     batchByFile: bool(r.batchByFile, base.batchByFile),
   };
 }

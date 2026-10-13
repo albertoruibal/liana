@@ -59,10 +59,7 @@ interface JobRecord {
   rule: ReviewRuleConfig;
   /** Provider chosen at start; re-resolved by id on resume. */
   providerId: string | null;
-  maxSteps: number;
   budget: number;
-  /** Caller-supplied step cap, before provider/rule fallbacks. */
-  requestedMaxSteps: number | null;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
   /** Enough state to resume the current batch exactly where it stopped. */
@@ -81,7 +78,6 @@ function snapshotSession(rec: JobRecord): StoredReviewSession {
     changes: rec.changes,
     rule: rec.rule,
     providerId: rec.providerId,
-    maxSteps: rec.maxSteps,
     budget: rec.budget,
     batches: rec.batches,
     batchIndex: Math.max(0, rec.job.batchIndex - 1),
@@ -211,9 +207,7 @@ function recordFromStored(s: StoredReviewSession): JobRecord {
     changes: s.changes,
     rule: s.rule,
     providerId: s.providerId,
-    maxSteps: s.maxSteps,
     budget: s.budget,
-    requestedMaxSteps: s.maxSteps,
     batches: s.batches,
     checkpoint: s.checkpoint,
   };
@@ -351,9 +345,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
     changes: { forge: 'gitlab', mr: { iid: 0, title: '', author: '', sourceBranch: '', targetBranch: '', state: '', webUrl: '', updatedAt: '', draft: false }, files: [], diffRefs: { baseSha: '', headSha: '', startSha: '' } },
     rule,
     providerId: null,
-    maxSteps: rule.maxSteps,
     budget: 4096,
-    requestedMaxSteps: null,
     batches: [],
     checkpoint: null,
     job: {
@@ -361,11 +353,11 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       state: 'running',
       batchIndex: 0,
       batchTotal: 1,
+      batchStep: 0,
       output: '',
       trace: [],
       prompts: [],
       llmDurationMs: 0,
-      stepLimitReached: false,
       comments: [],
       error: null,
     },
@@ -396,7 +388,6 @@ export interface StartReviewOptions {
   changes: ReviewChanges;
   providerId?: string;
   rule?: Partial<ReviewRuleConfig>;
-  maxSteps?: number;
 }
 
 /** Start a review job and return it immediately; the loop runs in the background. */
@@ -405,7 +396,6 @@ export function startReview(opts: StartReviewOptions): ReviewJob {
   rec.changes = opts.changes;
   rec.rule = { ...reviewRule(), ...opts.rule };
   rec.providerId = opts.providerId ?? null;
-  rec.requestedMaxSteps = opts.maxSteps ?? null;
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
   return structuredClone(rec.job);
 }
@@ -449,7 +439,6 @@ function requireProvider(providerId: string | null): StoredProvider {
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
   rec.providerId = provider.id;
-  rec.maxSteps = Math.max(1, rec.requestedMaxSteps ?? rec.rule.maxSteps);
   rec.budget = Math.max(1024, provider.contextWindow - provider.maxTokens - 256);
   if (rec.batches.length === 0) {
     const relevant = rec.changes.files.filter((f) => {
@@ -472,16 +461,16 @@ function planReview(rec: JobRecord): StoredProvider {
 
 async function runReview(rec: JobRecord): Promise<void> {
   const provider = planReview(rec);
-  const maxSteps = rec.maxSteps;
   const budget = rec.budget;
 
   for (let i = rec.job.batchIndex > 0 ? rec.job.batchIndex - 1 : 0; i < rec.batches.length; i++) {
     if (rec.cancelled || rec.paused) return;
     const indices = rec.batches[i] ?? [];
     rec.job.batchIndex = i + 1;
+    rec.job.batchStep = 0;
     rec.job.output = '';
 
-    const batchComments = await runBatch(rec, provider, maxSteps, budget, indices);
+    const batchComments = await runBatch(rec, provider, budget, indices);
     rec.checkpoint = null;
     syncComments(rec, batchComments, 'parsed');
     persist(rec);
@@ -499,20 +488,15 @@ const PROMPT_LOG_CHARS = 16000;
 const PROMPT_LOG_MAX = 40;
 
 /** Record the exact request sent to the model, capped, for the model log. */
-function recordPrompt(
-  rec: JobRecord,
-  step: number,
-  request: ChatRequest,
-  final = false,
-): ReviewPromptStep {
+function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): ReviewPromptStep {
   // Serialize tools/tool_choice before the (often huge) messages array so the
   // offered tool catalogue survives tail truncation.
   const { messages, ...rest } = request;
   const text = JSON.stringify({ ...rest, messages }, null, 2);
   const truncated = text.length > PROMPT_LOG_CHARS;
   const entry: ReviewPromptStep = {
+    batchIndex: rec.job.batchIndex,
     step,
-    final,
     text: truncated ? `${text.slice(0, PROMPT_LOG_CHARS)}\n… [truncated]` : text,
     chars: text.length,
     truncated,
@@ -556,7 +540,6 @@ function recordUsage(
 async function runBatch(
   rec: JobRecord,
   provider: StoredProvider,
-  maxSteps: number,
   budget: number,
   indices: number[],
 ): Promise<ReviewComment[]> {
@@ -604,6 +587,7 @@ async function runBatch(
   for (;;) {
     if (rec.cancelled || rec.paused) return [];
     step++;
+    rec.job.batchStep = step;
     pruneMessages(messages, budget);
     // Checkpoint before the model call: if we are paused mid-call, resume
     // re-issues this step rather than skipping its result.
@@ -693,6 +677,7 @@ async function runBatch(
         output = `error: ${err instanceof Error ? err.message : String(err)}`;
       }
       const trace: ReviewTraceStep = {
+        batchIndex: rec.job.batchIndex,
         step,
         tool: call.name,
         args: call.args,
@@ -701,34 +686,6 @@ async function runBatch(
       };
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
-    }
-
-    if (step >= maxSteps) {
-      // Out of steps: surface it (the UI warns the review may be incomplete) and
-      // ask for the final JSON using what we have.
-      rec.job.stepLimitReached = true;
-      messages.push({
-        role: 'user',
-        content: 'Stop exploring. Return the final JSON review result now.',
-      });
-      const finalWire = messages.map(toWire());
-      const finalRequest: ChatRequest = {
-        model: provider.model,
-        messages: finalWire,
-        temperature: provider.temperature,
-        max_tokens: provider.maxTokens,
-      };
-      const promptEntryForFinal = recordPrompt(rec, step, finalRequest, true);
-      const finalStarted = Date.now();
-      const finalResult = await chatCompletion(
-        provider,
-        finalRequest,
-        undefined,
-        rec.controller.signal,
-      );
-      recordUsage(rec, promptEntryForFinal, finalStarted, finalResult, messages);
-      const finalObj = extractJsonObject(finalResult.content);
-      return finalObj ? parseComments(finalObj, rule, changes.files) : [];
     }
   }
 }

@@ -249,7 +249,6 @@ export function createApi(defaultRepo: string | null): Api {
           iid?: number;
           providerId?: string;
           rule?: Partial<ReviewRuleConfig>;
-          maxSteps?: number;
         };
         if (!Number.isInteger(parsed.iid) || (parsed.iid ?? 0) < 1) {
           return { status: 400, body: { error: 'Missing request number' } };
@@ -282,7 +281,6 @@ export function createApi(defaultRepo: string | null): Api {
           changes,
           providerId: parsed.providerId,
           rule: parsed.rule,
-          maxSteps: parsed.maxSteps,
         });
         return { status: 200, body: { ok: true, job } };
       }
