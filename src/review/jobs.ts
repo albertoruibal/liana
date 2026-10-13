@@ -739,8 +739,7 @@ function buildSystemPrompt(
     .map((f) => `### ${f.newPath}\n${f.diff || '(binary or empty diff)'}`)
     .join('\n\n');
   const lines = [
-    `You are reviewing a ${forgeLabel(changes.forge)} for the Liana project.`,
-    `Write in ${rule.language}.`,
+    `You are reviewing a ${forgeLabel(changes.forge)}.`,
     rule.instructions,
     '',
     `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,

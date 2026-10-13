@@ -133,12 +133,10 @@ export async function openSettingsDialog(): Promise<void> {
     $<HTMLTextAreaElement>('#settings-review-instructions').value = s.review.instructions;
     $<HTMLSelectElement>('#settings-review-severity').value = s.review.severityThreshold;
     $<HTMLInputElement>('#settings-review-maxcomments').value = String(s.review.maxComments);
-    $<HTMLInputElement>('#settings-review-language').value = s.review.language;
     $<HTMLTextAreaElement>('#settings-review-ignore').value = s.review.ignoreGlobs.join('\n');
     $<HTMLInputElement>('#settings-review-batch').checked = s.review.batchByFile;
 
     $<HTMLTextAreaElement>('#settings-commit-instructions').value = s.commit.instructions;
-    $<HTMLInputElement>('#settings-commit-language').value = s.commit.language;
     $<HTMLInputElement>('#settings-commit-maxdiff').value = String(s.commit.maxDiffChars);
     $<HTMLInputElement>('#settings-commit-history').checked = s.commit.includeHistory;
 
@@ -189,7 +187,6 @@ export function collectSettingsPatch(): Record<string, unknown> {
       instructions: $<HTMLTextAreaElement>('#settings-review-instructions').value,
       severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
       maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
-      language: $<HTMLInputElement>('#settings-review-language').value.trim() || 'English',
       ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')
         .value.split('\n')
         .map((s) => s.trim())
@@ -198,7 +195,6 @@ export function collectSettingsPatch(): Record<string, unknown> {
     },
     commit: {
       instructions: $<HTMLTextAreaElement>('#settings-commit-instructions').value,
-      language: $<HTMLInputElement>('#settings-commit-language').value.trim() || 'English',
       includeHistory: $<HTMLInputElement>('#settings-commit-history').checked,
       maxDiffChars: Number($<HTMLInputElement>('#settings-commit-maxdiff').value) || 12000,
     },

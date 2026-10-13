@@ -211,7 +211,6 @@ function coerceRule(v: unknown): ReviewRuleConfig {
       ? r.ignoreGlobs.filter((g): g is string => typeof g === 'string')
       : [],
     maxComments: Math.max(0, Math.floor(num(r.maxComments, 0))),
-    language: str(r.language, 'English'),
     batchByFile: r.batchByFile !== false,
   };
 }

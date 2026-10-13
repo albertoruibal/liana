@@ -321,8 +321,7 @@ the model log fills in live, but an endpoint that ignores it still works: a plai
 The **Create commit** dialog has a **Generate with AI** button: it sends the diffs of the checked files (plus recent
 commit subjects, when enabled) to the active provider and drops the drafted message into the textarea, ready to edit. It
 is read-only — the diff is read from the working tree, nothing is staged or written, and regenerating simply overwrites
-the draft. The prompt, language, whether recent subjects are included, and the diff size cap live under **Settings →
-Commit**.
+the draft. The prompt, whether recent subjects are included, and the diff size cap live under **Settings → Commit**.
 
 ### Settings & secrets
 

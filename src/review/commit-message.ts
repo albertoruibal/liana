@@ -14,7 +14,6 @@ function cleanCommitMessage(raw: string): string {
 function buildCommitSystemPrompt(rule: CommitMessageConfig, includeHistory: boolean): string {
   const lines = [
     'You write git commit messages.',
-    `Write in ${rule.language}.`,
     rule.instructions,
     'Use the imperative mood in the subject line and keep it under 72 characters.',
     'Add a short body separated by a blank line only when it helps explain why.',

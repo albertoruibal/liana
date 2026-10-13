@@ -68,7 +68,6 @@ function defaultRule(): ReviewRuleConfig {
     severityThreshold: 'info',
     ignoreGlobs: ['**/dist/**', '**/node_modules/**', '**/*.lock', '**/*.min.js'],
     maxComments: 0,
-    language: 'English',
     batchByFile: true,
   };
 }
@@ -79,7 +78,6 @@ function defaultCommitRule(): CommitMessageConfig {
       'Write a clear, conventional commit message for the staged changes. Use the ' +
       'imperative mood in the subject line, keep it under 72 characters, and add a ' +
       'short body only when the change needs explaining. Describe what changed and why.',
-    language: 'English',
     includeHistory: true,
     maxDiffChars: 12000,
   };
@@ -173,7 +171,6 @@ function parseRule(v: unknown): ReviewRuleConfig {
     severityThreshold: severity(r.severityThreshold, base.severityThreshold),
     ignoreGlobs: globs(r.ignoreGlobs, base.ignoreGlobs),
     maxComments: int(r.maxComments, base.maxComments, 0),
-    language: str(r.language, base.language),
     batchByFile: bool(r.batchByFile, base.batchByFile),
   };
 }
@@ -184,7 +181,6 @@ function parseCommitRule(v: unknown): CommitMessageConfig {
   const c = v as Record<string, unknown>;
   return {
     instructions: str(c.instructions, base.instructions),
-    language: str(c.language, base.language),
     includeHistory: bool(c.includeHistory, base.includeHistory),
     maxDiffChars: int(c.maxDiffChars, base.maxDiffChars, 1000),
   };

@@ -342,8 +342,6 @@ export interface ReviewRuleConfig {
   ignoreGlobs: string[];
   /** Cap on proposed comments per review (0 = unlimited). */
   maxComments: number;
-  /** Preferred language for comment bodies. */
-  language: string;
   /** Review changed files in context-sized batches rather than one prompt. */
   batchByFile: boolean;
 }
@@ -352,8 +350,6 @@ export interface ReviewRuleConfig {
 export interface CommitMessageConfig {
   /** Natural-language guidance prepended to the generation prompt. */
   instructions: string;
-  /** Preferred language for the generated message. */
-  language: string;
   /** Include recent commit subjects so the model matches the repo's style. */
   includeHistory: boolean;
   /** Cap on combined diff characters sent to the model. */
