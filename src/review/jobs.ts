@@ -587,14 +587,14 @@ async function runBatch(
   };
 
   const batchIndex = Math.max(0, rec.job.batchIndex - 1);
-  const base = buildSystemPrompt(rule, changes, batch);
+  const base = buildSystemPrompt(rule, changes, batch, rec.job.batchIndex, rec.job.batchTotal);
   const fresh: ChatMessage[] = [
     { role: 'system', content: base },
     {
       role: 'user',
       content:
         'Review the merge request changes above. Report each issue by calling add_comment; ' +
-        'only comment on files present in the changes. When you are done, reply with no tool calls.',
+        'only comment on the files listed above. When you are done, reply with no tool calls.',
     },
   ];
   // Reuse a checkpoint only when it belongs to the batch we are about to run;
@@ -730,7 +730,10 @@ function buildSystemPrompt(
   rule: ReviewRuleConfig,
   changes: ReviewChanges,
   batch: ReviewFile[],
+  batchIndex: number,
+  batchTotal: number,
 ): string {
+  const batching = batchTotal > 1;
   const files = batch
     .map((f) => `- ${f.newPath}${f.newFile ? ' (new)' : ''}${f.deletedFile ? ' (deleted)' : ''}`)
     .join('\n');
@@ -744,7 +747,18 @@ function buildSystemPrompt(
     `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,
     `Branches: ${changes.mr.sourceBranch} → ${changes.mr.targetBranch}`,
     '',
-    'Changed files:',
+    // When the MR is split across batches, make the model's scope explicit: it is
+    // reviewing a subset, and the other changed files belong to other batches.
+    ...(batching
+      ? [
+          `This is batch ${batchIndex} of ${batchTotal} of this merge request; only the ` +
+            'files listed below are under review here. The remaining changed files are ' +
+            'covered by the other batches — do not search for them, read their diffs, ' +
+            'or comment on them.',
+          '',
+        ]
+      : []),
+    batching ? 'Changed files in this batch:' : 'Changed files:',
     files,
     '',
     'Diff:',
@@ -757,6 +771,14 @@ function buildSystemPrompt(
       'that are not part of the diff (callers, interfaces, tests, config). Only ' +
       'report an issue you can substantiate with a concrete file and line; if the ' +
       'code already handles the case, do not comment.',
+    ...(batching
+      ? [
+          '',
+          'Reading unchanged repository files to confirm a finding is fine, but a ' +
+            'changed file handled by another batch is out of scope: do not inspect or ' +
+            'comment on a changed file that is not listed above.',
+        ]
+      : []),
     '',
     'Report every issue by calling add_comment as soon as you can substantiate it — ' +
       'never wait until the end, and never write comments in a final message. Use the ' +
