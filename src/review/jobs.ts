@@ -484,6 +484,8 @@ async function runReview(rec: JobRecord): Promise<void> {
 
 /** Per-prompt cap in the model log; the full request can be huge (it embeds the diff). */
 const PROMPT_LOG_CHARS = 16000;
+/** Per-call cap on each streamed response channel (content and reasoning separately). */
+const CALL_OUTPUT_CHARS = 16000;
 /** Keep the log bounded; drop the oldest entries once it grows past this. */
 const PROMPT_LOG_MAX = 40;
 
@@ -504,6 +506,8 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
     promptTokens: null,
     completionTokens: null,
     usageEstimated: false,
+    segments: [],
+    outputTruncated: false,
   };
   rec.job.prompts.push(entry);
   if (rec.job.prompts.length > PROMPT_LOG_MAX) {
@@ -598,6 +602,7 @@ async function runBatch(
     // pending previews so the UI list fills in while the model is still writing.
     let liveText = '';
     let sawDelta = false;
+    let sawReasoningDelta = false;
     let lastScan = 0;
     const scanLive = (): void => {
       const now = Date.now();
@@ -619,6 +624,23 @@ async function runBatch(
       tool_choice: 'auto',
     };
     const promptEntry = recordPrompt(rec, step, request);
+    // Record the streamed response as ordered segments so content and reasoning
+    // stay interleaved; each channel is capped independently.
+    const segCounts = { content: 0, reasoning: 0 };
+    const appendSeg = (kind: 'content' | 'reasoning', text: string): void => {
+      if (text.length === 0) return;
+      const remaining = CALL_OUTPUT_CHARS - segCounts[kind];
+      if (remaining <= 0) {
+        promptEntry.outputTruncated = true;
+        return;
+      }
+      const take = text.length > remaining ? text.slice(0, remaining) : text;
+      if (text.length > remaining) promptEntry.outputTruncated = true;
+      segCounts[kind] += take.length;
+      const last = promptEntry.segments[promptEntry.segments.length - 1];
+      if (last && last.kind === kind) last.text += take;
+      else promptEntry.segments.push({ kind, text: take });
+    };
     const modelStarted = Date.now();
     const result = await chatCompletion(
       provider,
@@ -627,14 +649,29 @@ async function runBatch(
         sawDelta = true;
         rec.job.output += chunk;
         rec.job.output = rec.job.output.slice(-4000);
+        appendSeg('content', chunk);
         liveText += chunk;
         scanLive();
       },
       rec.controller.signal,
+      {},
+      (chunk) => {
+        sawReasoningDelta = true;
+        appendSeg('reasoning', chunk);
+      },
     );
     recordUsage(rec, promptEntry, modelStarted, result, messages);
 
     const parsed = { content: result.content, toolCalls: result.toolCalls };
+
+    // Non-streamed responses never hit the delta callbacks; record the whole
+    // response once so the log still shows it.
+    if (!sawDelta && !sawReasoningDelta) {
+      if (result.reasoning.length > 0) appendSeg('reasoning', result.reasoning);
+      if (result.content.length > 0) appendSeg('content', result.content);
+    }
+    // Persist the completed call so its output/reasoning survives a restart.
+    persist(rec);
 
     // Non-streamed responses never hit the delta callback; scan the whole text.
     if (parsed.content.length > 0) {

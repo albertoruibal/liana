@@ -479,7 +479,17 @@ export interface ReviewTraceStep {
   durationMs: number;
 }
 
-/** One model request as actually sent, for UI transparency. */
+/**
+ * One chunk of a model call's streamed response. Content and reasoning arrive on
+ * separate channels but are stored in arrival order so the UI can show them
+ * interleaved; each kind is also recoverable separately.
+ */
+export interface ReviewOutputSegment {
+  kind: 'content' | 'reasoning';
+  text: string;
+}
+
+/** One model request as actually sent, with its streamed response, for UI transparency. */
 export interface ReviewPromptStep {
   /** 1-based batch this request belongs to. */
   batchIndex: number;
@@ -498,6 +508,10 @@ export interface ReviewPromptStep {
   completionTokens: number | null;
   /** True when the token counts are the chars/4 estimate rather than real usage. */
   usageEstimated: boolean;
+  /** Streamed response, interleaved by arrival order; capped. */
+  segments: ReviewOutputSegment[];
+  /** True when the streamed response hit the per-call character cap. */
+  outputTruncated: boolean;
 }
 
 /** Lifecycle of a review job; `paused` and `error` are resumable, `cancelled` is terminal. */

@@ -348,6 +348,36 @@ function promptMetrics(p: ReviewPromptStep): string {
   return parts.join(' · ');
 }
 
+/** Total characters across a call's streamed response segments. */
+function segmentsChars(p: ReviewPromptStep): number {
+  let n = 0;
+  for (const s of p.segments) n += s.text.length;
+  return n;
+}
+
+/** Interleave a call's response segments as styled spans (reasoning vs. content). */
+function segmentsHtml(p: ReviewPromptStep): string {
+  return p.segments
+    .map((s) => `<span class="review-log-${s.kind}">${esc(s.text)}</span>`)
+    .join('');
+}
+
+/** Flatten a call's response segments to text, tagging reasoning lines for copy. */
+function segmentsPlain(p: ReviewPromptStep): string {
+  return p.segments
+    .map((s) => (s.kind === 'reasoning' ? `[reasoning] ${s.text}` : s.text))
+    .join('');
+}
+
+/** A call's response as a `<pre>`, or a muted placeholder when nothing streamed. */
+function responseHtml(p: ReviewPromptStep): string {
+  if (p.segments.length === 0) {
+    return '<pre class="review-log-response muted">(no response captured)</pre>';
+  }
+  const tail = p.outputTruncated ? '\n<span class="review-log-truncated">… [truncated]</span>' : '';
+  return `<pre class="review-log-response">${segmentsHtml(p)}${tail}</pre>`;
+}
+
 /** Render a job's agent trace and raw model output into the model-log dialog. */
 export function renderReviewLog(job: ReviewJob): void {
   let totalCompletion = 0;
@@ -397,7 +427,7 @@ export function renderReviewLog(job: ReviewJob): void {
   }
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
   const promptsSig = job.prompts
-    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}:${p.segments.length}:${segmentsChars(p)}:${p.outputTruncated ? 1 : 0}`)
     .join(',');
   if (promptsSig !== logPromptsSig) {
     logPromptsSig = promptsSig;
@@ -421,16 +451,34 @@ export function renderReviewLog(job: ReviewJob): void {
         }
         parts.push(
           `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
-            `<pre>${esc(p.text)}</pre></details>`,
+            `<pre>${esc(p.text)}</pre>${responseHtml(p)}</details>`,
         );
       });
       prompts.innerHTML = parts.join('');
     }
   }
-  const output = job.output || '(no output captured yet)';
-  if (output !== logOutput) {
-    logOutput = output;
-    $<HTMLPreElement>('#review-log-output').textContent = output;
+  // The live pane shows the active call's response — content and reasoning
+  // interleaved — as it streams, falling back to the raw last output.
+  const active: ReviewPromptStep | undefined =
+    job.prompts.length > 0 ? job.prompts[job.prompts.length - 1] : undefined;
+  const outputSig = active
+    ? `${active.batchIndex}:${active.step}:${active.segments.length}:${segmentsChars(active)}:${active.outputTruncated ? 1 : 0}`
+    : `raw:${job.output.length}`;
+  if (outputSig !== logOutput) {
+    logOutput = outputSig;
+    const el = $<HTMLPreElement>('#review-log-output');
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    const prevTop = el.scrollTop;
+    if (active && active.segments.length > 0) {
+      const tail = active.outputTruncated
+        ? '\n<span class="review-log-truncated">… [truncated]</span>'
+        : '';
+      el.innerHTML = `${segmentsHtml(active)}${tail}`;
+    } else {
+      el.textContent = job.output || '(no output captured yet)';
+    }
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+    else el.scrollTop = prevTop;
   }
 }
 
@@ -1147,15 +1195,22 @@ export function initReview(): void {
       .map((t) => `[batch ${t.batchIndex} step ${t.step}] ${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
       .join('\n');
     const prompts = state.job.prompts
-      .map((p) => `--- batch ${p.batchIndex} step ${p.step} (${promptMetrics(p)}) ---\n${p.text}`)
+      .map((p) => {
+        const response = segmentsPlain(p);
+        return (
+          `--- batch ${p.batchIndex} step ${p.step} (${promptMetrics(p)}) ---\n${p.text}` +
+          `\n\n>>> response:\n${response || '(no response captured)'}`
+        );
+      })
       .join('\n\n');
-    const text = [
-      state.job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---\n` : '',
-      state.job.output,
-      trace ? `\n\n--- agent trace ---\n${trace}` : '',
-      prompts ? `\n\n--- prompts ---\n${prompts}` : '',
-    ].join('');
-    void copyToClipboard(text).then(() => toast('Model log copied.', 'info'));
+    const parts = [
+      state.job.llmDurationMs > 0
+        ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---`
+        : '',
+      trace ? `--- agent trace ---\n${trace}` : '',
+      prompts ? `--- model calls ---\n${prompts}` : '',
+    ].filter((s) => s.length > 0);
+    void copyToClipboard(parts.join('\n\n')).then(() => toast('Model log copied.', 'info'));
   });
 
   $('#review-log-close').addEventListener('click', (ev) => {

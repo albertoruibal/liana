@@ -239,6 +239,13 @@ function coerceJob(v: unknown): ReviewJob | null {
         promptTokens: optionalCount(p.promptTokens),
         completionTokens: optionalCount(p.completionTokens),
         usageEstimated: p.usageEstimated === true,
+        segments: Array.isArray(p.segments)
+          ? p.segments.filter(isRecord).map((s) => ({
+              kind: s.kind === 'reasoning' ? ('reasoning' as const) : ('content' as const),
+              text: str(s.text, ''),
+            }))
+          : [],
+        outputTruncated: p.outputTruncated === true,
       }))
     : [];
   const promptsDuration = prompts.reduce((sum, p) => sum + p.durationMs, 0);

@@ -24,6 +24,8 @@ export interface CompletionUsage {
 
 export interface CompletionResult {
   content: string;
+  /** Streamed chain-of-thought, when the endpoint sends a reasoning channel. */
+  reasoning: string;
   toolCalls: ToolCall[];
   /** Real token usage when the endpoint reports it; absent otherwise. */
   usage?: CompletionUsage;
@@ -53,6 +55,7 @@ export async function chatCompletion(
   onDelta?: (chunk: string) => void,
   signal?: AbortSignal,
   labels: { cancelled?: string; timeout?: string } = {},
+  onReasoning?: (chunk: string) => void,
 ): Promise<CompletionResult> {
   const key = providerKey(provider);
   const url = `${provider.baseUrl.replace(/\/+$/, '')}/chat/completions`;
@@ -85,7 +88,7 @@ export async function chatCompletion(
     // treat the response as SSE when it actually says so.
     const contentType = res.headers.get('content-type') ?? '';
     if (res.body && contentType.includes('text/event-stream')) {
-      return await readStream(res.body, onDelta);
+      return await readStream(res.body, onDelta, onReasoning);
     }
     const raw = (await res.json()) as unknown;
     return parseCompletion(raw);
@@ -109,6 +112,9 @@ export async function chatCompletion(
 
 interface StreamDelta {
   content?: string;
+  /** Reasoning channel used by OpenAI-compatible reasoning models. */
+  reasoning_content?: string;
+  reasoning?: string;
   tool_calls?: Array<{
     index?: number;
     id?: string;
@@ -130,11 +136,13 @@ function parseUsage(raw: unknown): CompletionUsage | undefined {
 async function readStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: (chunk: string) => void,
+  onReasoning?: (chunk: string) => void,
 ): Promise<CompletionResult> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
+  let reasoning = '';
   let usage: CompletionUsage | undefined;
   const calls = new Map<number, { id: string; name: string; args: string }>();
 
@@ -158,6 +166,11 @@ async function readStream(
         continue;
       }
       if (!delta) continue;
+      const reasonChunk = delta.reasoning_content ?? delta.reasoning;
+      if (typeof reasonChunk === 'string' && reasonChunk.length > 0) {
+        reasoning += reasonChunk;
+        onReasoning?.(reasonChunk);
+      }
       if (typeof delta.content === 'string' && delta.content.length > 0) {
         content += delta.content;
         onDelta?.(delta.content);
@@ -182,13 +195,15 @@ async function readStream(
     }))
     .filter((c) => c.name.length > 0);
 
-  return usage ? { content, toolCalls, usage } : { content, toolCalls };
+  return usage ? { content, reasoning, toolCalls, usage } : { content, reasoning, toolCalls };
 }
 
 function parseCompletion(raw: unknown): CompletionResult {
   const choice = (raw as { choices?: Array<{ message?: Record<string, unknown> }> }).choices?.[0];
   const msg = choice?.message ?? {};
   const content = typeof msg.content === 'string' ? msg.content : '';
+  const reasonRaw = msg.reasoning_content ?? msg.reasoning;
+  const reasoning = typeof reasonRaw === 'string' ? reasonRaw : '';
   const toolCalls: ToolCall[] = [];
   if (Array.isArray(msg.tool_calls)) {
     for (const tc of msg.tool_calls) {
@@ -205,7 +220,7 @@ function parseCompletion(raw: unknown): CompletionResult {
     }
   }
   const usage = parseUsage(raw);
-  return usage ? { content, toolCalls, usage } : { content, toolCalls };
+  return usage ? { content, reasoning, toolCalls, usage } : { content, reasoning, toolCalls };
 }
 
 function parseArgs(raw: string): Record<string, unknown> {
