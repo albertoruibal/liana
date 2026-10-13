@@ -12,6 +12,7 @@ import {
   deleteReviewSession,
   generateCommitMessage,
   getReviewJob,
+  getReviewLog,
   listReviewSessions,
   loadReviewSession,
   pauseReviewJob,
@@ -313,6 +314,20 @@ export function createApi(defaultRepo: string | null): Api {
         const job = getReviewJob(id);
         if (!job) return { status: 404, body: { error: 'Unknown review job' } };
         return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/log' && method === 'POST') {
+        const { jobId, index } = JSON.parse(rawBody) as { jobId?: string; index?: number };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        const id = jobId.trim();
+        if (reviewJobRepo(id) !== repoPath) {
+          return { status: 404, body: { error: 'Unknown review job' } };
+        }
+        if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+          return { status: 400, body: { error: 'Missing or invalid index' } };
+        }
+        const prompt = getReviewLog(id, index);
+        if (!prompt) return { status: 404, body: { error: 'Unknown review step' } };
+        return { status: 200, body: { ok: true, prompt } };
       }
       if (route === '/review/cancel' && method === 'POST') {
         const { jobId } = JSON.parse(rawBody) as { jobId?: string };

@@ -13,7 +13,7 @@ import { toast } from './toast';
 import { $ } from './dom';
 import { CodeHandle } from '../code';
 import { DiffLine, parsePatch } from '../diff';
-import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewFile, ReviewJob, ReviewPromptStep, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
+import { ForgeKind, ReviewChanges, ReviewComment, ReviewCommentStatus, ReviewFile, ReviewJob, ReviewOutputSegment, ReviewPromptStep, ReviewRequest, ReviewSession, ReviewSessionView } from '../types';
 import { invalidateAiConflict } from './ai-conflict';
 import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
@@ -310,6 +310,14 @@ let logPromptsSig = '';
 
 let logOutput = '';
 
+// Model-log on-demand state: the polled job carries only step metadata, so each
+// step's full prompt/response is fetched lazily from /review/log when expanded.
+let logJobId: string | null = null;
+let logRenderState: ReviewTabState | null = null;
+const logStepCache = new Map<number, ReviewPromptStep>();
+const logOpenSteps = new Set<number>();
+const logLoadingSteps = new Set<number>();
+
 /** Compact duration: `820ms`, `4.2s`, `1m03s`, `3h32m02s`. */
 function fmtDuration(ms: number): string {
   if (ms <= 0) return '—';
@@ -379,7 +387,7 @@ function responseHtml(p: ReviewPromptStep): string {
 }
 
 /** Render a job's agent trace and raw model output into the model-log dialog. */
-export function renderReviewLog(job: ReviewJob): void {
+export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   let totalCompletion = 0;
   let totalDuration = 0;
   let sawEstimated = false;
@@ -425,18 +433,24 @@ export function renderReviewLog(job: ReviewJob): void {
       ol.innerHTML = items.join('');
     }
   }
+  // Reset per-step caches when a different job is shown.
+  if (logJobId !== job.id) {
+    logJobId = job.id;
+    logStepCache.clear();
+    logOpenSteps.clear();
+    logLoadingSteps.clear();
+  }
+  logRenderState = state;
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
+  // The list carries only step metadata; each step's full prompt/response is
+  // fetched on demand when expanded. Excluding the response keeps the list from
+  // rebuilding on every streaming tick.
   const promptsSig = job.prompts
-    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.truncated ? 1 : 0}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}:${p.segments.length}:${segmentsChars(p)}:${p.outputTruncated ? 1 : 0}`)
+    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
     .join(',');
   if (promptsSig !== logPromptsSig) {
     logPromptsSig = promptsSig;
     const prompts = $('#review-log-prompts');
-    // Keep expanded entries open across re-renders.
-    const openIdx = new Set<number>();
-    prompts.querySelectorAll<HTMLDetailsElement>('details[data-idx]').forEach((d) => {
-      if (d.open) openIdx.add(Number(d.dataset.idx));
-    });
     if (job.prompts.length === 0) {
       prompts.innerHTML = '<p class="muted">No prompt sent yet.</p>';
     } else {
@@ -450,36 +464,128 @@ export function renderReviewLog(job: ReviewJob): void {
           );
         }
         parts.push(
-          `<details data-idx="${i}"${openIdx.has(i) ? ' open' : ''}><summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
-            `<pre>${esc(p.text)}</pre>${responseHtml(p)}</details>`,
+          `<details data-idx="${i}"${logOpenSteps.has(i) ? ' open' : ''}>` +
+            `<summary>Step ${p.step} · ${promptMetrics(p)}</summary>` +
+            `<div class="review-log-step" data-idx="${i}"><p class="muted">Loading…</p></div>` +
+            `</details>`,
         );
       });
       prompts.innerHTML = parts.join('');
     }
   }
+  // Re-fill each open step; the live (last) step tracks its streamed segments.
+  for (const i of logOpenSteps) {
+    const p = job.prompts[i];
+    if (p) void fillLogStep(state, job, i, p.segments);
+  }
   // The live pane shows the active call's response — content and reasoning
-  // interleaved — as it streams, falling back to the raw last output.
+  // interleaved — as it streams.
   const active: ReviewPromptStep | undefined =
     job.prompts.length > 0 ? job.prompts[job.prompts.length - 1] : undefined;
   const outputSig = active
-    ? `${active.batchIndex}:${active.step}:${active.segments.length}:${segmentsChars(active)}:${active.outputTruncated ? 1 : 0}`
-    : `raw:${job.output.length}`;
+    ? `${active.batchIndex}:${active.step}:${active.segments.length}:${segmentsChars(active)}`
+    : 'none';
   if (outputSig !== logOutput) {
     logOutput = outputSig;
     const el = $<HTMLPreElement>('#review-log-output');
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
     const prevTop = el.scrollTop;
     if (active && active.segments.length > 0) {
-      const tail = active.outputTruncated
-        ? '\n<span class="review-log-truncated">… [truncated]</span>'
-        : '';
-      el.innerHTML = `${segmentsHtml(active)}${tail}`;
+      el.innerHTML = segmentsHtml(active);
     } else {
-      el.textContent = job.output || '(no output captured yet)';
+      el.textContent = '(no output captured yet)';
     }
     if (nearBottom) el.scrollTop = el.scrollHeight;
     else el.scrollTop = prevTop;
   }
+}
+
+/**
+ * Fetch (once) a step's full prompt/response from /review/log and render it,
+ * overlaying the live streamed segments when the step is the in-flight call.
+ */
+async function fillLogStep(
+  state: ReviewTabState,
+  job: ReviewJob,
+  index: number,
+  liveSegments: ReviewOutputSegment[],
+): Promise<void> {
+  let full = logStepCache.get(index);
+  if (!full) {
+    if (logLoadingSteps.has(index)) return;
+    logLoadingSteps.add(index);
+    try {
+      const { prompt } = await reviewApi<{ prompt: ReviewPromptStep }>(state, '/review/log', {
+        jobId: job.id,
+        index,
+      });
+      logStepCache.set(index, prompt);
+      full = prompt;
+    } catch {
+      const failed = document.querySelector<HTMLElement>(
+        `#review-log-prompts .review-log-step[data-idx="${index}"]`,
+      );
+      if (failed) failed.innerHTML = '<p class="muted">Could not load this step.</p>';
+      return;
+    } finally {
+      logLoadingSteps.delete(index);
+    }
+  }
+  if (!logOpenSteps.has(index)) return;
+  const target = document.querySelector<HTMLElement>(
+    `#review-log-prompts .review-log-step[data-idx="${index}"]`,
+  );
+  if (!target) return;
+  const isLast = index === job.prompts.length - 1;
+  const segments = isLast && liveSegments.length > 0 ? liveSegments : full.segments;
+  target.innerHTML =
+    `<div class="review-log-prompt-label">Prompt</div>` +
+    `<pre class="review-log-prompt">${esc(full.text)}</pre>` +
+    `<div class="review-log-prompt-label">Response</div>` +
+    responseHtml({ ...full, segments });
+}
+
+/** Copy the full model log, fetching each step's untruncated content. */
+async function copyModelLog(state: ReviewTabState): Promise<void> {
+  const job = state.job;
+  if (!job) return;
+  const trace = job.trace
+    .map((t) => `[batch ${t.batchIndex} step ${t.step}] ${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
+    .join('\n');
+  const steps: string[] = [];
+  for (let i = 0; i < job.prompts.length; i++) {
+    const lean = job.prompts[i];
+    if (!lean) continue;
+    let full = logStepCache.get(i);
+    if (!full) {
+      try {
+        full = (
+          await reviewApi<{ prompt: ReviewPromptStep }>(state, '/review/log', {
+            jobId: job.id,
+            index: i,
+          })
+        ).prompt;
+        logStepCache.set(i, full);
+      } catch {
+        // Fall back to the lean step (metadata only).
+      }
+    }
+    const step = full ?? lean;
+    const isLast = i === job.prompts.length - 1;
+    const segments = isLast && lean.segments.length > 0 ? lean.segments : step.segments;
+    const response = segmentsPlain({ ...step, segments });
+    steps.push(
+      `--- batch ${step.batchIndex} step ${step.step} (${promptMetrics(step)}) ---\n${step.text}` +
+        `\n\n>>> response:\n${response || '(no response captured)'}`,
+    );
+  }
+  const parts = [
+    job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(job.llmDurationMs)} (total) ---` : '',
+    trace ? `--- agent trace ---\n${trace}` : '',
+    steps.length > 0 ? `--- model calls ---\n${steps.join('\n\n')}` : '',
+  ].filter((s) => s.length > 0);
+  await copyToClipboard(parts.join('\n\n'));
+  toast('Model log copied.', 'info');
 }
 
 /** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
@@ -963,7 +1069,7 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   $('#review-resume-job').textContent = job.state === 'error' ? 'Continue' : 'Resume';
   $('#review-progress-text').textContent = `Batch ${job.batchIndex}/${job.batchTotal} · Step ${job.batchStep}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;
-  if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(job);
+  if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(state, job);
   if (job.comments.length > 0) renderCommentQueue(state);
   paintReviewWarning(state);
   if (job.state === 'error') {
@@ -1184,33 +1290,35 @@ export function initReview(): void {
   $('#review-show-log').addEventListener('click', () => {
     const state = activeReview();
     if (!state?.job) return;
-    renderReviewLog(state.job);
+    renderReviewLog(state, state.job);
     $<HTMLDialogElement>('#review-log-dialog').showModal();
   });
+
+  // `toggle` does not bubble, so listen in the capture phase to lazily load a
+  // step's full content the first time it is expanded.
+  $('#review-log-prompts').addEventListener(
+    'toggle',
+    (ev) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLDetailsElement)) return;
+      const index = Number(target.dataset.idx);
+      if (!Number.isInteger(index)) return;
+      if (target.open) {
+        logOpenSteps.add(index);
+        const state = logRenderState;
+        const job = state?.job;
+        if (state && job) void fillLogStep(state, job, index, job.prompts[index]?.segments ?? []);
+      } else {
+        logOpenSteps.delete(index);
+      }
+    },
+    true,
+  );
 
   $('#review-log-copy').addEventListener('click', () => {
     const state = activeReview();
     if (!state?.job) return;
-    const trace = state.job.trace
-      .map((t) => `[batch ${t.batchIndex} step ${t.step}] ${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
-      .join('\n');
-    const prompts = state.job.prompts
-      .map((p) => {
-        const response = segmentsPlain(p);
-        return (
-          `--- batch ${p.batchIndex} step ${p.step} (${promptMetrics(p)}) ---\n${p.text}` +
-          `\n\n>>> response:\n${response || '(no response captured)'}`
-        );
-      })
-      .join('\n\n');
-    const parts = [
-      state.job.llmDurationMs > 0
-        ? `--- model time: ${fmtDuration(state.job.llmDurationMs)} (total) ---`
-        : '',
-      trace ? `--- agent trace ---\n${trace}` : '',
-      prompts ? `--- model calls ---\n${prompts}` : '',
-    ].filter((s) => s.length > 0);
-    void copyToClipboard(parts.join('\n\n')).then(() => toast('Model log copied.', 'info'));
+    void copyModelLog(state);
   });
 
   $('#review-log-close').addEventListener('click', (ev) => {

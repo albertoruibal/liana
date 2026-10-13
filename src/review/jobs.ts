@@ -132,11 +132,11 @@ function publicSession(s: StoredReviewSession): ReviewSession {
 export function loadReviewSession(repoPath: string, id: string): ReviewSessionView | null {
   const live = jobs.get(id);
   if (live && live.repoPath === repoPath) {
-    return { session: publicSession(snapshotSession(live)), changes: live.changes, job: structuredClone(live.job) };
+    return { session: publicSession(snapshotSession(live)), changes: live.changes, job: leanJob(structuredClone(live.job)) };
   }
   const s = readSession(id);
   if (!s || s.repoPath !== repoPath) return null;
-  return { session: publicSession(s), changes: s.changes, job: structuredClone(s.job) };
+  return { session: publicSession(s), changes: s.changes, job: leanJob(structuredClone(s.job)) };
 }
 
 /** The repository a job (or a persisted session) belongs to, or null. */
@@ -261,10 +261,40 @@ function syncComments(
   return next;
 }
 
+/**
+ * A job with the bulky model log stripped for the polling renderer. Full prompt
+ * text is dropped for every step and the streamed response is kept only for the
+ * in-flight (last) call, so the live output pane still streams; each completed
+ * step is fetched on demand from `/review/log`.
+ */
+function leanJob(job: ReviewJob): ReviewJob {
+  const last = job.prompts.length - 1;
+  return {
+    ...job,
+    prompts: job.prompts.map((p, i) => ({
+      ...p,
+      text: '',
+      segments: i === last ? p.segments : [],
+    })),
+  };
+}
+
 /** Snapshot of a job for `/review/status`. */
 export function getReviewJob(id: string): ReviewJob | null {
   const rec = jobs.get(id);
-  return rec ? structuredClone(rec.job) : null;
+  return rec ? leanJob(structuredClone(rec.job)) : null;
+}
+
+/**
+ * The full logged step at `index`, from the live job when present else from the
+ * session on disk. Powers the model log's per-step on-demand loading.
+ */
+export function getReviewLog(id: string, index: number): ReviewPromptStep | null {
+  const live = jobs.get(id);
+  const prompts = live ? live.job.prompts : readSession(id)?.job.prompts;
+  if (!prompts || index < 0 || index >= prompts.length) return null;
+  const prompt = prompts[index];
+  return prompt ? structuredClone(prompt) : null;
 }
 
 /** Abort an in-flight review job. Cancellation is terminal. */
@@ -309,7 +339,7 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
     live.job.state = 'running';
     live.job.error = null;
     void runReview(live).catch((err: unknown) => finishWithError(live, err));
-    return structuredClone(live.job);
+    return leanJob(structuredClone(live.job));
   }
   const s = readSession(id);
   if (!s || s.repoPath !== repoPath || (s.job.state !== 'paused' && s.job.state !== 'error')) return null;
@@ -318,7 +348,7 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
   rec.job.error = null;
   jobs.set(id, rec);
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
-  return structuredClone(rec.job);
+  return leanJob(structuredClone(rec.job));
 }
 
 function finishWithError(rec: JobRecord, err: unknown): void {
@@ -353,7 +383,6 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       batchIndex: 0,
       batchTotal: 1,
       batchStep: 0,
-      output: '',
       trace: [],
       prompts: [],
       llmDurationMs: 0,
@@ -396,7 +425,7 @@ export function startReview(opts: StartReviewOptions): ReviewJob {
   rec.rule = { ...reviewRule(), ...opts.rule };
   rec.providerId = opts.providerId ?? null;
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
-  return structuredClone(rec.job);
+  return leanJob(structuredClone(rec.job));
 }
 
 /** Pack changed files into context-sized batches, preserving order. */
@@ -467,7 +496,6 @@ async function runReview(rec: JobRecord): Promise<void> {
     const indices = rec.batches[i] ?? [];
     rec.job.batchIndex = i + 1;
     rec.job.batchStep = 0;
-    rec.job.output = '';
 
     const batchComments = await runBatch(rec, provider, budget, indices);
     rec.checkpoint = null;
@@ -481,26 +509,20 @@ async function runReview(rec: JobRecord): Promise<void> {
   persist(rec);
 }
 
-/** Per-prompt cap in the model log; the full request can be huge (it embeds the diff). */
-const PROMPT_LOG_CHARS = 16000;
-/** Per-call cap on each streamed response channel (content and reasoning separately). */
-const CALL_OUTPUT_CHARS = 16000;
-/** Keep the log bounded; drop the oldest entries once it grows past this. */
-const PROMPT_LOG_MAX = 40;
-
-/** Record the exact request sent to the model, capped, for the model log. */
+/**
+ * Record the exact request sent to the model, untruncated, for the model log.
+ * The full text (and response) is kept in memory and persisted to disk; the
+ * renderer gets a lean copy and loads each step on demand.
+ */
 function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): ReviewPromptStep {
-  // Serialize tools/tool_choice before the (often huge) messages array so the
-  // offered tool catalogue survives tail truncation.
   const { messages, ...rest } = request;
   const text = JSON.stringify({ ...rest, messages }, null, 2);
-  const truncated = text.length > PROMPT_LOG_CHARS;
   const entry: ReviewPromptStep = {
     batchIndex: rec.job.batchIndex,
     step,
-    text: truncated ? `${text.slice(0, PROMPT_LOG_CHARS)}\n… [truncated]` : text,
+    text,
     chars: text.length,
-    truncated,
+    truncated: false,
     durationMs: 0,
     promptTokens: null,
     completionTokens: null,
@@ -509,9 +531,6 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
     outputTruncated: false,
   };
   rec.job.prompts.push(entry);
-  if (rec.job.prompts.length > PROMPT_LOG_MAX) {
-    rec.job.prompts.splice(0, rec.job.prompts.length - PROMPT_LOG_MAX);
-  }
   return entry;
 }
 
@@ -615,21 +634,12 @@ async function runBatch(
     };
     const promptEntry = recordPrompt(rec, step, request);
     // Record the streamed response as ordered segments so content and reasoning
-    // stay interleaved; each channel is capped independently.
-    const segCounts = { content: 0, reasoning: 0 };
+    // stay interleaved; the full response is kept untruncated.
     const appendSeg = (kind: 'content' | 'reasoning', text: string): void => {
       if (text.length === 0) return;
-      const remaining = CALL_OUTPUT_CHARS - segCounts[kind];
-      if (remaining <= 0) {
-        promptEntry.outputTruncated = true;
-        return;
-      }
-      const take = text.length > remaining ? text.slice(0, remaining) : text;
-      if (text.length > remaining) promptEntry.outputTruncated = true;
-      segCounts[kind] += take.length;
       const last = promptEntry.segments[promptEntry.segments.length - 1];
-      if (last && last.kind === kind) last.text += take;
-      else promptEntry.segments.push({ kind, text: take });
+      if (last && last.kind === kind) last.text += text;
+      else promptEntry.segments.push({ kind, text });
     };
     const modelStarted = Date.now();
     const result = await chatCompletion(
@@ -637,8 +647,6 @@ async function runBatch(
       request,
       (chunk) => {
         sawDelta = true;
-        rec.job.output += chunk;
-        rec.job.output = rec.job.output.slice(-4000);
         appendSeg('content', chunk);
       },
       rec.controller.signal,
@@ -660,12 +668,6 @@ async function runBatch(
     }
     // Persist the completed call so its output/reasoning survives a restart.
     persist(rec);
-
-    // Keep the raw output for the model log even when the provider ignored
-    // streaming and returned a single JSON body.
-    if (!sawDelta && parsed.content.trim().length > 0) {
-      rec.job.output = parsed.content.slice(-4000);
-    }
 
     // The model self-terminates: a turn with no tool calls means it is done.
     if (parsed.toolCalls.length === 0) {

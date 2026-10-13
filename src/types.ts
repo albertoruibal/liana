@@ -521,8 +521,6 @@ export interface ReviewJob {
   batchTotal: number;
   /** Current agent-loop step within the current batch (0 before the first). */
   batchStep: number;
-  /** Latest streamed model output (may be partial). */
-  output: string;
   trace: ReviewTraceStep[];
   /** The exact requests sent to the model, in order. */
   prompts: ReviewPromptStep[];

@@ -28,6 +28,7 @@ export {
   saveReviewSessionComments,
   deleteReviewSession,
   getReviewJob,
+  getReviewLog,
   cancelReviewJob,
   pauseReviewJob,
   resumeReview,

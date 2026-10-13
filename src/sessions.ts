@@ -254,7 +254,6 @@ function coerceJob(v: unknown): ReviewJob | null {
     batchIndex: Math.max(0, Math.floor(num(v.batchIndex, 0))),
     batchTotal: Math.max(1, Math.floor(num(v.batchTotal, 1))),
     batchStep: Math.max(0, Math.floor(num(v.batchStep, 0))),
-    output: str(v.output, ''),
     trace: Array.isArray(v.trace)
       ? v.trace.filter(isRecord).map((t) => ({
           batchIndex: Math.max(1, Math.floor(num(t.batchIndex, 1))),

@@ -136,7 +136,8 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/gitlab/mr` | POST | `{iid, fetch?}` | Deprecated alias for `/api/forge/mr` forcing GitLab |
 | `/api/gitlab/approve` | POST | `{iid}` | Deprecated alias for `/api/forge/approve` forcing GitLab |
 | `/api/review/generate` | POST | `{iid, providerId?, rule?}` | Start a review job; returns `{job}` |
-| `/api/review/status` | POST | `{jobId}` | Job state, live output, agent trace, proposed comments |
+| `/api/review/status` | POST | `{jobId}` | Job state, agent trace, proposed comments (model log stripped to step metadata) |
+| `/api/review/log` | POST | `{jobId, index}` | One model call's full untruncated prompt and response, loaded on demand |
 | `/api/review/cancel` | POST | `{jobId}` | Abort a running review (terminal) |
 | `/api/review/pause` | POST | `{jobId}` | Pause a running review at the next checkpoint (resumable) |
 | `/api/review/resume` | POST | `{jobId}` | Resume a paused or errored review, from memory or from disk |
