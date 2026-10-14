@@ -25,7 +25,8 @@ const sessions = new Map<string, Session>();
 function defaultShell(): string {
   const shell = process.env.SHELL?.trim();
   if (shell) return shell;
-  return process.platform === 'win32' ? 'powershell.exe' : '/bin/bash';
+  if (process.platform === 'win32') return 'powershell.exe';
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
 }
 
 function isDirectory(p: string): boolean {

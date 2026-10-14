@@ -216,8 +216,16 @@ LIANA_REPO=$PWD/test-repo npm run dev
 ```bash
 npm run electron:dev                     # Vite + Electron, HMR, "Open repo…" picker
 LIANA_REPO=$PWD/test-repo npm run electron:dev
-npm run electron:dist                    # -> release/Liana-0.2.1.AppImage, liana_0.2.1_amd64.deb
+npm run electron:dist:linux              # -> release/*.AppImage, release/*.deb
+npm run electron:dist:win                # -> release/*.exe (portable, x64 + arm64)   run on Windows
+npm run electron:dist:mac                # -> release/*.zip (universal)               run on macOS
 ```
+
+`electron:dist` is an alias for `electron:dist:linux`. Windows and macOS artifacts are unsigned
+(`mac.identity: null`); macOS Gatekeeper and Windows SmartScreen will warn on first launch. Neither can be produced on
+Linux — Windows uses the shipped `node-pty` N-API prebuilds and macOS needs macOS tooling — so
+`.github/workflows/build.yml` builds all three on native runners (manually dispatched, or on a `v*` tag) and uploads the
+`release/` artifacts.
 
 In dev the Electron window simply loads `http://localhost:5173`, so the Vite plugin still serves `/api`. Packaged builds
 start a loopback server on `127.0.0.1` with a fixed preferred port (54262, falling back to nearby ports or an ephemeral

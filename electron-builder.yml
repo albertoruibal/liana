@@ -16,6 +16,11 @@ asar: true
 # The .node binary must be loadable from disk, so keep node-pty unpacked.
 asarUnpack:
   - node_modules/node-pty/**
+# node-pty ships N-API prebuilds for darwin-{x64,arm64} and win32-{x64,arm64};
+# package those instead of rebuilding from source (Windows runners have no
+# Visual Studio toolchain, and a rebuild would target the wrong ABI). The Linux
+# build already carries a locally compiled node-pty for the same reason.
+npmRebuild: false
 linux:
   target:
     - AppImage
@@ -31,3 +36,22 @@ linux:
     Liana is a minimal git GUI: an interactive commit graph with commit, rebase,
     cherry-pick, and revert, plus push, pull, and login.
   maintainer: Liana
+# Windows: a single portable .exe (no install) for x64 and arm64. electron-builder
+# derives icon.ico from build/icon.png via app-builder.
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+        - arm64
+# macOS: unsigned universal (x64 + arm64) .zip. `identity: null` disables code
+# signing so the build succeeds without a Developer ID; electron-builder derives
+# icon.icns from build/icon.png. node-pty ships per-arch prebuilds, so the
+# universal merge finds no same-name native binaries to combine.
+mac:
+  target:
+    - target: zip
+      arch:
+        - universal
+  category: public.app-category.developer-tools
+  identity: null

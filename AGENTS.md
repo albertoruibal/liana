@@ -15,7 +15,13 @@ in the packaged app.
 - `LIANA_REPO=$PWD/test-repo npm run dev` — dev server with a repo pre-loaded
 - `npm run electron:dev` — Vite (in-process) + Electron against it
 - `npm run electron:build` — build `dist/` + `dist-electron/` (no installer)
-- `npm run electron:dist` — the above + electron-builder Linux AppImage/deb in `release/`
+- `npm run electron:dist` / `electron:dist:linux` — the above + electron-builder Linux AppImage/deb in `release/`
+- `npm run electron:dist:win` — Windows portable `.exe` (x64 + arm64); must run on Windows (or the CI workflow)
+- `npm run electron:dist:mac` — macOS universal `.zip` (unsigned, `identity: null`); must run on macOS (or the CI
+  workflow). `.dmg` is not produced (needs macOS tooling); the target config lives in `electron-builder.yml`
+- `.github/workflows/build.yml` — builds all three on native runners (dispatch or `v*` tags), uploading `release/`
+  artifacts. node-pty is packaged from its shipped N-API prebuilds (`npmRebuild: false`), so no native toolchain is
+  needed on Windows/macOS
 - `npm run fixture` — regenerate `./test-repo`, the demo repository
 - `npm run fixture:conflict` — `./test-repo-conflict`: a repo left mid-rebase with a conflict plus a local submodule,
   for exercising conflict resolution

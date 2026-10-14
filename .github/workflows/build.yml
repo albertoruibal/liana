@@ -1,0 +1,49 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  dist:
+    name: dist (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            script: electron:dist:linux
+            artifact: |
+              release/*.AppImage
+              release/*.deb
+          - name: windows
+            os: windows-latest
+            script: electron:dist:win
+            artifact: release/*.exe
+          - name: macos
+            os: macos-latest
+            script: electron:dist:mac
+            artifact: release/*.zip
+
+    env:
+      # macOS/Windows builds are unsigned; don't let electron-builder hunt for a
+      # signing identity on the runner.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liana-${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error

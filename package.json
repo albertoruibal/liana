@@ -18,7 +18,10 @@
     "electron:compile": "node scripts/build-electron.mjs",
     "electron:dev": "node scripts/electron-dev.mjs",
     "electron:build": "npm run build && npm run typecheck && npm run electron:compile",
-    "electron:dist": "npm run electron:build && electron-builder --linux AppImage deb"
+    "electron:dist": "npm run electron:build && electron-builder --linux",
+    "electron:dist:linux": "npm run electron:build && electron-builder --linux",
+    "electron:dist:win": "npm run electron:build && electron-builder --win",
+    "electron:dist:mac": "npm run electron:build && electron-builder --mac"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

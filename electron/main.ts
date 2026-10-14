@@ -237,7 +237,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    // macOS apps conventionally stay running with no windows; `activate` reopens.
+    if (process.platform !== 'darwin') app.quit();
   });
 
   app.on('will-quit', () => {
