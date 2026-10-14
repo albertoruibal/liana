@@ -2,7 +2,6 @@
 
 import { reviewApi } from './api-client';
 import { refresh } from './actions';
-import { copyToClipboard } from './clipboard';
 import { confirmDialog } from './confirm';
 import { loadCode } from './code-loader';
 import { esc, gutter } from './format';
@@ -302,11 +301,11 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
   }
 }
 
-// Signatures of the last model-log render, so a poll tick only rebuilds the
-// parts that changed (and doesn't reset the user's scroll while streaming).
-let logTraceSig = '';
-
-let logPromptsSig = '';
+// Signature of the last model-log render, so a poll tick only rebuilds the
+// timeline (and doesn't reset the user's scroll while streaming). It covers the
+// model calls' metadata and every tool call, but not the streamed response
+// segments, which the user reads live through the open Response pane.
+let logTimelineSig = '';
 
 // Model-log on-demand state: the polled job carries only step metadata, so each
 // step's full prompt/response is fetched lazily from /review/log when expanded.
@@ -365,13 +364,6 @@ function segmentsHtml(segments: ReviewOutputSegment[]): string {
     .join('');
 }
 
-/** Flatten a call's response segments to text, tagging reasoning lines for copy. */
-function segmentsPlain(p: ReviewPromptStep): string {
-  return p.segments
-    .map((s) => (s.kind === 'reasoning' ? `[reasoning] ${s.text}` : s.text))
-    .join('');
-}
-
 /** A call's response as a `<pre>`, or a muted placeholder when nothing streamed. */
 function responseHtml(segments: ReviewOutputSegment[]): string {
   if (segments.length === 0) {
@@ -380,7 +372,12 @@ function responseHtml(segments: ReviewOutputSegment[]): string {
   return `<pre class="review-log-response">${segmentsHtml(segments)}</pre>`;
 }
 
-/** Render a job's agent trace and each model call into the model-log dialog. */
+/** Chronological key: a model call precedes the tool calls it produced. */
+function logKey(batchIndex: number, step: number, sub: number): number {
+  return batchIndex * 1e6 + step * 2 + sub;
+}
+
+/** Render a job's model calls and their tool calls as one interleaved timeline. */
 export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   let totalCompletion = 0;
   let totalDuration = 0;
@@ -400,33 +397,6 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   ].filter((s) => s.length > 0);
   $('#review-log-subtitle').textContent = summary.join(' · ');
   $('#review-log-trace-count').textContent = String(job.trace.length);
-  const traceSig = job.trace
-    .map((t) => `${t.batchIndex}\u0000${t.tool}\u0000${JSON.stringify(t.args)}\u0000${t.resultSummary}\u0000${t.durationMs}`)
-    .join('\u0001');
-  if (traceSig !== logTraceSig) {
-    logTraceSig = traceSig;
-    const ol = $('#review-log-trace');
-    if (job.trace.length === 0) {
-      ol.innerHTML = '<li class="muted">No tool calls yet.</li>';
-    } else {
-      const items: string[] = [];
-      let lastBatch = -1;
-      for (const t of job.trace) {
-        if (t.batchIndex !== lastBatch) {
-          lastBatch = t.batchIndex;
-          items.push(
-            `<li class="review-log-batch">Batch ${t.batchIndex}/${job.batchTotal}</li>`,
-          );
-        }
-        items.push(
-          `<li><code>${esc(t.tool)}</code> <span class="muted">${esc(JSON.stringify(t.args))}</span>` +
-            `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-            `<span class="muted">${fmtDuration(t.durationMs)}</span></li>`,
-        );
-      }
-      ol.innerHTML = items.join('');
-    }
-  }
   // Reset per-step caches when a different job is shown.
   if (logJobId !== job.id) {
     logJobId = job.id;
@@ -437,39 +407,66 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   }
   logRenderState = state;
   $('#review-log-prompt-count').textContent = String(job.prompts.length);
-  // The list carries only step metadata; each call's prompt and response are
+  // The timeline carries only step metadata; each call's prompt and response are
   // fetched on demand when their own toggle is expanded. Excluding the response
-  // keeps the list from rebuilding on every streaming tick. Nothing auto-opens:
-  // a call's Prompt and Response are expanded independently by the user.
-  const promptsSig = job.prompts
-    .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
-    .join(',');
-  if (promptsSig !== logPromptsSig) {
-    logPromptsSig = promptsSig;
-    const prompts = $('#review-log-prompts');
-    if (job.prompts.length === 0) {
-      prompts.innerHTML = '<p class="muted">No prompt sent yet.</p>';
+  // keeps the timeline from rebuilding on every streaming tick. Nothing
+  // auto-opens: a call's Prompt and Response are expanded independently.
+  const timelineSig =
+    job.prompts
+      .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+      .join(',') +
+    '|' +
+    job.trace
+      .map((t) => `${t.batchIndex}:${t.step}:${t.tool}:${JSON.stringify(t.args)}:${t.resultSummary}:${t.durationMs}`)
+      .join(',');
+  if (timelineSig !== logTimelineSig) {
+    logTimelineSig = timelineSig;
+    const timeline = $('#review-log-timeline');
+    if (job.prompts.length === 0 && job.trace.length === 0) {
+      timeline.innerHTML = '<p class="muted">Nothing logged yet.</p>';
     } else {
+      // Merge the two already-ordered arrays. Within a step the model call was
+      // recorded before the tool calls it produced, so a call sorts first.
       const parts: string[] = [];
       let lastBatch = -1;
-      job.prompts.forEach((p, i) => {
-        if (p.batchIndex !== lastBatch) {
-          lastBatch = p.batchIndex;
+      const emitBatch = (batchIndex: number): void => {
+        if (batchIndex === lastBatch) return;
+        lastBatch = batchIndex;
+        parts.push(`<div class="review-log-batch">Batch ${batchIndex}/${job.batchTotal}</div>`);
+      };
+      let pi = 0;
+      let ti = 0;
+      while (pi < job.prompts.length || ti < job.trace.length) {
+        const p = job.prompts[pi];
+        const t = job.trace[ti];
+        const takeCall =
+          t === undefined ||
+          (p !== undefined && logKey(p.batchIndex, p.step, 0) <= logKey(t.batchIndex, t.step, 1));
+        if (takeCall && p !== undefined) {
+          emitBatch(p.batchIndex);
           parts.push(
-            `<div class="review-log-batch">Batch ${p.batchIndex}/${job.batchTotal}</div>`,
+            `<div class="review-log-call" data-idx="${pi}">` +
+              `<div class="review-log-call-head">Step ${p.step} · ${promptMetrics(p)}</div>` +
+              `<details class="review-log-part" data-idx="${pi}" data-part="prompt"${logOpenParts.has(`${pi}:prompt`) ? ' open' : ''}>` +
+              `<summary>Prompt</summary></details>` +
+              `<details class="review-log-part" data-idx="${pi}" data-part="response"${logOpenParts.has(`${pi}:response`) ? ' open' : ''}>` +
+              `<summary>Response</summary></details>` +
+              `</div>`,
           );
+          pi++;
+        } else if (t !== undefined) {
+          emitBatch(t.batchIndex);
+          parts.push(
+            `<details class="review-log-trace-item">` +
+              `<summary><code>${esc(t.tool)}</code> <span class="muted">${fmtDuration(t.durationMs)}</span></summary>` +
+              `<div class="muted">${esc(JSON.stringify(t.args))}</div>` +
+              `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+              `</details>`,
+          );
+          ti++;
         }
-        parts.push(
-          `<div class="review-log-call" data-idx="${i}">` +
-            `<div class="review-log-call-head">Step ${p.step} · ${promptMetrics(p)}</div>` +
-            `<details class="review-log-part" data-idx="${i}" data-part="prompt"${logOpenParts.has(`${i}:prompt`) ? ' open' : ''}>` +
-            `<summary>Prompt</summary></details>` +
-            `<details class="review-log-part" data-idx="${i}" data-part="response"${logOpenParts.has(`${i}:response`) ? ' open' : ''}>` +
-            `<summary>Response</summary></details>` +
-            `</div>`,
-        );
-      });
-      prompts.innerHTML = parts.join('');
+      }
+      timeline.innerHTML = parts.join('');
     }
   }
   // Fill the parts the user has open. A completed call is fetched in full; the
@@ -540,7 +537,7 @@ async function fillLogStep(
       for (const part of ['prompt', 'response'] as const) {
         if (!logOpenParts.has(`${index}:${part}`)) continue;
         const el = document.querySelector<HTMLElement>(
-          `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="${part}"]`,
+          `#review-log-timeline .review-log-part[data-idx="${index}"][data-part="${part}"]`,
         );
         if (el) setPartContent(el, '<p class="muted">Could not load this step.</p>');
       }
@@ -559,7 +556,7 @@ async function fillLogStep(
   const full = logStepCache.get(index);
   if (promptOpen) {
     const promptEl = document.querySelector<HTMLDetailsElement>(
-      `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="prompt"]`,
+      `#review-log-timeline .review-log-part[data-idx="${index}"][data-part="prompt"]`,
     );
     if (promptEl) {
       const text = logTextCache.get(index) ?? full?.text ?? '';
@@ -568,7 +565,7 @@ async function fillLogStep(
   }
   if (responseOpen) {
     const responseEl = document.querySelector<HTMLDetailsElement>(
-      `#review-log-prompts .review-log-part[data-idx="${index}"][data-part="response"]`,
+      `#review-log-timeline .review-log-part[data-idx="${index}"][data-part="response"]`,
     );
     if (responseEl) {
       const segments = isInFlight()
@@ -579,51 +576,6 @@ async function fillLogStep(
       setPartContent(responseEl, responseHtml(segments));
     }
   }
-}
-
-/** Copy the full model log, fetching each step's untruncated content. */
-async function copyModelLog(state: ReviewTabState): Promise<void> {
-  const job = state.job;
-  if (!job) return;
-  const trace = job.trace
-    .map((t) => `[batch ${t.batchIndex} step ${t.step}] ${t.tool} ${JSON.stringify(t.args)} → ${t.resultSummary} (${t.durationMs}ms)`)
-    .join('\n');
-  const steps: string[] = [];
-  for (let i = 0; i < job.prompts.length; i++) {
-    const lean = job.prompts[i];
-    if (!lean) continue;
-    const inFlight = i === job.prompts.length - 1 && job.state === 'running';
-    let full = logStepCache.get(i);
-    if (!full) {
-      try {
-        full = (
-          await reviewApi<{ prompt: ReviewPromptStep }>(state, '/review/log', {
-            jobId: job.id,
-            index: i,
-          })
-        ).prompt;
-        logTextCache.set(i, full.text);
-        // Never cache a response fetched while the call is still streaming.
-        if (!inFlight) logStepCache.set(i, full);
-      } catch {
-        // Fall back to the lean step (metadata only).
-      }
-    }
-    const step = full ?? lean;
-    const segments = inFlight && lean.segments.length > 0 ? lean.segments : step.segments;
-    const response = segmentsPlain({ ...step, segments });
-    steps.push(
-      `--- batch ${step.batchIndex} step ${step.step} (${promptMetrics(step)}) ---\n${step.text}` +
-        `\n\n>>> response:\n${response || '(no response captured)'}`,
-    );
-  }
-  const parts = [
-    job.llmDurationMs > 0 ? `--- model time: ${fmtDuration(job.llmDurationMs)} (total) ---` : '',
-    trace ? `--- agent trace ---\n${trace}` : '',
-    steps.length > 0 ? `--- model calls ---\n${steps.join('\n\n')}` : '',
-  ].filter((s) => s.length > 0);
-  await copyToClipboard(parts.join('\n\n'));
-  toast('Model log copied.', 'info');
 }
 
 /** A short diff excerpt around a comment's anchor, or '' when it can't be located. */
@@ -1334,7 +1286,7 @@ export function initReview(): void {
 
   // `toggle` does not bubble, so listen in the capture phase to lazily load a
   // call's prompt/response the first time each part is expanded.
-  $('#review-log-prompts').addEventListener(
+  $('#review-log-timeline').addEventListener(
     'toggle',
     (ev) => {
       const target = ev.target;
@@ -1355,12 +1307,6 @@ export function initReview(): void {
     },
     true,
   );
-
-  $('#review-log-copy').addEventListener('click', () => {
-    const state = activeReview();
-    if (!state?.job) return;
-    void copyModelLog(state);
-  });
 
   $('#review-log-close').addEventListener('click', (ev) => {
     ev.preventDefault();

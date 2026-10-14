@@ -3728,43 +3728,26 @@ dialog select:focus-visible {
   margin-bottom: 14px;
 }
 
-.review-log-trace {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.review-log-timeline {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.review-log-trace-wrap > summary {
-  cursor: pointer;
-  color: var(--fg-dim);
-}
-
-.review-log-trace-wrap[open] > summary {
-  margin-bottom: 8px;
-}
-
-.review-log-trace-wrap > summary h4 {
-  display: inline;
-  margin: 0;
-}
-
-.review-log-trace li {
+.review-log-trace-item {
   border-left: 2px solid var(--accent);
   padding-left: 8px;
   font-size: 12px;
 }
 
-.review-log-trace .trace-result {
+.review-log-trace-item > summary {
+  cursor: pointer;
+}
+
+.review-log-trace-item .trace-result {
   color: var(--fg-dim);
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.review-log-prompts {
-  overflow-y: auto;
 }
 
 .review-log-call {
@@ -3787,12 +3770,12 @@ dialog select:focus-visible {
   margin-top: 2px;
 }
 
-.review-log-prompts summary {
+.review-log-timeline summary {
   cursor: pointer;
   color: var(--fg-dim);
 }
 
-.review-log-prompts pre {
+.review-log-timeline pre {
   margin: 4px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3821,11 +3804,6 @@ dialog select:focus-visible {
   text-transform: uppercase;
   color: var(--fg-dim);
   margin: 4px 0 2px;
-}
-
-.review-log-trace li.review-log-batch {
-  border-left: none;
-  padding-left: 0;
 }
 
 .review-queue {

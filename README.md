@@ -275,8 +275,9 @@ review comments. Selecting a request fetches its head commit into the repository
 falling back to fetching the head SHA — so the read-only tools can read it; this writes only objects and the hidden
 `refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree. The tab polls
 the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
-and each proposed comment lands in the list as it arrives. The **Model log** dialog lists every model call and loads
-each step's exact wire prompt and full response on demand, alongside the trace (collapsible). Each logged call shows its wall-clock
+and each proposed comment lands in the list as it arrives. The **Model log** dialog shows a single timeline that
+interleaves every model call with the tool calls it made, and loads
+each step's exact wire prompt and full response on demand (the tool calls expand too). Each logged call shows its wall-clock
 time, token counts, and tokens/second — taken from the endpoint's `usage` when it reports it (`stream_options`
 asks for it) and otherwise estimated (`~`), with totals in the dialog subtitle, including the accumulated LLM time
 for the whole review (also shown next to each entry in the Saved review picker). It is bound to the repository it was opened on (the repo
