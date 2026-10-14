@@ -16,6 +16,7 @@ import {
   summarizeResult,
   TOOLS,
   type ChatMessage,
+  type ToolCall,
   type ToolContext,
 } from '../review-tools';
 import {
@@ -59,6 +60,12 @@ interface JobRecord {
   /** Provider chosen at start; re-resolved by id on resume. */
   providerId: string | null;
   budget: number;
+  /**
+   * Observed real/estimated prompt-token ratio (monotonic, clamped). The
+   * chars/3.5 estimate under-counts code, so the enforced budget is shrunk by
+   * this factor to stay ahead of a local server's silent prompt truncation.
+   */
+  tokenDrift: number;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
   /** Enough state to resume the current batch exactly where it stopped. */
@@ -78,6 +85,7 @@ function snapshotSession(rec: JobRecord): StoredReviewSession {
     rule: rec.rule,
     providerId: rec.providerId,
     budget: rec.budget,
+    tokenDrift: rec.tokenDrift,
     batches: rec.batches,
     batchIndex: Math.max(0, rec.job.batchIndex - 1),
     checkpoint: rec.checkpoint,
@@ -207,6 +215,7 @@ function recordFromStored(s: StoredReviewSession): JobRecord {
     rule: s.rule,
     providerId: s.providerId,
     budget: s.budget,
+    tokenDrift: s.tokenDrift,
     batches: s.batches,
     checkpoint: s.checkpoint,
   };
@@ -375,6 +384,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
     rule,
     providerId: null,
     budget: 4096,
+    tokenDrift: 1,
     batches: [],
     checkpoint: null,
     job: {
@@ -441,7 +451,7 @@ function batchFileIndices(
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     if (!f) continue;
-    const cost = Math.ceil((f.diff.length + f.newPath.length) / 4) + 16;
+    const cost = Math.ceil((f.diff.length + f.newPath.length) / 3.5) + 16;
     if (current.length > 0 && size + cost > budgetTokens) {
       batches.push(current);
       current = [];
@@ -469,6 +479,30 @@ function requireProvider(providerId: string | null): StoredProvider {
  */
 const BATCH_BUDGET_FRACTION = 0.5;
 
+/**
+ * Upper clamp on the adaptive token-budget calibration. When the endpoint
+ * reports real `usage.promptTokens`, the drift between it and the chars/3.5
+ * estimate grows the enforced shrink factor up to this much; the estimate
+ * under-counts code, and a prompt past the real window makes local servers
+ * truncate from the left — dropping the system prompt mid-review.
+ */
+const MAX_TOKEN_DRIFT = 2;
+
+/** Corrective user nudges per batch before a tool-free turn is accepted as-is. */
+const MAX_NUDGES = 2;
+
+/** A tool-free assistant turn shorter than this is a legitimate finish. */
+const MIN_BABBLE_CHARS = 200;
+
+/** Word-3-gram overlap above which two assistant turns count as repetition. */
+const REPEAT_OVERLAP = 0.6;
+
+/** Repetition is compared over at most the trailing window of each message. */
+const REPEAT_WINDOW_CHARS = 4000;
+
+/** A zero-comment batch must have run at least this many steps to be nudged. */
+const MIN_STEPS_FOR_NUDGE = 2;
+
 /** Set up the batch plan on the first run. */
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
@@ -495,7 +529,6 @@ function planReview(rec: JobRecord): StoredProvider {
 
 async function runReview(rec: JobRecord): Promise<void> {
   const provider = planReview(rec);
-  const budget = rec.budget;
 
   for (let i = rec.job.batchIndex > 0 ? rec.job.batchIndex - 1 : 0; i < rec.batches.length; i++) {
     if (rec.cancelled || rec.paused) return;
@@ -503,7 +536,7 @@ async function runReview(rec: JobRecord): Promise<void> {
     rec.job.batchIndex = i + 1;
     rec.job.batchStep = 0;
 
-    const batchComments = await runBatch(rec, provider, budget, indices);
+    const batchComments = await runBatch(rec, provider, indices);
     rec.checkpoint = null;
     syncComments(rec, batchComments, 'parsed');
     persist(rec);
@@ -540,9 +573,9 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
 }
 
 /**
- * Attach wall-clock time and token counts to a logged prompt. Real `usage`
- * from the endpoint is preferred; when it is absent fall back to the chars/4
- * estimate and flag it as such.
+  * Attach wall-clock time and token counts to a logged prompt. Real `usage`
+  * from the endpoint is preferred; when it is absent fall back to the chars/3.5
+  * estimate and flag it as such. Real usage also calibrates the budget drift.
  */
 function recordUsage(
   rec: JobRecord,
@@ -557,6 +590,14 @@ function recordUsage(
     entry.promptTokens = result.usage.promptTokens;
     entry.completionTokens = result.usage.completionTokens;
     entry.usageEstimated = false;
+    // Calibrate: when the endpoint reports the real prompt size, remember how
+    // much bigger it is than our estimate and shrink the enforced budget by
+    // that factor (monotonic, clamped) so pruning stays ahead of truncation.
+    const est = Math.max(1, messagesTokens(messages));
+    const drift = result.usage.promptTokens / est;
+    if (Number.isFinite(drift) && drift > rec.tokenDrift) {
+      rec.tokenDrift = Math.min(MAX_TOKEN_DRIFT, drift);
+    }
   } else {
     entry.promptTokens = messagesTokens(messages);
     entry.completionTokens = estimateTokens(result.content);
@@ -567,7 +608,6 @@ function recordUsage(
 async function runBatch(
   rec: JobRecord,
   provider: StoredProvider,
-  budget: number,
   indices: number[],
 ): Promise<ReviewComment[]> {
   const changes = rec.changes;
@@ -611,12 +651,17 @@ async function runBatch(
   let step = resume ? cp.step - 1 : 0;
   // Comments added this batch, accumulated across turns.
   const batchComments: ReviewComment[] = [];
+  // Anti-drift state for this batch: the last assistant prose, its last tool
+  // calls, and the nudge counter. Reset per batch.
+  let lastAssistantText = '';
+  let lastCalls: ToolCall[] = [];
+  let nudges = 0;
 
   for (;;) {
     if (rec.cancelled || rec.paused) return [];
     step++;
     rec.job.batchStep = step;
-    pruneMessages(messages, budget);
+    pruneMessages(messages, effectiveBudget(rec));
     // Checkpoint before the model call: if we are paused mid-call, resume
     // re-issues this step rather than skipping its result.
     rec.checkpoint = { batchIndex, messages, step };
@@ -675,10 +720,33 @@ async function runBatch(
 
     // The model self-terminates: a turn with no tool calls means it is done.
     if (parsed.toolCalls.length === 0) {
-      return batchComments;
+      if (
+        shouldFinishBatch(
+          parsed.content,
+          lastAssistantText,
+          batchComments.length,
+          nudges,
+          step,
+        )
+      ) {
+        return batchComments;
+      }
+      // Degenerate finish (prose instead of tool calls): keep the turn, nudge
+      // the model back on track, and continue — bounded, so the batch still
+      // terminates after at most MAX_NUDGES extra calls.
+      nudges++;
+      const repeated = looksRepeated(parsed.content, lastAssistantText);
+      messages.push({ role: 'assistant', content: parsed.content });
+      messages.push({
+        role: 'user',
+        content: nudgeMessage(repeated),
+      });
+      lastAssistantText = parsed.content;
+      continue;
     }
 
     messages.push({ role: 'assistant', content: parsed.content, toolCalls: parsed.toolCalls });
+    if (parsed.content.length > 0) lastAssistantText = parsed.content;
     for (const call of parsed.toolCalls) {
       if (rec.cancelled || rec.paused) return [];
       const started = Date.now();
@@ -692,6 +760,18 @@ async function runBatch(
           output = `error: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
+      // Small models can loop on the same tool call; nudge them via the tool
+      // result before the batch drifts away entirely.
+      if (
+        lastCalls.some(
+          (prev) =>
+            prev.name === call.name && JSON.stringify(prev.args) === JSON.stringify(call.args),
+        )
+      ) {
+        output +=
+          '\n(hint: you already ran this exact tool call with the same arguments; use ' +
+          'different arguments or reply with no tool calls to finish the batch)';
+      }
       const trace: ReviewTraceStep = {
         batchIndex: rec.job.batchIndex,
         step,
@@ -703,6 +783,7 @@ async function runBatch(
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
+    lastCalls = parsed.toolCalls;
   }
 }
 
@@ -729,6 +810,80 @@ function handleAddComment(
   return hint
     ? `comment added for ${comment.filePath}${anchor} (${hint})`
     : `comment added for ${comment.filePath}${anchor}`;
+}
+
+/**
+ * The context budget actually enforced: the configured estimate budget shrunk
+ * by the calibration drift observed between real (usage-reported) prompt
+ * tokens and the chars/3.5 estimate. Conservative accounting keeps the request
+ * under the model's real window so a local server never truncates it.
+ */
+function effectiveBudget(rec: JobRecord): number {
+  return Math.max(1024, Math.floor(rec.budget / rec.tokenDrift));
+}
+
+/** Word 3-grams over the trailing `REPEAT_WINDOW_CHARS` of `text`, normalized. */
+function shingles(text: string): Set<string> {
+  const sliced = text.length > REPEAT_WINDOW_CHARS ? text.slice(-REPEAT_WINDOW_CHARS) : text;
+  const words = sliced
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const grams = new Set<string>();
+  for (let i = 0; i + 3 <= words.length; i++) {
+    const a = words[i];
+    const b = words[i + 1];
+    const c = words[i + 2];
+    if (a && b && c) grams.add(`${a} ${b} ${c}`);
+  }
+  return grams;
+}
+
+/** Whether `current` largely repeats the previous assistant turn. */
+function looksRepeated(current: string, previous: string): boolean {
+  const a = shingles(current);
+  const b = shingles(previous);
+  if (a.size === 0 || b.size === 0) return false;
+  let hit = 0;
+  for (const g of a) if (b.has(g)) hit++;
+  return hit / Math.min(a.size, b.size) > REPEAT_OVERLAP;
+}
+
+/**
+ * Whether a tool-free assistant turn ends the batch. Termination is
+ * guaranteed in every branch: nudges are bounded by `MAX_NUDGES`, and a short
+ * plain turn is always a legitimate finish.
+ */
+function shouldFinishBatch(
+  content: string,
+  lastAssistantText: string,
+  commentCount: number,
+  nudges: number,
+  steps: number,
+): boolean {
+  if (nudges >= MAX_NUDGES) return true;
+  if (content.length < MIN_BABBLE_CHARS) return true;
+  // After a nudge, a non-repetitive turn is a real answer; an identical babble
+  // gets one more nudge before the limit ends the batch.
+  if (nudges > 0) return !looksRepeated(content, lastAssistantText);
+  // A batch that ran a while and reported nothing must not end silently.
+  if (commentCount === 0 && steps >= MIN_STEPS_FOR_NUDGE) return false;
+  return !looksRepeated(content, lastAssistantText);
+}
+
+/** The corrective user message pushed when the model finishes without reporting. */
+function nudgeMessage(repeated: boolean): string {
+  const prefix = repeated
+    ? 'You are repeating yourself instead of reviewing. '
+    : 'You have not reported anything via add_comment in this batch. ';
+  return (
+    prefix +
+    'Either call add_comment now, once for each issue you can substantiate in the ' +
+    'files listed above, or — if there is nothing more to report — reply with an ' +
+    'empty message (no text, no tool calls) to finish this batch. Never write the ' +
+    'review as prose.'
+  );
 }
 
 function buildSystemPrompt(
@@ -826,13 +981,36 @@ function toWire(): (m: ChatMessage) => Record<string, unknown> {
   };
 }
 
-/** Drop/condense oldest tool results when the context budget is exceeded. */
+/**
+ * Keep the conversation inside the context budget, best-effort. The batch diff
+ * lives in the system prompt and cannot shrink, so one pass may not reach the
+ * budget; escalate in bounded passes: condense old tool results, then old
+ * assistant prose, then drop the details of the oldest tool results entirely.
+ * Assistant `tool_calls` arrays are never rewritten, so every tool result keeps
+ * its pairing on the wire (no message is ever removed); the system message, the
+ * first user message, and the last few turns stay verbatim.
+ */
 function pruneMessages(messages: ChatMessage[], budget: number): void {
+  const protect = 4;
   if (messagesTokens(messages) <= budget) return;
-  for (let i = 1; i < messages.length - 4; i++) {
+  for (let i = 1; i < messages.length - protect; i++) {
     const m = messages[i];
     if (m && m.role === 'tool' && m.content.length > 200) {
       m.content = `(earlier observation, condensed) ${summarizeResult(m.content)}`;
+    }
+  }
+  if (messagesTokens(messages) <= budget) return;
+  for (let i = 1; i < messages.length - protect; i++) {
+    const m = messages[i];
+    if (m && m.role === 'assistant' && m.content.length > 200) {
+      m.content = `(earlier assistant message, condensed) ${summarizeResult(m.content)}`;
+    }
+  }
+  if (messagesTokens(messages) <= budget) return;
+  for (let i = 1; i < messages.length - protect; i++) {
+    const m = messages[i];
+    if (m && m.role === 'tool' && m.content.length > 80) {
+      m.content = '(earlier tool result omitted)';
     }
   }
 }

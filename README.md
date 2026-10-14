@@ -321,7 +321,7 @@ LM Studio, and vLLM do. A model that only emits plain text (no tool calls) canno
 diff-only fallback: the review refuses to run rather than reason about code it cannot read.
 
 Because small models have small context windows, the review splits the changed files into batches that fit
-roughly half the provider's **context window** (a chars/4 estimate), leaving the rest as headroom for the agent's
+roughly half the provider's **context window** (a chars/3.5 estimate), leaving the rest as headroom for the agent's
 tool results, and prunes old tool results and caps each tool result. When there is
 more than one batch, each batch's prompt states which one it is ("batch N of M") and that only the files listed are
 under review there, so the model does not wander into changed files handled by another batch. If the agent

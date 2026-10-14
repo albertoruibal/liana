@@ -32,6 +32,12 @@ export interface StoredReviewSession {
   rule: ReviewRuleConfig;
   providerId: string | null;
   budget: number;
+  /**
+   * Observed real/estimated prompt-token ratio (clamped 1–2); shrinks the
+   * effective budget on resume. Written before it existed, so read with a
+   * default of 1.
+   */
+  tokenDrift: number;
   /** Changed-file indices grouped into batches, preserving order. */
   batches: number[][];
   /** Zero-based batch currently being (or next to be) processed. */
@@ -338,6 +344,7 @@ function coerceSession(raw: unknown): StoredReviewSession | null {
     rule: coerceRule(raw.rule),
     providerId: optionalString(raw.providerId),
     budget: Math.max(1024, Math.floor(num(raw.budget, 4096))),
+    tokenDrift: Math.min(2, Math.max(1, num(raw.tokenDrift, 1))),
     batches,
     batchIndex: Math.max(0, Math.floor(num(raw.batchIndex, 0))),
     checkpoint: coerceCheckpoint(raw.checkpoint),

@@ -315,7 +315,7 @@ export interface AiProviderConfig {
   baseUrl: string;
   model: string;
   hasKey: boolean;
-  /** Model context window in tokens (used for the chars/4 budget). */
+  /** Model context window in tokens (used for the chars/3.5 budget). */
   contextWindow: number;
   maxTokens: number;
   temperature: number;
@@ -502,7 +502,7 @@ export interface ReviewPromptStep {
   promptTokens: number | null;
   /** Completion tokens reported by the endpoint, or estimated; null when unknown. */
   completionTokens: number | null;
-  /** True when the token counts are the chars/4 estimate rather than real usage. */
+  /** True when the token counts are the chars/3.5 estimate rather than real usage. */
   usageEstimated: boolean;
   /** Streamed response, interleaved by arrival order. */
   segments: ReviewOutputSegment[];

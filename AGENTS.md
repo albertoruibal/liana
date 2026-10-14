@@ -94,8 +94,12 @@ in the packaged app.
   fallback, writing only objects and the hidden ref.
 - The LLM harness runs **read-only repository tools** against the merge request's head SHA (never the local working
   tree). Repository tools resolve paths inside the repo only, truncate output, and never write to the working tree or
-  index. The agent loop is bounded only by a chars/4 context budget (there is no agent-step cap); batching keeps small
-  local models usable.
+  index. The agent loop has no step cap: it is bounded by a conservative chars/3.5 token budget, shrunk further by the
+  drift observed between real `usage.promptTokens` and the estimate (clamped ×2, persisted in the session) so
+  `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable. A
+  tool-free turn normally ends the batch, but when the model drifts into prose (nothing reported yet after ≥2 steps, or
+  text near-duplicating the previous turn), up to 2 corrective user nudges per batch ask it to call `add_comment` or
+  finish empty — termination stays guaranteed.
 - Comments are produced by an **`add_comment` tool call**, not text: the model reports each issue as soon as it can
   substantiate it and ends the batch by replying with no tool calls. `add_comment` is a proposal accumulator — validated
   against the changed files and diff anchors, then added to the review's comment list — and never writes to the repo.

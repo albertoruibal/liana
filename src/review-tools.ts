@@ -339,14 +339,26 @@ async function runTool(
 
 // --- context budgeting ---
 
-/** Rough token estimate (~4 chars/token plus per-message overhead). */
+/**
+ * Rough token estimate plus per-message overhead. Code and diffs tokenize
+ * denser than prose (~2.5–3 chars/token on real tokenizers), so the divisor is
+ * conservative (3.5 instead of 4) to keep the estimated prompt under the
+ * model's actual context window rather than trusting an optimistic average.
+ */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4) + 4;
+  return Math.ceil(text.length / 3.5) + 4;
 }
 
-/** Total estimated tokens for a message list. */
+/**
+ * Total estimated tokens for a message list. Counts assistant tool-call
+ * arguments too — they travel on the wire but are not part of `content`, so a
+ * content-only sum under-counts any turn that carries tool calls.
+ */
 export function messagesTokens(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  return messages.reduce((sum, m) => {
+    const args = m.toolCalls?.map((c) => JSON.stringify(c)).join('') ?? '';
+    return sum + estimateTokens(m.content + args);
+  }, 0);
 }
 
 /** One-line summary of a tool result for the trace panel. */
