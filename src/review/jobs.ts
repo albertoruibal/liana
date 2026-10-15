@@ -488,20 +488,14 @@ const BATCH_BUDGET_FRACTION = 0.5;
  */
 const MAX_TOKEN_DRIFT = 2;
 
-/** Corrective user nudges per batch before a tool-free turn is accepted as-is. */
+/** Corrective user nudges per batch before a tool-free turn force-ends the batch. */
 const MAX_NUDGES = 2;
-
-/** A tool-free assistant turn shorter than this is a legitimate finish. */
-const MIN_BABBLE_CHARS = 200;
 
 /** Word-3-gram overlap above which two assistant turns count as repetition. */
 const REPEAT_OVERLAP = 0.6;
 
 /** Repetition is compared over at most the trailing window of each message. */
 const REPEAT_WINDOW_CHARS = 4000;
-
-/** A zero-comment batch must have run at least this many steps to be nudged. */
-const MIN_STEPS_FOR_NUDGE = 2;
 
 /** Set up the batch plan on the first run. */
 function planReview(rec: JobRecord): StoredProvider {
@@ -639,7 +633,7 @@ async function runBatch(
       role: 'user',
       content:
         'Review the merge request changes above. Report each issue by calling add_comment; ' +
-        'only comment on the files listed above. When you are done, reply with no tool calls.',
+        'only comment on the files listed above. When you are done, call finish_batch.',
     },
   ];
   // Reuse a checkpoint only when it belongs to the batch we are about to run;
@@ -718,28 +712,17 @@ async function runBatch(
     // Persist the completed call so its output/reasoning survives a restart.
     persist(rec);
 
-    // The model self-terminates: a turn with no tool calls means it is done.
+    // Termination is explicit: only a `finish_batch` tool call ends the batch. A
+    // tool-free turn is an abrupt ending — nudge the model to keep reviewing or
+    // to call finish_batch, bounded by MAX_NUDGES so the batch still terminates.
     if (parsed.toolCalls.length === 0) {
-      if (
-        shouldFinishBatch(
-          parsed.content,
-          lastAssistantText,
-          batchComments.length,
-          nudges,
-          step,
-        )
-      ) {
-        return batchComments;
-      }
-      // Degenerate finish (prose instead of tool calls): keep the turn, nudge
-      // the model back on track, and continue — bounded, so the batch still
-      // terminates after at most MAX_NUDGES extra calls.
+      if (nudges >= MAX_NUDGES) return batchComments;
       nudges++;
       const repeated = looksRepeated(parsed.content, lastAssistantText);
       messages.push({ role: 'assistant', content: parsed.content });
       messages.push({
         role: 'user',
-        content: nudgeMessage(repeated),
+        content: nudgeMessage(repeated, batchComments.length),
       });
       lastAssistantText = parsed.content;
       continue;
@@ -747,11 +730,15 @@ async function runBatch(
 
     messages.push({ role: 'assistant', content: parsed.content, toolCalls: parsed.toolCalls });
     if (parsed.content.length > 0) lastAssistantText = parsed.content;
+    let finished = false;
     for (const call of parsed.toolCalls) {
       if (rec.cancelled || rec.paused) return [];
       const started = Date.now();
       let output: string;
-      if (call.name === 'add_comment') {
+      if (call.name === 'finish_batch') {
+        output = 'batch finished';
+        finished = true;
+      } else if (call.name === 'add_comment') {
         output = handleAddComment(rec, rule, changes.files, call.args, batchComments);
       } else {
         try {
@@ -770,7 +757,7 @@ async function runBatch(
       ) {
         output +=
           '\n(hint: you already ran this exact tool call with the same arguments; use ' +
-          'different arguments or reply with no tool calls to finish the batch)';
+          'different arguments or call finish_batch to end the batch)';
       }
       const trace: ReviewTraceStep = {
         batchIndex: rec.job.batchIndex,
@@ -783,6 +770,7 @@ async function runBatch(
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
+    if (finished) return batchComments;
     lastCalls = parsed.toolCalls;
   }
 }
@@ -800,7 +788,7 @@ function handleAddComment(
   batchComments: ReviewComment[],
 ): string {
   if (rule.maxComments > 0 && rec.job.comments.length >= rule.maxComments) {
-    return `comment limit reached (${rule.maxComments}); stop adding comments and reply with no tool calls`;
+    return `comment limit reached (${rule.maxComments}); stop adding comments and call finish_batch`;
   }
   const { comment, hint } = commentFromTool(args, rule, files, '');
   if (!comment) return `comment rejected: ${hint ?? 'invalid arguments'}`;
@@ -851,38 +839,21 @@ function looksRepeated(current: string, previous: string): boolean {
 }
 
 /**
- * Whether a tool-free assistant turn ends the batch. Termination is
- * guaranteed in every branch: nudges are bounded by `MAX_NUDGES`, and a short
- * plain turn is always a legitimate finish.
+ * The corrective user message pushed when the model ends a turn without an
+ * explicit `finish_batch` tool call. A tool-free turn is treated as an abrupt
+ * ending, so the model is told to keep reviewing or to finish explicitly.
  */
-function shouldFinishBatch(
-  content: string,
-  lastAssistantText: string,
-  commentCount: number,
-  nudges: number,
-  steps: number,
-): boolean {
-  if (nudges >= MAX_NUDGES) return true;
-  if (content.length < MIN_BABBLE_CHARS) return true;
-  // After a nudge, a non-repetitive turn is a real answer; an identical babble
-  // gets one more nudge before the limit ends the batch.
-  if (nudges > 0) return !looksRepeated(content, lastAssistantText);
-  // A batch that ran a while and reported nothing must not end silently.
-  if (commentCount === 0 && steps >= MIN_STEPS_FOR_NUDGE) return false;
-  return !looksRepeated(content, lastAssistantText);
-}
-
-/** The corrective user message pushed when the model finishes without reporting. */
-function nudgeMessage(repeated: boolean): string {
+function nudgeMessage(repeated: boolean, commentCount: number): string {
   const prefix = repeated
     ? 'You are repeating yourself instead of reviewing. '
-    : 'You have not reported anything via add_comment in this batch. ';
+    : commentCount === 0
+      ? 'You have not reported anything via add_comment in this batch. '
+      : 'You ended this batch without calling finish_batch. ';
   return (
     prefix +
     'Either call add_comment now, once for each issue you can substantiate in the ' +
-    'files listed above, or — if there is nothing more to report — reply with an ' +
-    'empty message (no text, no tool calls) to finish this batch. Never write the ' +
-    'review as prose.'
+    'files listed above, or — if there is nothing more to report — call finish_batch ' +
+    'to end this batch. Never write the review as prose.'
   );
 }
 
@@ -947,7 +918,7 @@ function buildSystemPrompt(
       'comment about the file as a whole rather than guessing a line.',
     '',
     'When you have covered the diff and have nothing further to report or inspect, ' +
-      'reply with no tool calls.',
+      'call finish_batch to end this batch. Never write the review as a final message.',
   ];
   return lines.join('\n');
 }

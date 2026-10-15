@@ -131,7 +131,8 @@ export const TOOLS: ToolDef[] = [
       'Report one review comment. Call this as soon as you can substantiate an issue, then ' +
       'keep reviewing — do not wait until the end and never write comments in a final message. ' +
       'The comment is only proposed for the user to approve; it posts nothing. Use a line that ' +
-      'appears in the diff, or omit the anchor for a comment about the file as a whole.',
+      'appears in the diff, or omit the anchor for a comment about the file as a whole. ' +
+      'Finish the batch separately with finish_batch.',
     parameters: {
       type: 'object',
       properties: {
@@ -146,6 +147,18 @@ export const TOOLS: ToolDef[] = [
         oldLine: { type: 'integer', description: '1-based old-side line present in the diff.' },
       },
       required: ['filePath', 'body'],
+    },
+  },
+  {
+    name: 'finish_batch',
+    description:
+      'Finish this batch of the review. Call this once you have covered the diff and have ' +
+      'nothing further to report or inspect; it ends the batch. Report issues with ' +
+      'add_comment, not here.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
     },
   },
 ];

@@ -324,8 +324,9 @@ Because small models have small context windows, the review splits the changed f
 roughly half the provider's **context window** (a chars/3.5 estimate), leaving the rest as headroom for the agent's
 tool results, and prunes old tool results and caps each tool result. When there is
 more than one batch, each batch's prompt states which one it is ("batch N of M") and that only the files listed are
-under review there, so the model does not wander into changed files handled by another batch. If the agent
-loop runs out of steps it asks the model for a final JSON result from what it has gathered. Streaming is requested so
+under review there, so the model does not wander into changed files handled by another batch. A batch ends **only** on
+an explicit `finish_batch` tool call; a turn that ends without one is treated as abrupt, so the agent nudges the model
+back on track (bounded) rather than silently finishing early. Streaming is requested so
 the model log fills in live, but an endpoint that ignores it still works: a plain (non-SSE) JSON response is handled.
 
 ### AI commit messages

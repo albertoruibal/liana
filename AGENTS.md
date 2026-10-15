@@ -97,11 +97,12 @@ in the packaged app.
   index. The agent loop has no step cap: it is bounded by a conservative chars/3.5 token budget, shrunk further by the
   drift observed between real `usage.promptTokens` and the estimate (clamped ×2, persisted in the session) so
   `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable. A
-  tool-free turn normally ends the batch, but when the model drifts into prose (nothing reported yet after ≥2 steps, or
-  text near-duplicating the previous turn), up to 2 corrective user nudges per batch ask it to call `add_comment` or
-  finish empty — termination stays guaranteed.
+  batch ends **only** on an explicit `finish_batch` tool call; a turn with no tool calls is treated as an abrupt ending,
+  and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, after which the batch
+  force-ends — termination stays guaranteed.
 - Comments are produced by an **`add_comment` tool call**, not text: the model reports each issue as soon as it can
-  substantiate it and ends the batch by replying with no tool calls. `add_comment` is a proposal accumulator — validated
+  substantiate it, then ends the batch by calling the `finish_batch` tool. `add_comment` is a proposal accumulator —
+  validated
   against the changed files and diff anchors, then added to the review's comment list — and never writes to the repo.
   There is no JSON comment protocol; a rejection or a non-anchorable line is returned as a tool-result hint so the model
   can correct itself, and `maxComments` is enforced inside the tool.
