@@ -2474,6 +2474,54 @@ dialog menu {
   white-space: pre-wrap;
 }
 
+/* Reset dialog: choose the reset type before confirming. */
+#reset-dialog {
+  min-width: 440px;
+  max-width: 560px;
+}
+
+.reset-modes {
+  border: 0;
+  padding: 0;
+  margin: 0 0 14px;
+}
+
+.reset-modes legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+.reset-modes .radio-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.reset-modes .radio-row:last-child {
+  margin-bottom: 0;
+}
+
+.reset-modes .radio-row input {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.reset-modes .radio-row b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
 /* Cherry-pick dialog: optional mainline selector for merge commits. */
 #cherry-pick-dialog {
   min-width: 440px;

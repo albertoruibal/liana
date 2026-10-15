@@ -131,10 +131,7 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
   }
   if (hash && target.kind !== 'remote') {
     items.push({ separator: true });
-    items.push({ label: 'Reset current branch to here', disabled: true });
-    items.push({ label: 'Soft — keep changes staged', action: () => void resetTo(hash, 'soft') });
-    items.push({ label: 'Mixed — keep changes unstaged', action: () => void resetTo(hash, 'mixed') });
-    items.push({ label: 'Hard — discard all changes', danger: true, action: () => void resetTo(hash, 'hard') });
+    items.push({ label: 'Reset current branch to here…', action: () => void resetTo(hash) });
   }
   return items;
 }
@@ -325,42 +322,61 @@ export async function dropStash(hash: string): Promise<void> {
   }
 }
 
-/** Custom confirm dialog that names the reset mode and target commit. */
-export function confirmReset(mode: ResetMode, hash: string): Promise<boolean> {
+/** Custom confirm dialog that names the target commit and lets the user choose the reset mode. */
+export function confirmReset(hash: string): Promise<ResetMode | null> {
   const dlg = $<HTMLDialogElement>('#reset-dialog');
-  $('#reset-summary').innerHTML =
-    `Reset the checked-out branch to <code>${esc(hash.slice(0, 8))}</code> with <b>--${mode}</b>.`;
-  const hardWarn = mode === 'hard';
-  $('#reset-warning').hidden = !hardWarn;
-  $<HTMLButtonElement>('#reset-confirm').textContent = `Reset --${mode}`;
-  $<HTMLButtonElement>('#reset-confirm').classList.toggle('btn-danger', hardWarn);
+  const confirmBtn = $<HTMLButtonElement>('#reset-confirm');
+  const cancelBtn = $<HTMLButtonElement>('#reset-cancel');
+  const radios = Array.from(dlg.querySelectorAll<HTMLInputElement>('input[name="reset-mode"]'));
+  const selected = (): ResetMode => {
+    const checked = radios.find((r) => r.checked)?.value;
+    return checked === 'soft' || checked === 'hard' ? checked : 'mixed';
+  };
+  const updateSummary = (): void => {
+    const mode = selected();
+    const hardWarn = mode === 'hard';
+    $('#reset-summary').innerHTML =
+      `Reset the checked-out branch to <code>${esc(hash.slice(0, 8))}</code> with <b>--${mode}</b>.`;
+    $('#reset-warning').hidden = !hardWarn;
+    confirmBtn.textContent = `Reset --${mode}`;
+    confirmBtn.classList.toggle('btn-danger', hardWarn);
+    confirmBtn.classList.toggle('btn-primary', !hardWarn);
+  };
+
+  // Default to the non-destructive mixed reset on every open.
+  for (const r of radios) r.checked = r.value === 'mixed';
+  updateSummary();
+
   return new Promise((resolve) => {
-    const confirmBtn = $<HTMLButtonElement>('#reset-confirm');
-    const cancelBtn = $<HTMLButtonElement>('#reset-cancel');
-    const onConfirm = (): void => {
-      cleanup();
-      dlg.close();
-      resolve(true);
-    };
-    const onCancel = (): void => {
-      cleanup();
-      dlg.close();
-      resolve(false);
-    };
-    const cleanup = (): void => {
+    let done = false;
+    const finish = (value: ResetMode | null): void => {
+      if (done) return;
+      done = true;
       confirmBtn.removeEventListener('click', onConfirm);
       cancelBtn.removeEventListener('click', onCancel);
+      for (const r of radios) r.removeEventListener('change', updateSummary);
       dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', onClose);
+      if (dlg.open) dlg.close();
+      resolve(value);
     };
+    const onConfirm = (): void => finish(selected());
+    const onCancel = (): void => finish(null);
+    // The global Escape handler closes the dialog directly, which fires `close`
+    // rather than `cancel`; resolve null there so the promise never hangs.
+    const onClose = (): void => finish(null);
     confirmBtn.addEventListener('click', onConfirm);
     cancelBtn.addEventListener('click', onCancel);
+    for (const r of radios) r.addEventListener('change', updateSummary);
     dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', onClose);
     dlg.showModal();
   });
 }
 
-export async function resetTo(hash: string, mode: ResetMode): Promise<void> {
-  if (!(await confirmReset(mode, hash))) return;
+export async function resetTo(hash: string): Promise<void> {
+  const mode = await confirmReset(hash);
+  if (!mode) return;
   try {
     await api('/reset', { mode, ref: hash });
     store.selectedHash = null;
