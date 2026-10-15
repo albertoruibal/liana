@@ -46,8 +46,11 @@ win:
         - arm64
 # macOS: unsigned universal (x64 + arm64) .zip. `identity: null` disables code
 # signing so the build succeeds without a Developer ID; electron-builder derives
-# icon.icns from build/icon.png. node-pty ships per-arch prebuilds, so the
-# universal merge finds no same-name native binaries to combine.
+# icon.icns from build/icon.png. node-pty ships per-arch prebuilds and, because
+# npmRebuild is false, every prebuild is present in both the x64 and arm64 app
+# bundles; the universal merge sees identical binaries on both sides and aborts
+# unless they're listed in x64ArchFiles, which keeps the x64 copy (the prebuilds
+# are identical either way, and node-pty loads the right one at runtime).
 mac:
   target:
     - target: zip
@@ -55,3 +58,4 @@ mac:
         - universal
   category: public.app-category.developer-tools
   identity: null
+  x64ArchFiles: '**/node_modules/node-pty/prebuilds/**'
