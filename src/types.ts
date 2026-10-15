@@ -317,9 +317,10 @@ export interface AiProviderConfig {
   hasKey: boolean;
   /** Model context window in tokens (used for the chars/3.5 budget). */
   contextWindow: number;
+  /** Max output tokens; `0` means unlimited (the request omits `max_tokens`). */
   maxTokens: number;
   temperature: number;
-  /** Output bytes kept per tool result before pruning. */
+  /** Output chars kept per tool result; `0` means unlimited (no truncation). */
   toolResultChars: number;
 }
 

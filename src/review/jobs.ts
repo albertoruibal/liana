@@ -480,6 +480,12 @@ function requireProvider(providerId: string | null): StoredProvider {
 const BATCH_BUDGET_FRACTION = 0.5;
 
 /**
+ * Context share reserved for the model's output when the provider's `maxTokens`
+ * is unlimited (`0`): the input budget gets the rest.
+ */
+const OUTPUT_RESERVE_FRACTION = 0.25;
+
+/**
  * Upper clamp on the adaptive token-budget calibration. When the endpoint
  * reports real `usage.promptTokens`, the drift between it and the chars/3.5
  * estimate grows the enforced shrink factor up to this much; the estimate
@@ -501,7 +507,12 @@ const REPEAT_WINDOW_CHARS = 4000;
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
   rec.providerId = provider.id;
-  rec.budget = Math.max(1024, provider.contextWindow - provider.maxTokens - 256);
+  // Reserve headroom for the model's output. With unlimited output tokens
+  // (`maxTokens === 0`) reserve a fraction of the context window instead, so the
+  // input budget never collapses.
+  const outputReserve =
+    provider.maxTokens > 0 ? provider.maxTokens : Math.floor(provider.contextWindow * OUTPUT_RESERVE_FRACTION);
+  rec.budget = Math.max(1024, provider.contextWindow - outputReserve - 256);
   if (rec.batches.length === 0) {
     const relevant = rec.changes.files.filter((f) => {
       const p = f.newPath || f.oldPath;
@@ -669,7 +680,8 @@ async function runBatch(
       model: provider.model,
       messages: wire,
       temperature: provider.temperature,
-      max_tokens: provider.maxTokens,
+      // `0` means unlimited: omit the field so the server uses its own cap.
+      ...(provider.maxTokens > 0 ? { max_tokens: provider.maxTokens } : {}),
       stream: true,
       stream_options: { include_usage: true },
       tools: nativeTools(),

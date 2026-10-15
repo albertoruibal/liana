@@ -326,7 +326,9 @@ tool results, and prunes old tool results and caps each tool result. When there 
 more than one batch, each batch's prompt states which one it is ("batch N of M") and that only the files listed are
 under review there, so the model does not wander into changed files handled by another batch. A batch ends **only** on
 an explicit `finish_batch` tool call; a turn that ends without one is treated as abrupt, so the agent nudges the model
-back on track (bounded) rather than silently finishing early. Streaming is requested so
+back on track (bounded) rather than silently finishing early. Per provider, **Max tokens** and **Result chars** can each
+be set to **Unlimited**: the request then omits `max_tokens` (the server's own cap applies, with a quarter of the context
+window reserved for output) and tool results are not truncated. Streaming is requested so
 the model log fills in live, but an endpoint that ignores it still works: a plain (non-SSE) JSON response is handled.
 
 ### AI commit messages

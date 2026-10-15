@@ -99,7 +99,9 @@ in the packaged app.
   `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable. A
   batch ends **only** on an explicit `finish_batch` tool call; a turn with no tool calls is treated as an abrupt ending,
   and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, after which the batch
-  force-ends — termination stays guaranteed.
+  force-ends — termination stays guaranteed. A provider's `maxTokens` / `toolResultChars` of `0` means unlimited: the
+  request omits `max_tokens` (reserving a quarter of the context window for output) and tool results are not truncated;
+  the `0` sentinel must survive `parseProviders` / `saveSettings` and is exposed as an "Unlimited" checkbox in Settings.
 - Comments are produced by an **`add_comment` tool call**, not text: the model reports each issue as soon as it can
   substantiate it, then ends the batch by calling the `finish_batch` tool. `add_comment` is a proposal accumulator —
   validated

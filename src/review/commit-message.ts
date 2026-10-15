@@ -67,7 +67,8 @@ export async function generateCommitMessage(
       { role: 'user', content: user },
     ],
     temperature: Math.min(provider.temperature, 0.5),
-    max_tokens: Math.min(provider.maxTokens, 512),
+    // `0` means unlimited: omit the field. Otherwise keep commit drafts short.
+    ...(provider.maxTokens > 0 ? { max_tokens: Math.min(provider.maxTokens, 512) } : {}),
   });
   return cleanCommitMessage(result.content);
 }

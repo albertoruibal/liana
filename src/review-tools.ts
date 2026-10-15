@@ -42,7 +42,7 @@ export interface ToolContext {
   repoPath: string;
   /** Ref the tools read (the MR head SHA). */
   headRef: string;
-  /** Per-result character cap. */
+  /** Per-result character cap; `0` means unlimited (no truncation). */
   toolResultChars: number;
 }
 
@@ -234,9 +234,9 @@ export function matchesAnyGlob(filePath: string, globs: string[]): boolean {
   });
 }
 
-/** Cut `text` to `max` characters, noting the truncation. */
+/** Cut `text` to `max` characters, noting the truncation. `max <= 0` is unlimited. */
 export function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
+  if (max <= 0 || text.length <= max) return text;
   return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 

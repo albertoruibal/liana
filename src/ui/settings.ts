@@ -65,13 +65,15 @@ export function renderProviderList(): void {
               <input type="number" class="pf-context" min="0.5" step="0.1" value="${toK(p.contextWindow)}" />
             </label>
             <label class="pf-small">Max tokens (K)
-              <input type="number" class="pf-maxtokens" min="0.1" step="0.1" value="${toK(p.maxTokens)}" />
+              <input type="number" class="pf-maxtokens" min="0.1" step="0.1" value="${toK(p.maxTokens)}" ${p.maxTokens === 0 ? 'disabled' : ''} />
             </label>
+            <label class="pf-check"><input type="checkbox" class="pf-maxtokens-unlimited" ${p.maxTokens === 0 ? 'checked' : ''} /> Unlimited</label>
           </div>
           <div class="provider-row">
             <label class="pf-small">Result chars (K)
-              <input type="number" class="pf-resultchars" min="0.2" step="0.1" value="${toK(p.toolResultChars)}" />
+              <input type="number" class="pf-resultchars" min="0.2" step="0.1" value="${toK(p.toolResultChars)}" ${p.toolResultChars === 0 ? 'disabled' : ''} />
             </label>
+            <label class="pf-check"><input type="checkbox" class="pf-resultchars-unlimited" ${p.toolResultChars === 0 ? 'checked' : ''} /> Unlimited</label>
             <label class="pf-small">Temperature
               <input type="number" class="pf-temp" step="0.1" min="0" value="${p.temperature}" />
             </label>
@@ -94,8 +96,12 @@ export function readProviderInputs(): void {
     p.model = q<HTMLInputElement>('.pf-model')?.value.trim() ?? p.model;
     p.baseUrl = q<HTMLInputElement>('.pf-url')?.value.trim() || p.baseUrl;
     p.contextWindow = fromK(q<HTMLInputElement>('.pf-context')?.value, p.contextWindow);
-    p.maxTokens = fromK(q<HTMLInputElement>('.pf-maxtokens')?.value, p.maxTokens);
-    p.toolResultChars = fromK(q<HTMLInputElement>('.pf-resultchars')?.value, p.toolResultChars);
+    const maxUnlimited = q<HTMLInputElement>('.pf-maxtokens-unlimited')?.checked ?? false;
+    p.maxTokens = maxUnlimited ? 0 : fromK(q<HTMLInputElement>('.pf-maxtokens')?.value, p.maxTokens);
+    const charsUnlimited = q<HTMLInputElement>('.pf-resultchars-unlimited')?.checked ?? false;
+    p.toolResultChars = charsUnlimited
+      ? 0
+      : fromK(q<HTMLInputElement>('.pf-resultchars')?.value, p.toolResultChars);
     p.temperature = Number(q<HTMLInputElement>('.pf-temp')?.value) || p.temperature;
     const radio = li.querySelector<HTMLInputElement>('input[name="active-provider"]');
     if (radio?.checked) settingsActiveProviderId = p.id;
@@ -266,7 +272,12 @@ function applyModelParams(li: HTMLLIElement, context: number, maxTokens: number)
   }
   if (Number.isFinite(maxTokens) && maxTokens > 0) {
     const mt = li.querySelector<HTMLInputElement>('.pf-maxtokens');
-    if (mt) mt.value = toK(maxTokens);
+    if (mt) {
+      mt.value = toK(maxTokens);
+      mt.disabled = false;
+    }
+    const unlimited = li.querySelector<HTMLInputElement>('.pf-maxtokens-unlimited');
+    if (unlimited) unlimited.checked = false;
   }
 }
 
@@ -386,9 +397,28 @@ export function initSettings(): void {
 
   $('#settings-providers').addEventListener('change', (ev) => {
     const target = ev.target;
-    if (!(target instanceof HTMLSelectElement) || !target.classList.contains('pf-model-select')) return;
+    if (!(target instanceof HTMLElement)) return;
     const li = target.closest<HTMLLIElement>('.provider-item');
     if (!li) return;
+    // Toggling "Unlimited" disables/enables the paired numeric input. Unchecking
+    // restores a finite default so the field never keeps the unlimited sentinel.
+    if (target.classList.contains('pf-maxtokens-unlimited')) {
+      const input = li.querySelector<HTMLInputElement>('.pf-maxtokens');
+      if (input && target instanceof HTMLInputElement) {
+        input.disabled = target.checked;
+        if (!target.checked && !(Number.parseFloat(input.value) > 0)) input.value = toK(1024);
+      }
+      return;
+    }
+    if (target.classList.contains('pf-resultchars-unlimited')) {
+      const input = li.querySelector<HTMLInputElement>('.pf-resultchars');
+      if (input && target instanceof HTMLInputElement) {
+        input.disabled = target.checked;
+        if (!target.checked && !(Number.parseFloat(input.value) > 0)) input.value = toK(2048);
+      }
+      return;
+    }
+    if (!(target instanceof HTMLSelectElement) || !target.classList.contains('pf-model-select')) return;
     const model = target.value;
     if (!model) return;
     const input = li.querySelector<HTMLInputElement>('.pf-model');

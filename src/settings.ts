@@ -25,8 +25,10 @@ export interface StoredProvider {
   model: string;
   apiKey: string;
   contextWindow: number;
+  /** Max output tokens; `0` means unlimited (the request omits `max_tokens`). */
   maxTokens: number;
   temperature: number;
+  /** Output chars kept per tool result; `0` means unlimited (no truncation). */
   toolResultChars: number;
 }
 
@@ -154,9 +156,9 @@ function parseProviders(v: unknown): StoredProvider[] {
       model: str(p.model, base.model),
       apiKey: str(p.apiKey, ''),
       contextWindow: int(p.contextWindow, base.contextWindow, 512),
-      maxTokens: int(p.maxTokens, base.maxTokens, 1),
+      maxTokens: int(p.maxTokens, base.maxTokens, 0),
       temperature: num(p.temperature, base.temperature),
-      toolResultChars: int(p.toolResultChars, base.toolResultChars, 200),
+      toolResultChars: int(p.toolResultChars, base.toolResultChars, 0),
     });
   }
   return out;
@@ -322,9 +324,9 @@ export function saveSettings(input: unknown): AppSettings {
         model: str(p.model, prev?.model ?? base.model),
         apiKey,
         contextWindow: int(p.contextWindow, prev?.contextWindow ?? base.contextWindow, 512),
-        maxTokens: int(p.maxTokens, prev?.maxTokens ?? base.maxTokens, 1),
+        maxTokens: int(p.maxTokens, prev?.maxTokens ?? base.maxTokens, 0),
         temperature: num(p.temperature, prev?.temperature ?? base.temperature),
-        toolResultChars: int(p.toolResultChars, prev?.toolResultChars ?? base.toolResultChars, 200),
+        toolResultChars: int(p.toolResultChars, prev?.toolResultChars ?? base.toolResultChars, 0),
       });
     }
     current.ai.providers = next;

@@ -3520,6 +3520,27 @@ dialog select:focus-visible {
   width: 78px;
 }
 
+.pf-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  margin: 0 !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+.pf-check input {
+  width: auto;
+  margin: 0;
+}
+
+.pf-small input:disabled {
+  opacity: 0.5;
+}
+
 /* ------------------------------------------------------------------ *
  * Code review tab (a main view, not a dialog)
  * ------------------------------------------------------------------ */

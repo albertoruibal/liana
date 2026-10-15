@@ -35,7 +35,8 @@ export interface ChatRequest {
   model: string;
   messages: unknown[];
   temperature: number;
-  max_tokens: number;
+  /** Max output tokens; omitted when `undefined` (the server/model default). */
+  max_tokens?: number;
   /** Request SSE streaming; an endpoint that ignores it still gets the JSON fallback. */
   stream?: boolean;
   /** Ask a streaming endpoint to emit a final `usage` chunk; ignored by servers that don't support it. */
@@ -378,6 +379,7 @@ export async function completeText(
   user: string,
   opts: { maxTokens?: number; signal?: AbortSignal; onDelta?: (chunk: string) => void } = {},
 ): Promise<string> {
+  const maxTokens = opts.maxTokens ?? provider.maxTokens;
   const result = await chatCompletion(
     provider,
     {
@@ -387,7 +389,8 @@ export async function completeText(
         { role: 'user', content: user },
       ],
       temperature: provider.temperature,
-      max_tokens: opts.maxTokens ?? provider.maxTokens,
+      // `0` means unlimited: omit the field so the server uses its own cap.
+      ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}),
       stream: true,
     },
     opts.onDelta,
