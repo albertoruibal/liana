@@ -345,22 +345,89 @@ function fmtRate(completionTokens: number | null, durationMs: number): string {
   return `${Math.round(completionTokens / (durationMs / 1000)).toLocaleString('en-US')} tok/s`;
 }
 
-/** One-line metrics for a logged model call. */
-function promptMetrics(p: ReviewPromptStep): string {
-  const parts = [`${p.chars.toLocaleString('en-US')} chars`];
-  if (p.truncated) parts.push('truncated');
-  parts.push(fmtDuration(p.durationMs));
-  const tokens = fmtCount(p.completionTokens, p.usageEstimated);
-  if (tokens !== null) parts.push(`${tokens} tok`);
-  const rate = fmtRate(p.completionTokens, p.durationMs);
-  if (rate) parts.push(rate);
-  return parts.join(' · ');
+/** A small pill used for the call head and trace headers. */
+function chip(text: string, cls = ''): string {
+  return `<span class="review-log-chip${cls ? ` ${cls}` : ''}">${esc(text)}</span>`;
 }
 
-/** Interleave response segments as styled spans (reasoning vs. content). */
+/** Structured header for a logged model call: a step badge plus metric chips. */
+function callHeaderHtml(p: ReviewPromptStep): string {
+  const chips: string[] = [];
+  const prompt = fmtCount(p.promptTokens, p.usageEstimated);
+  if (prompt !== null) chips.push(chip(`↑ ${prompt} in`));
+  const completion = fmtCount(p.completionTokens, p.usageEstimated);
+  if (completion !== null) chips.push(chip(`↓ ${completion} out`));
+  chips.push(chip(fmtDuration(p.durationMs)));
+  const rate = fmtRate(p.completionTokens, p.durationMs);
+  if (rate) chips.push(chip(rate));
+  chips.push(chip(`${p.chars.toLocaleString('en-US')} chars`, 'is-dim'));
+  if (p.truncated) chips.push(chip('truncated', 'is-warn'));
+  return (
+    `<div class="review-log-call-head">` +
+    `<span class="review-log-badge">Step ${p.step}</span>` +
+    `<span class="review-log-metrics">${chips.join('')}</span>` +
+    `</div>`
+  );
+}
+
+/** A one-line, human-readable description of a tool call and its key arguments. */
+function toolSummary(tool: string, args: Record<string, unknown>): string {
+  const str = (k: string): string | null => {
+    const v = args[k];
+    return typeof v === 'string' && v.length > 0 ? v : null;
+  };
+  const num = (k: string): number | null => {
+    const v = args[k];
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  };
+  switch (tool) {
+    case 'read_file': {
+      const path = str('path');
+      if (!path) return '';
+      const start = num('startLine');
+      const end = num('endLine');
+      if (start !== null && end !== null) return `${path}:${start}-${end}`;
+      if (start !== null) return `${path}:${start}`;
+      return path;
+    }
+    case 'search_code': {
+      const pattern = str('pattern');
+      if (!pattern) return '';
+      const glob = str('glob');
+      return glob ? `"${pattern}" in ${glob}` : `"${pattern}"`;
+    }
+    case 'list_files':
+      return str('pattern') ?? 'all files';
+    case 'git_log':
+      return str('path') ? `history of ${str('path')}` : 'recent history';
+    case 'show_commit':
+      return str('sha')?.slice(0, 10) ?? '';
+    case 'add_comment': {
+      const path = str('filePath') ?? 'file';
+      const line = num('newLine') ?? num('oldLine');
+      const severity = str('severity');
+      return severity ? `${path}${line !== null ? `:${line}` : ''} · ${severity}` : `${path}${line !== null ? `:${line}` : ''}`;
+    }
+    default:
+      return '';
+  }
+}
+
+/** Interleave response segments as styled spans, labelling reasoning vs. answer. */
 function segmentsHtml(segments: ReviewOutputSegment[]): string {
-  return segments
-    .map((s) => `<span class="review-log-${s.kind}">${esc(s.text)}</span>`)
+  const runs: { kind: ReviewOutputSegment['kind']; text: string }[] = [];
+  for (const s of segments) {
+    const last = runs[runs.length - 1];
+    if (last && last.kind === s.kind) last.text += s.text;
+    else runs.push({ kind: s.kind, text: s.text });
+  }
+  const label = { reasoning: 'Reasoning', content: 'Answer' } as const;
+  const mixed = runs.length > 1;
+  return runs
+    .map((r) => {
+      const body = `<span class="review-log-${r.kind}">${esc(r.text)}</span>`;
+      return mixed ? `<span class="review-log-seg-label">${label[r.kind]}</span>${body}` : body;
+    })
     .join('');
 }
 
@@ -446,7 +513,7 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
           emitBatch(p.batchIndex);
           parts.push(
             `<div class="review-log-call" data-idx="${pi}">` +
-              `<div class="review-log-call-head">Step ${p.step} · ${promptMetrics(p)}</div>` +
+              callHeaderHtml(p) +
               `<details class="review-log-part" data-idx="${pi}" data-part="prompt"${logOpenParts.has(`${pi}:prompt`) ? ' open' : ''}>` +
               `<summary>Prompt</summary></details>` +
               `<details class="review-log-part" data-idx="${pi}" data-part="response"${logOpenParts.has(`${pi}:response`) ? ' open' : ''}>` +
@@ -456,10 +523,19 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
           pi++;
         } else if (t !== undefined) {
           emitBatch(t.batchIndex);
+          const detail = toolSummary(t.tool, t.args);
           parts.push(
             `<details class="review-log-trace-item">` +
-              `<summary><code>${esc(t.tool)}</code> <span class="muted">${fmtDuration(t.durationMs)}</span></summary>` +
-              `<div class="muted">${esc(JSON.stringify(t.args))}</div>` +
+              `<summary>` +
+              `<span class="review-log-badge is-tool">${esc(t.tool)}</span>` +
+              (detail ? `<span class="review-log-trace-summary">${esc(detail)}</span>` : '') +
+              chip(fmtDuration(t.durationMs), 'is-dim') +
+              `</summary>` +
+              `<details class="review-log-args">` +
+              `<summary>Arguments</summary>` +
+              `<pre>${esc(JSON.stringify(t.args, null, 2))}</pre>` +
+              `</details>` +
+              `<span class="review-log-seg-label">Result</span>` +
               `<div class="trace-result">${esc(t.resultSummary)}</div>` +
               `</details>`,
           );
