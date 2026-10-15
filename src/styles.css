@@ -3572,6 +3572,7 @@ dialog select:focus-visible {
   display: flex;
   flex-direction: row;
   align-items: center;
+  align-self: flex-start;
   gap: 4px;
   margin: 0 !important;
   font-size: 11px !important;
