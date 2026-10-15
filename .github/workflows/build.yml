@@ -20,6 +20,7 @@ jobs:
             artifact: |
               release/*.AppImage
               release/*.deb
+              release/latest-linux.yml
           - name: windows
             os: windows-latest
             script: electron:dist:win
