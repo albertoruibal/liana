@@ -503,7 +503,9 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
     '|' +
     job.trace
       .map((t) => `${t.batchIndex}:${t.step}:${t.tool}:${JSON.stringify(t.args)}:${t.resultSummary}:${t.durationMs}`)
-      .join(',');
+      .join(',') +
+    '|' +
+    `${job.state}:${job.batchIndex}:${job.batchStep}`;
   if (timelineSig !== logTimelineSig) {
     logTimelineSig = timelineSig;
     const timeline = $('#review-log-timeline');
@@ -516,12 +518,16 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
       // The sort is stable, so a model call precedes the tool calls it produced.
       const entries: { key: number; batchIndex: number; html: string }[] = [];
       const running = job.state === 'running';
+      // The model call and its tool calls for the agent-loop step currently
+      // executing, so the timeline can mark the in-progress step.
+      const isCurrent = (batchIndex: number, step: number): boolean =>
+        running && batchIndex === job.batchIndex && step === job.batchStep;
       job.prompts.forEach((p, pi) => {
         entries.push({
           key: logKey(p.batchIndex, p.step, 0),
           batchIndex: p.batchIndex,
           html:
-            `<div class="review-log-call" data-idx="${pi}">` +
+            `<div class="review-log-call${isCurrent(p.batchIndex, p.step) ? ' is-current' : ''}" data-idx="${pi}">` +
             callHeaderHtml(p, pi, running) +
             `<details class="review-log-part" data-idx="${pi}" data-part="prompt"${logOpenParts.has(`${pi}:prompt`) ? ' open' : ''}>` +
             `<summary>Prompt</summary></details>` +
@@ -536,7 +542,7 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
           key: logKey(t.batchIndex, t.step, 1),
           batchIndex: t.batchIndex,
           html:
-            `<details class="review-log-trace-item">` +
+            `<details class="review-log-trace-item${isCurrent(t.batchIndex, t.step) ? ' is-current' : ''}">` +
             `<summary>` +
             `<span class="review-log-badge is-tool">${esc(t.tool)}</span>` +
             (detail ? `<span class="review-log-trace-summary">${esc(detail)}</span>` : '') +

@@ -3837,6 +3837,20 @@ dialog select:focus-visible {
   font-size: 12px;
 }
 
+.review-log-call.is-current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--accent-soft);
+}
+
+.review-log-call.is-current .review-log-badge {
+  animation: review-log-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes review-log-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .review-log-call-head {
   display: flex;
   flex-wrap: wrap;
@@ -3956,6 +3970,11 @@ dialog select:focus-visible {
   background: var(--bg-elev-1);
   padding: 6px 10px;
   font-size: 12px;
+}
+
+.review-log-trace-item.is-current {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px var(--accent-2);
 }
 
 .review-log-trace-item > summary {
