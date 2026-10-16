@@ -325,8 +325,13 @@ roughly half the provider's **context window** (a chars/3.5 estimate), leaving t
 tool results, and prunes old tool results and caps each tool result. When there is
 more than one batch, each batch's prompt states which one it is ("batch N of M") and that only the files listed are
 under review there, so the model does not wander into changed files handled by another batch. A batch ends **only** on
-an explicit `finish_batch` tool call; a turn that ends without one is treated as abrupt, so the agent nudges the model
-back on track (bounded) rather than silently finishing early. Per provider, **Max tokens** and **Result chars** can each
+an explicit `finish_batch` tool call; a turn that ends without one is treated as abrupt (the agent nudges the model back
+on track a bounded number of times), and a model that repeats the same tool call for several turns is treated as
+looping. Either way the batch is force-ended and the review **pauses at that batch** instead of silently moving on. The
+checkpoint is kept, so **Continue** re-enters the same conversation and, when the batch finally finishes, the review
+proceeds with the next batch. The **Model log** also offers **Resume from here** on any logged call: after a
+confirmation, the later steps of that batch are discarded and the agent re-runs the batch from that step (later batches
+are kept, and the log stays ordered by batch). Per provider, **Max tokens** and **Result chars** can each
 be set to **Unlimited**: the request then omits `max_tokens` (the server's own cap applies, with a quarter of the context
 window reserved for output) and tool results are not truncated. Streaming is requested so
 the model log fills in live, but an endpoint that ignores it still works: a plain (non-SSE) JSON response is handled.

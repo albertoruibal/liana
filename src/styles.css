@@ -3851,6 +3851,12 @@ dialog select:focus-visible {
   gap: 6px;
 }
 
+.review-log-resume-step {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 8px;
+}
+
 .review-log-badge {
   display: inline-flex;
   align-items: center;

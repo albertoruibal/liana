@@ -319,6 +319,16 @@ const logTextCache = new Map<number, string>();
 const logOpenParts = new Set<string>();
 const logLoadingSteps = new Set<number>();
 
+/** Drop the model log's per-step caches after a resume rewrites the step arrays. */
+function resetReviewLogCaches(): void {
+  logJobId = null;
+  logTimelineSig = '';
+  logStepCache.clear();
+  logTextCache.clear();
+  logOpenParts.clear();
+  logLoadingSteps.clear();
+}
+
 /** Compact duration: `820ms`, `4.2s`, `1m03s`, `3h32m02s`. */
 function fmtDuration(ms: number): string {
   if (ms <= 0) return '—';
@@ -351,7 +361,7 @@ function chip(text: string, cls = ''): string {
 }
 
 /** Structured header for a logged model call: a step badge plus metric chips. */
-function callHeaderHtml(p: ReviewPromptStep): string {
+function callHeaderHtml(p: ReviewPromptStep, idx: number, disabled: boolean): string {
   const chips: string[] = [];
   const prompt = fmtCount(p.promptTokens, p.usageEstimated);
   if (prompt !== null) chips.push(chip(`↑ ${prompt} in`));
@@ -366,6 +376,14 @@ function callHeaderHtml(p: ReviewPromptStep): string {
     `<div class="review-log-call-head">` +
     `<span class="review-log-badge">Step ${p.step}</span>` +
     `<span class="review-log-metrics">${chips.join('')}</span>` +
+    `<button type="button" class="btn review-log-resume-step" data-idx="${idx}"` +
+    (disabled ? ' disabled' : '') +
+    ` title="${
+      disabled
+        ? 'Pause the review before resuming from a step'
+        : 'Re-run this batch from this step; the later steps in the batch are discarded'
+    }">` +
+    `Resume from here</button>` +
     `</div>`
   );
 }
@@ -492,55 +510,56 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
     if (job.prompts.length === 0 && job.trace.length === 0) {
       timeline.innerHTML = '<p class="muted">Nothing logged yet.</p>';
     } else {
-      // Merge the two already-ordered arrays. Within a step the model call was
-      // recorded before the tool calls it produced, so a call sorts first.
+      // Build one list from both arrays, then sort by (batchIndex, step). A
+      // resume-from-step appends new calls at the end of the arrays while earlier
+      // batches stay put, so sorting is what keeps the timeline in batch order.
+      // The sort is stable, so a model call precedes the tool calls it produced.
+      const entries: { key: number; batchIndex: number; html: string }[] = [];
+      const running = job.state === 'running';
+      job.prompts.forEach((p, pi) => {
+        entries.push({
+          key: logKey(p.batchIndex, p.step, 0),
+          batchIndex: p.batchIndex,
+          html:
+            `<div class="review-log-call" data-idx="${pi}">` +
+            callHeaderHtml(p, pi, running) +
+            `<details class="review-log-part" data-idx="${pi}" data-part="prompt"${logOpenParts.has(`${pi}:prompt`) ? ' open' : ''}>` +
+            `<summary>Prompt</summary></details>` +
+            `<details class="review-log-part" data-idx="${pi}" data-part="response"${logOpenParts.has(`${pi}:response`) ? ' open' : ''}>` +
+            `<summary>Response</summary></details>` +
+            `</div>`,
+        });
+      });
+      job.trace.forEach((t) => {
+        const detail = toolSummary(t.tool, t.args);
+        entries.push({
+          key: logKey(t.batchIndex, t.step, 1),
+          batchIndex: t.batchIndex,
+          html:
+            `<details class="review-log-trace-item">` +
+            `<summary>` +
+            `<span class="review-log-badge is-tool">${esc(t.tool)}</span>` +
+            (detail ? `<span class="review-log-trace-summary">${esc(detail)}</span>` : '') +
+            chip(fmtDuration(t.durationMs), 'is-dim') +
+            `</summary>` +
+            `<details class="review-log-args">` +
+            `<summary>Arguments</summary>` +
+            `<pre>${esc(JSON.stringify(t.args, null, 2))}</pre>` +
+            `</details>` +
+            `<span class="review-log-seg-label">Result</span>` +
+            `<div class="trace-result">${esc(t.resultSummary)}</div>` +
+            `</details>`,
+        });
+      });
+      entries.sort((a, b) => a.key - b.key);
       const parts: string[] = [];
       let lastBatch = -1;
-      const emitBatch = (batchIndex: number): void => {
-        if (batchIndex === lastBatch) return;
-        lastBatch = batchIndex;
-        parts.push(`<div class="review-log-batch">Batch ${batchIndex}/${job.batchTotal}</div>`);
-      };
-      let pi = 0;
-      let ti = 0;
-      while (pi < job.prompts.length || ti < job.trace.length) {
-        const p = job.prompts[pi];
-        const t = job.trace[ti];
-        const takeCall =
-          t === undefined ||
-          (p !== undefined && logKey(p.batchIndex, p.step, 0) <= logKey(t.batchIndex, t.step, 1));
-        if (takeCall && p !== undefined) {
-          emitBatch(p.batchIndex);
-          parts.push(
-            `<div class="review-log-call" data-idx="${pi}">` +
-              callHeaderHtml(p) +
-              `<details class="review-log-part" data-idx="${pi}" data-part="prompt"${logOpenParts.has(`${pi}:prompt`) ? ' open' : ''}>` +
-              `<summary>Prompt</summary></details>` +
-              `<details class="review-log-part" data-idx="${pi}" data-part="response"${logOpenParts.has(`${pi}:response`) ? ' open' : ''}>` +
-              `<summary>Response</summary></details>` +
-              `</div>`,
-          );
-          pi++;
-        } else if (t !== undefined) {
-          emitBatch(t.batchIndex);
-          const detail = toolSummary(t.tool, t.args);
-          parts.push(
-            `<details class="review-log-trace-item">` +
-              `<summary>` +
-              `<span class="review-log-badge is-tool">${esc(t.tool)}</span>` +
-              (detail ? `<span class="review-log-trace-summary">${esc(detail)}</span>` : '') +
-              chip(fmtDuration(t.durationMs), 'is-dim') +
-              `</summary>` +
-              `<details class="review-log-args">` +
-              `<summary>Arguments</summary>` +
-              `<pre>${esc(JSON.stringify(t.args, null, 2))}</pre>` +
-              `</details>` +
-              `<span class="review-log-seg-label">Result</span>` +
-              `<div class="trace-result">${esc(t.resultSummary)}</div>` +
-              `</details>`,
-          );
-          ti++;
+      for (const e of entries) {
+        if (e.batchIndex !== lastBatch) {
+          lastBatch = e.batchIndex;
+          parts.push(`<div class="review-log-batch">Batch ${e.batchIndex}/${job.batchTotal}</div>`);
         }
+        parts.push(e.html);
       }
       timeline.innerHTML = parts.join('');
     }
@@ -1132,7 +1151,8 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   paintJobControls(job);
   // Paused and errored jobs are both resumable: resume re-issues the last step
   // (from the checkpoint when there is one, else the current batch from scratch).
-  $('#review-resume-job').textContent = job.state === 'error' ? 'Continue' : 'Resume';
+  const stalled = job.state === 'paused' && job.stalledBatch !== null;
+  $('#review-resume-job').textContent = job.state === 'error' || stalled ? 'Continue' : 'Resume';
   $('#review-progress-text').textContent = `Batch ${job.batchIndex}/${job.batchTotal} · Step ${job.batchStep}`;
   $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(state, job);
@@ -1143,7 +1163,10 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   } else if (job.state === 'cancelled') {
     $('#review-status').textContent = 'Review cancelled.';
   } else if (job.state === 'paused') {
-    $('#review-status').textContent = 'Review paused — resume to continue.';
+    $('#review-status').textContent = stalled
+      ? `Batch ${job.stalledBatch} ended without finish_batch (loop) — Continue to keep reviewing, ` +
+        'or open the model log and resume from an earlier step.'
+      : 'Review paused — resume to continue.';
   } else if (job.state === 'done') {
     $('#review-status').textContent = `Review complete: ${job.comments.length} comment(s).`;
   }
@@ -1383,6 +1406,54 @@ export function initReview(): void {
     },
     true,
   );
+
+  // Resume a batch from a logged step: delete the later steps of that batch and
+  // re-enter the agent there, after confirming. Later batches are kept.
+  $('#review-log-timeline').addEventListener('click', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest('.review-log-resume-step');
+    if (!(btn instanceof HTMLButtonElement)) return;
+    const state = logRenderState;
+    const job = state?.job;
+    if (!state || !job) return;
+    const index = Number(btn.dataset.idx);
+    const prompt = job.prompts[index];
+    if (!Number.isInteger(index) || !prompt) return;
+    if (job.state === 'running') {
+      $('#review-status').textContent = 'Pause the review before resuming from a step.';
+      return;
+    }
+    void (async () => {
+      const ok = await confirmDialog({
+        title: 'Resume from this step?',
+        message:
+          `The later steps of batch ${prompt.batchIndex} will be deleted and the batch ` +
+          're-run from this step. Later batches are kept.',
+        confirmLabel: 'Resume',
+        danger: true,
+      });
+      if (!ok) return;
+      const status = $('#review-status');
+      status.textContent = 'Resuming from step…';
+      try {
+        const { job: next } = await reviewApi<{ job: ReviewJob }>(state, '/review/resume-step', {
+          jobId: job.id,
+          index,
+        });
+        state.job = next;
+        window.clearTimeout(state.poll);
+        resetReviewLogCaches();
+        $<HTMLDialogElement>('#review-log-dialog').close();
+        if (isReviewShown(state)) renderJob(state, next);
+        renderTabs();
+        status.textContent = '';
+        state.poll = window.setTimeout(() => void pollJob(state), 600);
+      } catch (err) {
+        status.textContent = String(err);
+      }
+    })();
+  });
 
   $('#review-log-close').addEventListener('click', (ev) => {
     ev.preventDefault();

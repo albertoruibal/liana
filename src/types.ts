@@ -527,6 +527,12 @@ export interface ReviewJob {
   llmDurationMs: number;
   comments: ReviewComment[];
   error: string | null;
+  /**
+   * 1-based batch that ended abruptly (repeated tool-call loop or a tool-free
+   * dead-end). While set with state `paused`, Continue re-enters that batch;
+   * null otherwise.
+   */
+  stalledBatch: number | null;
 }
 
 /**

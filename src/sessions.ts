@@ -295,6 +295,10 @@ function coerceJob(v: unknown): ReviewJob | null {
         }))
       : [],
     error: optionalString(v.error),
+    stalledBatch:
+      typeof v.stalledBatch === 'number' && Number.isFinite(v.stalledBatch)
+        ? Math.max(1, Math.floor(v.stalledBatch))
+        : null,
   };
 }
 

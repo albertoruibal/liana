@@ -17,6 +17,7 @@ import {
   loadReviewSession,
   pauseReviewJob,
   resumeReview,
+  resumeReviewAtStep,
   reviewJobRepo,
   saveReviewSessionComments,
   startReview,
@@ -354,6 +355,28 @@ export function createApi(defaultRepo: string | null): Api {
         if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
         const job = resumeReview(repoPath, jobId.trim());
         if (!job) return { status: 404, body: { error: 'No paused or errored review to resume' } };
+        return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/resume-step' && method === 'POST') {
+        const { jobId, index } = JSON.parse(rawBody) as { jobId?: string; index?: number };
+        if (!jobId?.trim()) return { status: 400, body: { error: 'Missing jobId' } };
+        if (!Number.isInteger(index) || (index ?? -1) < 0) {
+          return { status: 400, body: { error: 'Missing or invalid step index' } };
+        }
+        const id = jobId.trim();
+        if (reviewJobRepo(id) !== repoPath) {
+          return { status: 404, body: { error: 'Unknown review job' } };
+        }
+        const job = resumeReviewAtStep(repoPath, id, index ?? 0);
+        if (!job) {
+          return {
+            status: 409,
+            body: {
+              error:
+                'Cannot resume from that step — the review is running, or the step log is unavailable',
+            },
+          };
+        }
         return { status: 200, body: { ok: true, job } };
       }
       if (route === '/review/sessions' && method === 'GET') {

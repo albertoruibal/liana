@@ -94,12 +94,17 @@ in the packaged app.
   fallback, writing only objects and the hidden ref.
 - The LLM harness runs **read-only repository tools** against the merge request's head SHA (never the local working
   tree). Repository tools resolve paths inside the repo only, truncate output, and never write to the working tree or
-  index. The agent loop has no step cap: it is bounded by a conservative chars/3.5 token budget, shrunk further by the
+  index. The agent loop has no fixed step cap: it is bounded by a conservative chars/3.5 token budget, shrunk further by the
   drift observed between real `usage.promptTokens` and the estimate (clamped ×2, persisted in the session) so
   `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable. A
   batch ends **only** on an explicit `finish_batch` tool call; a turn with no tool calls is treated as an abrupt ending,
-  and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, after which the batch
-  force-ends — termination stays guaranteed. A provider's `maxTokens` / `toolResultChars` of `0` means unlimited: the
+  and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, while a turn that repeats
+  the same tool call(s) for 3 consecutive turns is treated as a loop. Either way the batch force-ends rather than
+  spinning forever, and the review **pauses at that batch** (`job.stalledBatch`, checkpoint kept) instead of advancing —
+  termination stays guaranteed. Continue re-enters the batch from the checkpoint and, once it finishes, proceeds with the
+  next batch. The Model log's per-step **Resume from here** rebuilds the conversation from that call's logged request,
+  drops the later steps of that batch, and re-runs from there; later batches are kept, the log stays sorted by batch, and
+  the action is refused while running. A provider's `maxTokens` / `toolResultChars` of `0` means unlimited: the
   request omits `max_tokens` (reserving a quarter of the context window for output) and tool results are not truncated;
   the `0` sentinel must survive `parseProviders` / `saveSettings` and is exposed as an "Unlimited" checkbox in Settings.
 - Comments are produced by an **`add_comment` tool call**, not text: the model reports each issue as soon as it can

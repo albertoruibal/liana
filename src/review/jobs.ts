@@ -347,6 +347,7 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
     live.controller = new AbortController();
     live.job.state = 'running';
     live.job.error = null;
+    live.job.stalledBatch = null;
     void runReview(live).catch((err: unknown) => finishWithError(live, err));
     return leanJob(structuredClone(live.job));
   }
@@ -355,9 +356,107 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
   const rec = recordFromStored(s);
   rec.job.state = 'running';
   rec.job.error = null;
+  rec.job.stalledBatch = null;
   jobs.set(id, rec);
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
   return leanJob(structuredClone(rec.job));
+}
+
+/**
+ * Resume a review from the logged model call at prompt `index`. The conversation
+ * is rebuilt from that call's recorded request, so the agent re-issues that step.
+ * The later steps of the SAME batch are dropped (they will be regenerated); the
+ * later batches are kept and the run continues through them, so it picks up at
+ * the next batch after this one. Refuses while the job is running. Returns null
+ * when the session, the step, or its recorded conversation is unavailable.
+ */
+export function resumeReviewAtStep(repoPath: string, id: string, index: number): ReviewJob | null {
+  const live = jobs.get(id);
+  let rec: JobRecord;
+  if (live && live.repoPath === repoPath) {
+    rec = live;
+  } else {
+    const s = readSession(id);
+    if (!s || s.repoPath !== repoPath) return null;
+    rec = recordFromStored(s);
+    jobs.set(id, rec);
+  }
+  if (rec.job.state === 'running') return null;
+  const prompt = rec.job.prompts[index];
+  if (!prompt) return null;
+  const messages = messagesFromPrompt(prompt.text);
+  if (!messages) return null;
+  // Re-issuing this step makes the later steps of this batch obsolete: drop them
+  // so the model log stays ordered and does not double up. Later batches remain.
+  const batch = prompt.batchIndex;
+  const step = prompt.step;
+  rec.job.prompts = rec.job.prompts.filter((p) => !(p.batchIndex === batch && p.step > step));
+  rec.job.trace = rec.job.trace.filter((t) => !(t.batchIndex === batch && t.step > step));
+  rec.checkpoint = { batchIndex: Math.max(0, batch - 1), messages, step };
+  rec.cancelled = false;
+  rec.paused = false;
+  rec.controller = new AbortController();
+  rec.job.state = 'running';
+  rec.job.error = null;
+  rec.job.stalledBatch = null;
+  rec.job.batchIndex = batch;
+  rec.job.batchStep = step;
+  persist(rec);
+  void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
+  return leanJob(structuredClone(rec.job));
+}
+
+function isRecordForLog(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Parse a tool call's serialized arguments, tolerating anything malformed. */
+function parseArgs(v: unknown): Record<string, unknown> {
+  if (typeof v !== 'string') return {};
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    return isRecordForLog(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Rebuild the agent conversation from a logged prompt's serialized request. The
+ * log stores the exact wire messages (`toWire`), so this inverts that shape to
+ * reissue the call. Returns null when the text is absent or not the expected
+ * shape, so a resume-from-step fails cleanly instead of sending a broken prompt.
+ */
+function messagesFromPrompt(text: string): ChatMessage[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecordForLog(parsed) || !Array.isArray(parsed.messages)) return null;
+  const out: ChatMessage[] = [];
+  for (const raw of parsed.messages) {
+    if (!isRecordForLog(raw)) return null;
+    const role = raw.role;
+    if (role !== 'system' && role !== 'user' && role !== 'assistant' && role !== 'tool') return null;
+    const msg: ChatMessage = { role, content: typeof raw.content === 'string' ? raw.content : '' };
+    if (role === 'tool') {
+      if (typeof raw.tool_call_id === 'string') msg.toolCallId = raw.tool_call_id;
+    } else if (role === 'assistant' && Array.isArray(raw.tool_calls)) {
+      msg.toolCalls = raw.tool_calls.map((c) => {
+        const call = isRecordForLog(c) ? c : {};
+        const fn = isRecordForLog(call.function) ? call.function : {};
+        return {
+          id: typeof call.id === 'string' ? call.id : '',
+          name: typeof fn.name === 'string' ? fn.name : '',
+          args: parseArgs(fn.arguments),
+        };
+      });
+    }
+    out.push(msg);
+  }
+  return out;
 }
 
 function finishWithError(rec: JobRecord, err: unknown): void {
@@ -398,6 +497,7 @@ function newJobRecord(repoPath: string, sessionId: string): JobRecord {
       llmDurationMs: 0,
       comments: [],
       error: null,
+      stalledBatch: null,
     },
   };
   jobs.set(sessionId, rec);
@@ -497,6 +597,13 @@ const MAX_TOKEN_DRIFT = 2;
 /** Corrective user nudges per batch before a tool-free turn force-ends the batch. */
 const MAX_NUDGES = 2;
 
+/**
+ * Consecutive turns whose tool calls are identical (same names and arguments)
+ * before the batch is treated as a loop and force-ended. Small local models can
+ * spin on the same call forever; the per-call hint alone never stops them.
+ */
+const MAX_REPEAT_ROUNDS = 3;
+
 /** Word-3-gram overlap above which two assistant turns count as repetition. */
 const REPEAT_OVERLAP = 0.6;
 
@@ -541,9 +648,19 @@ async function runReview(rec: JobRecord): Promise<void> {
     rec.job.batchIndex = i + 1;
     rec.job.batchStep = 0;
 
-    const batchComments = await runBatch(rec, provider, indices);
+    const outcome = await runBatch(rec, provider, indices);
+    // A batch that loops or dead-ends without finish_batch pauses the review at
+    // this batch and keeps its checkpoint, so the user can continue it. Comments
+    // collected so far are already live. The next batch is what the cursor holds.
+    if (outcome.endedAbruptly) {
+      rec.job.state = 'paused';
+      rec.job.stalledBatch = rec.job.batchIndex;
+      rec.job.error = null;
+      persist(rec);
+      return;
+    }
     rec.checkpoint = null;
-    syncComments(rec, batchComments, 'parsed');
+    syncComments(rec, outcome.comments, 'parsed');
     persist(rec);
     if (rec.rule.maxComments > 0 && rec.job.comments.length >= rec.rule.maxComments) break;
   }
@@ -610,11 +727,17 @@ function recordUsage(
   }
 }
 
+/** How a batch ended: its comments, plus whether it was force-ended (loop/dead-end). */
+interface BatchResult {
+  comments: ReviewComment[];
+  endedAbruptly: boolean;
+}
+
 async function runBatch(
   rec: JobRecord,
   provider: StoredProvider,
   indices: number[],
-): Promise<ReviewComment[]> {
+): Promise<BatchResult> {
   const changes = rec.changes;
   const rule = rec.rule;
   const batch = indices.map((i) => changes.files[i]).filter((f): f is ReviewFile => f !== undefined);
@@ -661,9 +784,13 @@ async function runBatch(
   let lastAssistantText = '';
   let lastCalls: ToolCall[] = [];
   let nudges = 0;
+  // Loop detection: the previous turn's tool-call signature and how many
+  // consecutive turns repeated it.
+  let lastRoundSig: string | null = null;
+  let repeatRounds = 0;
 
   for (;;) {
-    if (rec.cancelled || rec.paused) return [];
+    if (rec.cancelled || rec.paused) return { comments: batchComments, endedAbruptly: false };
     step++;
     rec.job.batchStep = step;
     pruneMessages(messages, effectiveBudget(rec));
@@ -728,7 +855,7 @@ async function runBatch(
     // tool-free turn is an abrupt ending — nudge the model to keep reviewing or
     // to call finish_batch, bounded by MAX_NUDGES so the batch still terminates.
     if (parsed.toolCalls.length === 0) {
-      if (nudges >= MAX_NUDGES) return batchComments;
+      if (nudges >= MAX_NUDGES) return { comments: batchComments, endedAbruptly: true };
       nudges++;
       const repeated = looksRepeated(parsed.content, lastAssistantText);
       messages.push({ role: 'assistant', content: parsed.content });
@@ -744,7 +871,7 @@ async function runBatch(
     if (parsed.content.length > 0) lastAssistantText = parsed.content;
     let finished = false;
     for (const call of parsed.toolCalls) {
-      if (rec.cancelled || rec.paused) return [];
+      if (rec.cancelled || rec.paused) return { comments: batchComments, endedAbruptly: false };
       const started = Date.now();
       let output: string;
       if (call.name === 'finish_batch') {
@@ -782,7 +909,13 @@ async function runBatch(
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
-    if (finished) return batchComments;
+    if (finished) return { comments: batchComments, endedAbruptly: false };
+    // A model that repeats the same tool call(s) turn after turn is looping:
+    // force-end the batch so it pauses and can be resumed from an earlier step.
+    const sig = roundSignature(parsed.toolCalls);
+    repeatRounds = sig === lastRoundSig ? repeatRounds + 1 : 0;
+    lastRoundSig = sig;
+    if (repeatRounds >= MAX_REPEAT_ROUNDS) return { comments: batchComments, endedAbruptly: true };
     lastCalls = parsed.toolCalls;
   }
 }
@@ -848,6 +981,14 @@ function looksRepeated(current: string, previous: string): boolean {
   let hit = 0;
   for (const g of a) if (b.has(g)) hit++;
   return hit / Math.min(a.size, b.size) > REPEAT_OVERLAP;
+}
+
+/** An order-independent signature of a turn's tool calls (name + arguments). */
+function roundSignature(calls: ToolCall[]): string {
+  return calls
+    .map((c) => `${c.name}\u0000${JSON.stringify(c.args)}`)
+    .sort()
+    .join('\u0001');
 }
 
 /**

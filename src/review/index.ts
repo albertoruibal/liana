@@ -32,6 +32,7 @@ export {
   cancelReviewJob,
   pauseReviewJob,
   resumeReview,
+  resumeReviewAtStep,
   startReview,
   type StartReviewOptions,
 } from './jobs';
