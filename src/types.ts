@@ -505,6 +505,8 @@ export interface ReviewPromptStep {
   completionTokens: number | null;
   /** True when the token counts are the chars/3.5 estimate rather than real usage. */
   usageEstimated: boolean;
+  /** Corrective nudges applied in this batch before this call was sent. */
+  nudges: number;
   /** Streamed response, interleaved by arrival order. */
   segments: ReviewOutputSegment[];
 }

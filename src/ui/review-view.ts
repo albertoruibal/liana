@@ -317,6 +317,7 @@ const logStepCache = new Map<number, ReviewPromptStep>();
 /** Immutable prompt text, fetched once even for the in-flight call. */
 const logTextCache = new Map<number, string>();
 const logOpenParts = new Set<string>();
+const logOpenBatches = new Set<number>();
 const logLoadingSteps = new Set<number>();
 
 /** Drop the model log's per-step caches after a resume rewrites the step arrays. */
@@ -326,6 +327,7 @@ function resetReviewLogCaches(): void {
   logStepCache.clear();
   logTextCache.clear();
   logOpenParts.clear();
+  logOpenBatches.clear();
   logLoadingSteps.clear();
 }
 
@@ -488,6 +490,7 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
     logStepCache.clear();
     logTextCache.clear();
     logOpenParts.clear();
+    logOpenBatches.clear();
     logLoadingSteps.clear();
   }
   logRenderState = state;
@@ -498,7 +501,7 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
   // auto-opens: a call's Prompt and Response are expanded independently.
   const timelineSig =
     job.prompts
-      .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}`)
+      .map((p) => `${p.batchIndex}:${p.step}:${p.chars}:${p.durationMs}:${p.promptTokens}:${p.completionTokens}:${p.usageEstimated ? 1 : 0}:${p.nudges}`)
       .join(',') +
     '|' +
     job.trace
@@ -558,14 +561,48 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
         });
       });
       entries.sort((a, b) => a.key - b.key);
-      const parts: string[] = [];
-      let lastBatch = -1;
+      // Per-batch summary metrics: model-call steps, tool calls, model-call time,
+      // and the batch's current nudge count (max across its calls).
+      const batchSteps = new Map<number, number>();
+      const batchTools = new Map<number, number>();
+      const batchTime = new Map<number, number>();
+      const batchNudges = new Map<number, number>();
+      for (const p of job.prompts) {
+        batchSteps.set(p.batchIndex, (batchSteps.get(p.batchIndex) ?? 0) + 1);
+        batchTime.set(p.batchIndex, (batchTime.get(p.batchIndex) ?? 0) + p.durationMs);
+        batchNudges.set(p.batchIndex, Math.max(batchNudges.get(p.batchIndex) ?? 0, p.nudges));
+      }
+      for (const t of job.trace) {
+        batchTools.set(t.batchIndex, (batchTools.get(t.batchIndex) ?? 0) + 1);
+      }
+      const byBatch = new Map<number, string[]>();
       for (const e of entries) {
-        if (e.batchIndex !== lastBatch) {
-          lastBatch = e.batchIndex;
-          parts.push(`<div class="review-log-batch">Batch ${e.batchIndex}/${job.batchTotal}</div>`);
-        }
-        parts.push(e.html);
+        const list = byBatch.get(e.batchIndex);
+        if (list) list.push(e.html);
+        else byBatch.set(e.batchIndex, [e.html]);
+      }
+      // One collapsible group per batch, collapsed by default; expanding it
+      // reveals the step detail. The group's state is remembered across rebuilds.
+      const parts: string[] = [];
+      for (const batch of [...byBatch.keys()].sort((a, b) => a - b)) {
+        const chips: string[] = [];
+        const steps = batchSteps.get(batch) ?? 0;
+        chips.push(chip(`${steps} step${steps === 1 ? '' : 's'}`));
+        const tools = batchTools.get(batch) ?? 0;
+        if (tools > 0) chips.push(chip(`${tools} tool call${tools === 1 ? '' : 's'}`));
+        const time = fmtDuration(batchTime.get(batch) ?? 0);
+        if (time !== '—') chips.push(chip(time));
+        const nudges = batchNudges.get(batch) ?? 0;
+        if (nudges > 0) chips.push(chip(`${nudges} nudge${nudges === 1 ? '' : 's'}`, 'is-warn'));
+        parts.push(
+          `<details class="review-log-batch-group" data-batch="${batch}"${logOpenBatches.has(batch) ? ' open' : ''}>` +
+            `<summary class="review-log-batch-head">` +
+            `<span class="review-log-batch">Batch ${batch}/${job.batchTotal}</span>` +
+            `<span class="review-log-metrics">${chips.join('')}</span>` +
+            `</summary>` +
+            `<div class="review-log-batch-body">${(byBatch.get(batch) ?? []).join('')}</div>` +
+            `</details>`,
+        );
       }
       timeline.innerHTML = parts.join('');
     }
@@ -1396,6 +1433,13 @@ export function initReview(): void {
     (ev) => {
       const target = ev.target;
       if (!(target instanceof HTMLDetailsElement)) return;
+      if (target.classList.contains('review-log-batch-group')) {
+        const batch = Number(target.dataset.batch);
+        if (!Number.isInteger(batch)) return;
+        if (target.open) logOpenBatches.add(batch);
+        else logOpenBatches.delete(batch);
+        return;
+      }
       if (!target.classList.contains('review-log-part')) return;
       const index = Number(target.dataset.idx);
       const part = target.dataset.part;

@@ -727,7 +727,12 @@ async function runReview(rec: JobRecord): Promise<void> {
  * The full text (and response) is kept in memory and persisted to disk; the
  * renderer gets a lean copy and loads each step on demand.
  */
-function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): ReviewPromptStep {
+function recordPrompt(
+  rec: JobRecord,
+  step: number,
+  request: ChatRequest,
+  nudges: number,
+): ReviewPromptStep {
   const { messages, ...rest } = request;
   const text = JSON.stringify({ ...rest, messages }, null, 2);
   const entry: ReviewPromptStep = {
@@ -740,6 +745,7 @@ function recordPrompt(rec: JobRecord, step: number, request: ChatRequest): Revie
     promptTokens: null,
     completionTokens: null,
     usageEstimated: false,
+    nudges,
     segments: [],
   };
   rec.job.prompts.push(entry);
@@ -866,7 +872,7 @@ async function runBatch(
       tools: nativeTools(),
       tool_choice: 'auto',
     };
-    const promptEntry = recordPrompt(rec, step, request);
+    const promptEntry = recordPrompt(rec, step, request, nudges);
     // Record the streamed response as ordered segments so content and reasoning
     // stay interleaved; the full response is kept untruncated.
     const appendSeg = (kind: 'content' | 'reasoning', text: string): void => {
