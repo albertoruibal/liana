@@ -335,9 +335,10 @@ export function pauseReviewJob(id: string): boolean {
 /**
  * Resume a paused or errored job. A live record continues from its checkpoint;
  * a record only on disk (server restart) is rebuilt and re-entered from the last
- * persisted checkpoint. An errored job may carry no checkpoint — it then
- * re-runs its current batch from scratch, keeping comments already collected.
- * Returns null when the session is gone or not resumable.
+ * persisted checkpoint. A job with no usable checkpoint resumes its current
+ * batch at its last logged step, keeping comments already collected. A batch
+ * advances the run only after `finish_batch`, so an errored batch is retried
+ * here rather than skipped. Returns null when the session is gone or not resumable.
  */
 export function resumeReview(repoPath: string, id: string): ReviewJob | null {
   const live = jobs.get(id);
@@ -366,9 +367,10 @@ export function resumeReview(repoPath: string, id: string): ReviewJob | null {
  * Resume a review from the logged model call at prompt `index`. The conversation
  * is rebuilt from that call's recorded request, so the agent re-issues that step.
  * The later steps of the SAME batch are dropped (they will be regenerated); the
- * later batches are kept and the run continues through them, so it picks up at
- * the next batch after this one. Refuses while the job is running. Returns null
- * when the session, the step, or its recorded conversation is unavailable.
+ * later batches are kept and, as the run reaches each one, it continues at that
+ * batch's last logged step (or skips it when it already called `finish_batch`).
+ * Refuses while the job is running. Returns null when the session, the step, or
+ * its recorded conversation is unavailable.
  */
 export function resumeReviewAtStep(repoPath: string, id: string, index: number): ReviewJob | null {
   const live = jobs.get(id);
@@ -457,6 +459,34 @@ function messagesFromPrompt(text: string): ChatMessage[] | null {
     out.push(msg);
   }
   return out;
+}
+
+/**
+ * Whether a batch already ended by calling `finish_batch` in an earlier pass.
+ * A later batch kept after a resume-from-step is skipped only when it truly
+ * finished; one that ended in error or was left unfinished is resumed instead.
+ */
+function batchHasFinished(rec: JobRecord, batchIndex: number): boolean {
+  return rec.job.trace.some((t) => t.batchIndex === batchIndex && t.tool === 'finish_batch');
+}
+
+/**
+ * Rebuild a batch's checkpoint from its last logged model call, so a batch that
+ * already ran (kept after a resume-from-step in an earlier batch) continues at
+ * its last processed step instead of starting over. `batchIndex` is 1-based, as
+ * used by `job.batchIndex`; returns null when the batch has no logged call or
+ * its request cannot be rebuilt.
+ */
+function checkpointFromLoggedBatch(rec: JobRecord, batchIndex: number): BatchCheckpoint | null {
+  let last: ReviewPromptStep | null = null;
+  for (const p of rec.job.prompts) {
+    if (p.batchIndex !== batchIndex) continue;
+    if (!last || p.step > last.step) last = p;
+  }
+  if (!last) return null;
+  const messages = messagesFromPrompt(last.text);
+  if (!messages) return null;
+  return { batchIndex: batchIndex - 1, messages, step: last.step };
 }
 
 function finishWithError(rec: JobRecord, err: unknown): void {
@@ -647,12 +677,34 @@ async function runReview(rec: JobRecord): Promise<void> {
     const indices = rec.batches[i] ?? [];
     rec.job.batchIndex = i + 1;
     rec.job.batchStep = 0;
+    // A later batch kept from an earlier pass (a resume-from-step in an earlier
+    // batch) is continued at its last logged step instead of restarted. A batch
+    // that already called finish_batch is skipped: its work is done.
+    if (rec.checkpoint?.batchIndex !== i) {
+      if (batchHasFinished(rec, i + 1)) {
+        rec.checkpoint = null;
+        persist(rec);
+        continue;
+      }
+      const cp = checkpointFromLoggedBatch(rec, i + 1);
+      // Re-issuing the last logged step makes its old entry obsolete, so drop it:
+      // the re-run replaces it and the log stays clean.
+      if (cp) {
+        rec.job.prompts = rec.job.prompts.filter(
+          (p) => !(p.batchIndex === i + 1 && p.step >= cp.step),
+        );
+        rec.job.trace = rec.job.trace.filter((t) => !(t.batchIndex === i + 1 && t.step >= cp.step));
+      }
+      rec.checkpoint = cp;
+    }
 
     const outcome = await runBatch(rec, provider, indices);
-    // A batch that loops or dead-ends without finish_batch pauses the review at
-    // this batch and keeps its checkpoint, so the user can continue it. Comments
-    // collected so far are already live. The next batch is what the cursor holds.
-    if (outcome.endedAbruptly) {
+    // A batch advances the run only when it explicitly called finish_batch.
+    // Anything else — an abrupt end/loop, or a pause/cancel mid-batch — stops
+    // here and keeps the checkpoint, so the next batch is never started. A
+    // thrown error unwinds to `finishWithError`, which also stops the run.
+    if (rec.cancelled || rec.paused) return;
+    if (!outcome.finished) {
       rec.job.state = 'paused';
       rec.job.stalledBatch = rec.job.batchIndex;
       rec.job.error = null;
@@ -727,10 +779,10 @@ function recordUsage(
   }
 }
 
-/** How a batch ended: its comments, plus whether it was force-ended (loop/dead-end). */
+/** How a batch ended: its comments, plus whether it explicitly called `finish_batch`. */
 interface BatchResult {
   comments: ReviewComment[];
-  endedAbruptly: boolean;
+  finished: boolean;
 }
 
 async function runBatch(
@@ -790,7 +842,7 @@ async function runBatch(
   let repeatRounds = 0;
 
   for (;;) {
-    if (rec.cancelled || rec.paused) return { comments: batchComments, endedAbruptly: false };
+    if (rec.cancelled || rec.paused) return { comments: batchComments, finished: false };
     step++;
     rec.job.batchStep = step;
     pruneMessages(messages, effectiveBudget(rec));
@@ -855,7 +907,7 @@ async function runBatch(
     // tool-free turn is an abrupt ending — nudge the model to keep reviewing or
     // to call finish_batch, bounded by MAX_NUDGES so the batch still terminates.
     if (parsed.toolCalls.length === 0) {
-      if (nudges >= MAX_NUDGES) return { comments: batchComments, endedAbruptly: true };
+      if (nudges >= MAX_NUDGES) return { comments: batchComments, finished: false };
       nudges++;
       const repeated = looksRepeated(parsed.content, lastAssistantText);
       messages.push({ role: 'assistant', content: parsed.content });
@@ -871,7 +923,7 @@ async function runBatch(
     if (parsed.content.length > 0) lastAssistantText = parsed.content;
     let finished = false;
     for (const call of parsed.toolCalls) {
-      if (rec.cancelled || rec.paused) return { comments: batchComments, endedAbruptly: false };
+      if (rec.cancelled || rec.paused) return { comments: batchComments, finished: false };
       const started = Date.now();
       let output: string;
       if (call.name === 'finish_batch') {
@@ -909,13 +961,13 @@ async function runBatch(
       rec.job.trace.push(trace);
       messages.push({ role: 'tool', content: output, toolCallId: call.id });
     }
-    if (finished) return { comments: batchComments, endedAbruptly: false };
+    if (finished) return { comments: batchComments, finished: true };
     // A model that repeats the same tool call(s) turn after turn is looping:
     // force-end the batch so it pauses and can be resumed from an earlier step.
     const sig = roundSignature(parsed.toolCalls);
     repeatRounds = sig === lastRoundSig ? repeatRounds + 1 : 0;
     lastRoundSig = sig;
-    if (repeatRounds >= MAX_REPEAT_ROUNDS) return { comments: batchComments, endedAbruptly: true };
+    if (repeatRounds >= MAX_REPEAT_ROUNDS) return { comments: batchComments, finished: false };
     lastCalls = parsed.toolCalls;
   }
 }

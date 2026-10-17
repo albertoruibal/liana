@@ -1435,7 +1435,7 @@ export function initReview(): void {
         title: 'Resume from this step?',
         message:
           `The later steps of batch ${prompt.batchIndex} will be deleted and the batch ` +
-          're-run from this step. Later batches are kept.',
+          're-run from this step. Later batches are kept and resume at their last step.',
         confirmLabel: 'Resume',
         danger: true,
       });

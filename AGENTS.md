@@ -101,10 +101,12 @@ in the packaged app.
   and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, while a turn that repeats
   the same tool call(s) for 3 consecutive turns is treated as a loop. Either way the batch force-ends rather than
   spinning forever, and the review **pauses at that batch** (`job.stalledBatch`, checkpoint kept) instead of advancing —
-  termination stays guaranteed. Continue re-enters the batch from the checkpoint and, once it finishes, proceeds with the
-  next batch. The Model log's per-step **Resume from here** rebuilds the conversation from that call's logged request,
-  drops the later steps of that batch, and re-runs from there; later batches are kept, the log stays sorted by batch, and
-  the action is refused while running. A provider's `maxTokens` / `toolResultChars` of `0` means unlimited: the
+  termination stays guaranteed. A batch advances the run **only** after an explicit `finish_batch`; an error or an
+  abrupt/loop end stops the run at that batch and never starts the next one. Continue re-enters the batch from the
+  checkpoint and, once it finishes, proceeds with the next batch. The Model log's per-step **Resume from here** rebuilds
+  the conversation from that call's logged request, drops the later steps of that batch, and re-runs from there; later
+  batches are kept and, as the run reaches each one, it continues at that batch's last logged step (skipped when it
+  already called `finish_batch`), the log stays sorted by batch, and the action is refused while running. A provider's `maxTokens` / `toolResultChars` of `0` means unlimited: the
   request omits `max_tokens` (reserving a quarter of the context window for output) and tool results are not truncated;
   the `0` sentinel must survive `parseProviders` / `saveSettings` and is exposed as an "Unlimited" checkbox in Settings.
 - Comments are produced by an **`add_comment` tool call**, not text: the model reports each issue as soon as it can
