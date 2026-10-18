@@ -561,11 +561,14 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
       });
       entries.sort((a, b) => a.key - b.key);
       // Per-batch summary metrics: model-call steps, tool calls, model-call time,
-      // and the batch's current nudge count (max across its calls).
+      // the batch's current nudge count (max across its calls), and the issues it
+      // produced. Accepted comments are counted from the trace: a rejection or the
+      // comment cap returns a different result summary, so those calls are excluded.
       const batchSteps = new Map<number, number>();
       const batchTools = new Map<number, number>();
       const batchTime = new Map<number, number>();
       const batchNudges = new Map<number, number>();
+      const batchComments = new Map<number, number>();
       for (const p of job.prompts) {
         batchSteps.set(p.batchIndex, (batchSteps.get(p.batchIndex) ?? 0) + 1);
         batchTime.set(p.batchIndex, (batchTime.get(p.batchIndex) ?? 0) + p.durationMs);
@@ -573,6 +576,9 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
       }
       for (const t of job.trace) {
         batchTools.set(t.batchIndex, (batchTools.get(t.batchIndex) ?? 0) + 1);
+        if (t.tool === 'add_comment' && t.resultSummary.startsWith('comment added')) {
+          batchComments.set(t.batchIndex, (batchComments.get(t.batchIndex) ?? 0) + 1);
+        }
       }
       const byBatch = new Map<number, string[]>();
       for (const e of entries) {
@@ -591,6 +597,8 @@ export function renderReviewLog(state: ReviewTabState, job: ReviewJob): void {
         if (tools > 0) chips.push(chip(`${tools} tool call${tools === 1 ? '' : 's'}`));
         const time = fmtDuration(batchTime.get(batch) ?? 0);
         if (time !== '—') chips.push(chip(time));
+        const issues = batchComments.get(batch) ?? 0;
+        if (issues > 0) chips.push(chip(`${issues} issue${issues === 1 ? '' : 's'}`));
         const nudges = batchNudges.get(batch) ?? 0;
         if (nudges > 0) chips.push(chip(`${nudges} nudge${nudges === 1 ? '' : 's'}`, 'is-warn'));
         parts.push(
