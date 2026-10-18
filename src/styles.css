@@ -3679,12 +3679,29 @@ dialog select:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--bg-elev-2);
   border: 1px solid var(--border-soft);
   margin-bottom: 12px;
   font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-progress:hover {
+  border-color: var(--border-strong);
+}
+
+.review-progress:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.review-progress[aria-busy='false'] .sync-spinner {
+  visibility: hidden;
 }
 
 .review-warning {

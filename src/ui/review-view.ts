@@ -286,7 +286,6 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     $('#review-queue-wrap').hidden = true;
     paintJobControls(null);
     $('#review-approve-mr').hidden = false;
-    $<HTMLButtonElement>('#review-show-log').disabled = true;
     // A failed head fetch silently degrades the AI review to diff-only, so keep
     // it visible: the warning offers to check out the request branch instead.
     state.headWarning = fetchResult?.error
@@ -1187,7 +1186,9 @@ function paintJobControls(job: ReviewJob | null): void {
   $('#review-pause-job').hidden = state !== 'running';
   $('#review-resume-job').hidden = state !== 'paused' && state !== 'error';
   $('#review-cancel-job').hidden = state !== 'running' && state !== 'paused';
-  $('#review-progress').hidden = state !== 'running';
+  const progress = $<HTMLButtonElement>('#review-progress');
+  progress.hidden = state === null;
+  progress.setAttribute('aria-busy', state === 'running' ? 'true' : 'false');
 }
 
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
@@ -1197,7 +1198,6 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
   const stalled = job.state === 'paused' && job.stalledBatch !== null;
   $('#review-resume-job').textContent = job.state === 'error' || stalled ? 'Continue' : 'Resume';
   $('#review-progress-text').textContent = `Batch ${job.batchIndex}/${job.batchTotal} · Step ${job.batchStep}`;
-  $<HTMLButtonElement>('#review-show-log').disabled = false;
   if ($<HTMLDialogElement>('#review-log-dialog').open) renderReviewLog(state, job);
   if (job.comments.length > 0) renderCommentQueue(state);
   paintReviewWarning(state);
@@ -1357,7 +1357,6 @@ export function resetReviewDom(): void {
   paintJobControls(null);
   $('#review-approve-mr').hidden = true;
   $('#review-warning').hidden = true;
-  $<HTMLButtonElement>('#review-show-log').disabled = true;
 }
 
 /** Repaint the review view from a tab's stored state when it becomes visible. */
@@ -1370,7 +1369,6 @@ export function paintReview(state: ReviewTabState): void {
   $('#review-queue-wrap').hidden = true;
   paintJobControls(state.job);
   $('#review-status').textContent = '';
-  $<HTMLButtonElement>('#review-show-log').disabled = state.job === null;
   paintReviewWarning(state);
   if (state.job) renderJob(state, state.job);
 }
@@ -1419,7 +1417,9 @@ export function initReview(): void {
 
   $('#review-checkout-mr').addEventListener('click', () => void checkoutMrBranch());
 
-  $('#review-show-log').addEventListener('click', () => {
+  // The batch/step progress line is the model-log trigger: clicking it (or
+  // pressing Enter/Space on it) opens the log for the current job.
+  $('#review-progress').addEventListener('click', () => {
     const state = activeReview();
     if (!state?.job) return;
     renderReviewLog(state, state.job);
@@ -1536,7 +1536,6 @@ export function initReview(): void {
         refreshSessionSelect(state);
         $('#review-queue-wrap').hidden = true;
         paintJobControls(null);
-        $<HTMLButtonElement>('#review-show-log').disabled = true;
         $('#review-status').textContent = 'Saved review deleted.';
         renderTabs();
         void loadReviewSessions(state);

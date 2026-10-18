@@ -283,7 +283,8 @@ review comments. Selecting a request fetches its head commit into the repository
 falling back to fetching the head SHA — so the read-only tools can read it; this writes only objects and the hidden
 `refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree. The tab polls
 the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
-and each proposed comment lands in the list as it arrives. The **Model log** dialog shows a single timeline that
+and each proposed comment lands in the list as it arrives. Clicking the job's **Batch N/M · Step X** progress line (shown
+whenever a review job exists, running or not) opens the **Model log** dialog, a single timeline that
 interleaves every model call with the tool calls it made, and loads
 each step's exact wire prompt and full response on demand (the tool calls expand too). Each logged call shows its wall-clock
 time, token counts, and tokens/second — taken from the endpoint's `usage` when it reports it (`stream_options`
@@ -330,8 +331,8 @@ on track a bounded number of times), and a model that repeats the same tool call
 looping. Either way the batch is force-ended and the review **pauses at that batch** instead of silently moving on. The
 checkpoint is kept, so **Continue** re-enters the same conversation and, when the batch finally finishes, the review
 proceeds with the next batch. A batch advances the run only after `finish_batch`: an error or an abrupt/loop end stops
-the run at that batch and never starts the next one. The **Model log** also offers **Resume from here** on any logged
-call: after a confirmation, the later steps of that batch are discarded and the agent re-runs the batch from that step
+the run at that batch and never starts the next one. The **Model log** (opened from the batch/step progress line) also
+offers **Resume from here** on any logged call: after a confirmation, the later steps of that batch are discarded and the agent re-runs the batch from that step
 (later batches are kept and, as the run reaches each one, it continues at that batch's last logged step — skipped when it
 already finished — and the log stays ordered by batch). Per provider, **Max tokens** and **Result chars** can each
 be set to **Unlimited**: the request then omits `max_tokens` (the server's own cap applies, with a quarter of the context
