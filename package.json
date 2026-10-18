@@ -24,20 +24,20 @@
     "electron:dist:mac": "npm run electron:build && electron-builder --mac --publish never"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
-    "lit": "^3.3.1",
-    "monaco-editor": "^0.52.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lit": "^3.3.3",
+    "monaco-editor": "^0.57.0",
     "node-pty": "^1.1.0",
-    "undici": "^7.30.0"
+    "undici": "^8.12.2"
   },
   "devDependencies": {
-    "@types/node": "^24.6.2",
-    "electron": "^44.4.5",
+    "@types/node": "^26.6.5",
+    "electron": "^44.9.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
-    "typescript": "~5.9.3",
-    "vite": "^7.1.11"
+    "typescript": "~7.0.2",
+    "vite": "^8.3.4"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
