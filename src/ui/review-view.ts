@@ -964,6 +964,21 @@ function commentMetaSig(c: ReviewComment): string {
   return [c.status, c.body].join('\u0000');
 }
 
+/**
+ * Grow a comment body to fit its full text. Resetting `height` first lets the
+ * textarea fall back to its intrinsic `rows="3"` height, so short comments keep
+ * their original size while long ones expand instead of scrolling internally.
+ */
+function autosizeCommentBody(ta: HTMLTextAreaElement): void {
+  if (!ta.isConnected || ta.offsetParent === null) return;
+  ta.style.height = 'auto';
+  ta.style.height = `${ta.scrollHeight + ta.offsetHeight - ta.clientHeight}px`;
+}
+
+function autosizeCommentBodies(root: ParentNode): void {
+  for (const ta of root.querySelectorAll<HTMLTextAreaElement>('.review-comment-body')) autosizeCommentBody(ta);
+}
+
 /** Build a fresh comment card (with the HTML excerpt fallback) and wire it up. */
 function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement {
   const line = commentLineLabel(c);
@@ -988,12 +1003,14 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
   const card = template.content.firstElementChild as HTMLElement;
   const ta = card.querySelector<HTMLTextAreaElement>('.review-comment-body');
   ta?.addEventListener('input', () => {
+    if (!ta) return;
     const id = ta.dataset.id ?? '';
     const target = state.job?.comments.find((x) => x.id === id);
     if (target) target.body = ta.value;
     const edit = state.edits.get(id) ?? { body: '', status: 'pending' as ReviewCommentStatus };
     edit.body = ta.value;
     state.edits.set(id, edit);
+    autosizeCommentBody(ta);
     window.clearTimeout(state.saveTimer);
     state.saveTimer = window.setTimeout(() => void persistSessionEdits(state), 800);
   });
@@ -1018,7 +1035,10 @@ function updateCommentCard(card: HTMLElement, c: ReviewComment): void {
     badge.textContent = c.status;
   }
   const ta = card.querySelector<HTMLTextAreaElement>('.review-comment-body');
-  if (ta && document.activeElement !== ta && ta.value !== c.body) ta.value = c.body;
+  if (ta && document.activeElement !== ta && ta.value !== c.body) {
+    ta.value = c.body;
+    autosizeCommentBody(ta);
+  }
 }
 
 /**
@@ -1054,6 +1074,8 @@ function reconcileCommentList(state: ReviewTabState, list: HTMLElement, visible:
       if (card) card.replaceWith(fresh);
       else list.appendChild(fresh);
       card = fresh;
+      const ta = fresh.querySelector<HTMLTextAreaElement>('.review-comment-body');
+      if (ta) autosizeCommentBody(ta);
     }
     current.delete(c.id);
     ordered.push(card);
@@ -1379,6 +1401,7 @@ export function paintReview(state: ReviewTabState): void {
   $('#review-status').textContent = '';
   paintReviewWarning(state);
   if (state.job) renderJob(state, state.job);
+  autosizeCommentBodies($('#review-view'));
 }
 
 /** Close a repository's review tab and, if it was visible, fall back to the graph. */
@@ -1403,6 +1426,17 @@ export function closeReviewTab(repoId: string): void {
 
 export function initReview(): void {
   window.addEventListener('pagehide', flushReviewEdits);
+
+  // Text can reflow when the window narrows; re-grow comment bodies so their
+  // full text stays visible without an inner scrollbar.
+  let resizeTimer: number | undefined;
+  window.addEventListener('resize', () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => {
+      const state = activeReview();
+      if (state && isReviewShown(state)) autosizeCommentBodies($('#review-view'));
+    }, 120);
+  });
 
   $('#btn-review').addEventListener('click', () => {
     closeMoreMenu();
