@@ -199,6 +199,8 @@ export async function rebaseOntoBranch(name: string): Promise<void> {
     await api('/rebase', { onto: name });
     await refresh();
   } catch (err) {
+    // A conflict leaves the operation in progress; repaint so its graph node appears.
+    await refresh();
     toast(`Rebase failed: ${String(err)}`);
   }
 }
@@ -220,6 +222,7 @@ export async function revertFromMenu(hash: string, mainline?: number): Promise<v
     await api('/revert', { ref: hash, mainline });
     await refresh();
   } catch (err) {
+    await refresh();
     toast(`Revert failed: ${String(err)}`);
   }
 }
@@ -239,6 +242,7 @@ export async function mergeIntoCurrent(name: string): Promise<void> {
     await api('/merge', { ref: name });
     await refresh();
   } catch (err) {
+    await refresh();
     toast(`Merge failed: ${String(err)}`);
   }
 }

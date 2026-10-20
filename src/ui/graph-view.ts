@@ -75,6 +75,7 @@ export function renderAll(resp: StateResponse): void {
               ? `${operation.conflictCount} conflicted ${operation.conflictCount === 1 ? 'file' : 'files'}`
               : 'all conflicts resolved',
           path: resp.conflicts?.[0]?.path ?? null,
+          onto: operation.onto,
         }
       : null;
   const svg = $svg('#graph-svg');

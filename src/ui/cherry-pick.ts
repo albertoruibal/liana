@@ -55,6 +55,8 @@ export async function submitCherryPick(): Promise<void> {
     await refresh();
   } catch (err) {
     status.textContent = String(err);
+    // A conflict leaves the operation in progress; repaint so its graph node appears.
+    await refresh();
   }
 }
 

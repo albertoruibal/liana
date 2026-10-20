@@ -68,6 +68,8 @@ export interface GraphOperation {
   detail: string;
   /** First unresolved path, opened by clicking the row; null when all are resolved. */
   path: string | null;
+  /** Commit the operation is being applied onto, linked from the node; null when unknown. */
+  onto: string | null;
 }
 
 const EMPTY_METRICS: GraphMetrics = {
@@ -356,6 +358,27 @@ export function renderGraph(
     row.overflow = g;
     row.overflowRight = chipX - CHIP_GAP;
   };
+
+  // Dashed link from the operation node to the commit it is being applied onto
+  // (the rebase base / merge target). Drawn under the graph edges and nodes.
+  if (operation?.onto) {
+    const target = nodeByHash.get(operation.onto);
+    if (target) {
+      const x1 = x(0);
+      const y1 = TOP_PAD;
+      const x2 = x(target.column);
+      const y2 = y(target.row);
+      const d =
+        x1 === x2
+          ? `M ${x1} ${y1} L ${x2} ${y2}`
+          : `M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`;
+      const link = document.createElementNS(ns, 'path');
+      link.setAttribute('d', d);
+      link.setAttribute('class', 'graph-op-link');
+      link.setAttribute('pointer-events', 'none');
+      svg.appendChild(link);
+    }
+  }
 
   // --- Edges first (under dots) ---
   for (const e of layout.edges) {

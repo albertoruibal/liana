@@ -1203,6 +1203,15 @@ main {
   color: var(--danger);
 }
 
+#graph-svg path.graph-op-link {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 1.75;
+  stroke-dasharray: 4 4;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
 #graph-svg text.graph-op-label {
   fill: var(--danger);
   font-family: var(--font);

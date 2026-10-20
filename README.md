@@ -248,7 +248,8 @@ stash apply` keeps the entry; it is only removed on an explicit pop/drop.
 ## Conflict resolution
 
 When a merge, rebase, cherry-pick, or revert stops on a conflict, the graph shows an operation node above the newest
-commit with the operation and its conflict count; clicking it opens the first unresolved path in the manual resolver.
+commit with the operation and its conflict count, linked to the commit it is being applied onto; clicking it opens the
+first unresolved path in the manual resolver.
 The detail pane shows a banner naming the operation and its **Continue** / **Skip** / **Abort** controls next to the
 list of unmerged paths. State is read from git itself —
 `git ls-files -u` for the unmerged entries and `git rev-parse --git-path` on
