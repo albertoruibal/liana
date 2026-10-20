@@ -226,6 +226,8 @@ export function initRemotes(): void {
 
   $svg('#graph-svg').addEventListener('click', (ev) => {
     const el = ev.target as SVGElement;
+    // The operation row has its own click handler (manual conflict resolution).
+    if (el.closest?.('[data-op]')) return;
     const hash = el.dataset?.hash ?? null;
     const pill = branchPillTarget(ev);
     const now = performance.now();

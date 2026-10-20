@@ -60,6 +60,16 @@ export interface GraphHighlight {
   current: string | null;
 }
 
+/** Synthetic row shown above the commits while a merge operation is in progress. */
+export interface GraphOperation {
+  /** Operation name, e.g. "Rebase in progress". */
+  label: string;
+  /** State line, e.g. "2 conflicted files" or "all conflicts resolved". */
+  detail: string;
+  /** First unresolved path, opened by clicking the row; null when all are resolved. */
+  path: string | null;
+}
+
 const EMPTY_METRICS: GraphMetrics = {
   refX: 0,
   lanesX: 0,
@@ -120,12 +130,15 @@ export function renderGraph(
   layout: GraphLayout,
   selectedHash: string | null = null,
   highlight: GraphHighlight | null = null,
+  operation: GraphOperation | null = null,
 ): GraphMetrics {
   const ns = 'http://www.w3.org/2000/svg';
   const LEFT_PAD = 24;
-  const y = (row: number) => TOP_PAD + row * ROW_H;
+  // Keep one row free above the newest commit for the in-progress operation.
+  const rowOffset = operation ? 1 : 0;
+  const y = (row: number) => TOP_PAD + (row + rowOffset) * ROW_H;
 
-  const height = TOP_PAD + Math.max(1, layout.nodes.length) * ROW_H + TOP_PAD;
+  const height = TOP_PAD + Math.max(1, layout.nodes.length + rowOffset) * ROW_H + TOP_PAD;
   svg.replaceChildren();
 
   // O(1) row lookup for the selection/search bands (was an O(n) scan per match).
@@ -370,6 +383,67 @@ export function renderGraph(
     svg.appendChild(path);
   }
 
+  // --- In-progress operation row ---
+  // A synthetic node above the newest commit naming the merge/rebase state.
+  // Clicking it opens the first unresolved path in the manual conflict editor.
+  if (operation) {
+    const cy = TOP_PAD;
+    const cx = x(0);
+
+    const band = document.createElementNS(ns, 'rect');
+    band.setAttribute('x', '0');
+    band.setAttribute('y', String(cy - ROW_H / 2));
+    band.setAttribute('width', String(width));
+    band.setAttribute('height', String(ROW_H));
+    band.setAttribute('class', 'graph-op-band');
+    band.setAttribute('pointer-events', 'none');
+    svg.appendChild(band);
+
+    const halo = document.createElementNS(ns, 'circle');
+    halo.setAttribute('cx', String(cx));
+    halo.setAttribute('cy', String(cy));
+    halo.setAttribute('r', String(DOT_R + 4));
+    halo.setAttribute('class', 'graph-op-halo');
+    halo.setAttribute('pointer-events', 'none');
+    svg.appendChild(halo);
+
+    // Warning triangle, matching the conflict banner.
+    const node = document.createElementNS(ns, 'g');
+    node.setAttribute('class', 'graph-op-node');
+    node.setAttribute('transform', `translate(${cx - 8} ${cy - 8})`);
+    node.dataset.op = 'conflict';
+    node.dataset.path = operation.path ?? '';
+    const outline = document.createElementNS(ns, 'path');
+    outline.setAttribute('d', 'M8 2.2 1.4 13.4h13.2L8 2.2Z');
+    outline.setAttribute('fill', 'var(--bg-graph, #110e1d)');
+    outline.setAttribute('stroke', 'currentColor');
+    outline.setAttribute('stroke-width', '1.4');
+    outline.setAttribute('stroke-linejoin', 'round');
+    const bang = document.createElementNS(ns, 'path');
+    bang.setAttribute('d', 'M8 6.4v3.2M8 11.6v.01');
+    bang.setAttribute('stroke', 'currentColor');
+    bang.setAttribute('stroke-width', '1.5');
+    bang.setAttribute('stroke-linecap', 'round');
+    node.appendChild(outline);
+    node.appendChild(bang);
+    svg.appendChild(node);
+
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', String(subjectX));
+    label.setAttribute('y', String(cy + 4));
+    label.setAttribute('class', 'graph-op-label');
+    label.dataset.op = 'conflict';
+    label.dataset.path = operation.path ?? '';
+    label.textContent = `${operation.label} — ${operation.detail}${operation.path ? ' · click to resolve' : ''}`;
+    svg.appendChild(label);
+    label.textContent = fitText(label, label.textContent, subjectW - 20);
+    if (operation.path) {
+      const title = document.createElementNS(ns, 'title');
+      title.textContent = `Resolve ${operation.path} manually`;
+      label.appendChild(title);
+    }
+  }
+
   // --- Nodes + labels ---
 
   for (const n of layout.nodes) {
@@ -488,6 +562,20 @@ export function renderGraph(
     svg.appendChild(avText);
   }
 
+  // Full-width hit target for the operation row. Painted last so it sits above
+  // the commit hit rectangles and receives the click that opens the resolver.
+  if (operation) {
+    const hit = document.createElementNS(ns, 'rect');
+    hit.setAttribute('x', '0');
+    hit.setAttribute('y', String(TOP_PAD - ROW_H / 2));
+    hit.setAttribute('width', String(width));
+    hit.setAttribute('height', String(ROW_H));
+    hit.setAttribute('class', 'graph-op-hit');
+    hit.dataset.op = 'conflict';
+    hit.dataset.path = operation.path ?? '';
+    svg.appendChild(hit);
+  }
+
   // --- Row hover highlight ---
   hoverController?.abort();
   hoverController = new AbortController();
@@ -513,9 +601,15 @@ export function renderGraph(
       const scale = box.height / svgH;
       const localY = (ev.clientY - box.top) / scale;
       const localX = (ev.clientX - box.left) / (box.width / svgW);
-      const row = Math.round((localY - TOP_PAD) / ROW_H);
+      const visualRow = Math.round((localY - TOP_PAD) / ROW_H);
+      const row = visualRow - rowOffset;
       if (row < 0 || row >= layout.nodes.length) {
-        hideBand();
+        if (operation && visualRow === 0) {
+          hoverBand.setAttribute('y', String(TOP_PAD - ROW_H / 2));
+          hoverBand.setAttribute('visibility', 'visible');
+        } else {
+          hideBand();
+        }
         hideOverflow();
         return;
       }

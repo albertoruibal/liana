@@ -1,13 +1,13 @@
 // Graph pane: viewport transform, header, and full/cached repaint.
 
-import { renderDetail } from './detail';
+import { operationLabel, renderDetail } from './detail';
 import { $svg } from './dom';
 import { updateSyncButtons } from './remotes';
 import { renderSearchResults, runSearch } from './search';
 import { renderStatusBar } from './status-bar';
 import { StateResponse, store } from './store';
 import { $ } from './dom';
-import { GraphHighlight, GraphMetrics, renderGraph } from '../graph';
+import { GraphHighlight, GraphMetrics, GraphOperation, renderGraph } from '../graph';
 import { layoutGraph } from '../layout';
 import { RepoState } from '../types';
 import { EMPTY_METRICS } from '../graph';
@@ -65,6 +65,18 @@ export function renderAll(resp: StateResponse): void {
   const highlight: GraphHighlight | null = store.searchQuery.trim()
     ? { matches: new Set(matches.map((m) => m.commit.hash)), current: store.searchCurrent }
     : null;
+  const operation = resp.operation;
+  const operationRow: GraphOperation | null =
+    operation?.inProgress
+      ? {
+          label: `${operationLabel(operation.kind)} in progress`,
+          detail:
+            operation.conflictCount > 0
+              ? `${operation.conflictCount} conflicted ${operation.conflictCount === 1 ? 'file' : 'files'}`
+              : 'all conflicts resolved',
+          path: resp.conflicts?.[0]?.path ?? null,
+        }
+      : null;
   const svg = $svg('#graph-svg');
   if (empty) {
     svg.replaceChildren();
@@ -73,7 +85,14 @@ export function renderAll(resp: StateResponse): void {
   }
   const metrics = empty
     ? EMPTY_METRICS
-    : renderGraph(svg, { name: store.repoName, ...resp.state } as RepoState, layout, store.selectedHash, highlight);
+    : renderGraph(
+        svg,
+        { name: store.repoName, ...resp.state } as RepoState,
+        layout,
+        store.selectedHash,
+        highlight,
+        operationRow,
+      );
   renderGraphHeader(metrics);
   renderDetail(commits, resp.state, resp.status);
   updateSyncButtons();

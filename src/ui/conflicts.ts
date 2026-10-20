@@ -5,7 +5,7 @@ import { loadCode } from './code-loader';
 import { conflictTypeLabel } from './detail';
 import { disposeDiffEditor, readDiffView, setDiffPatch, setDiffView } from './diff-view';
 import { esc } from './format';
-import { $ } from './dom';
+import { $, $svg } from './dom';
 import { CodeHandle } from '../code';
 import { isoDate } from '../dates';
 import { TextDiffLine, diffLines } from '../diff';
@@ -261,6 +261,15 @@ export async function openSubmoduleHistory(path: string): Promise<void> {
 }
 
 export function initConflicts(): void {
+  // The graph's in-progress-operation node opens the first unresolved path in
+  // the manual resolver (the same dialog as a conflict's Compare button).
+  $svg('#graph-svg').addEventListener('click', (ev) => {
+    const target = ev.target instanceof Element ? ev.target.closest('[data-op]') : null;
+    if (!target) return;
+    const path = target.getAttribute('data-path') ?? '';
+    if (path) void openConflictDialog(path);
+  });
+
   $<HTMLDialogElement>('#conflict-dialog').addEventListener('close', () => disposeConflictEditors());
 
   $('#conflict-close').addEventListener('click', (ev) => {
