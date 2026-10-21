@@ -982,10 +982,11 @@ function autosizeCommentBodies(root: ParentNode): void {
 /** Build a fresh comment card (with the HTML excerpt fallback) and wire it up. */
 function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement {
   const line = commentLineLabel(c);
-  const stage = c.stage === 'pending' ? '<span class="review-stage-badge">scanning…</span>' : '';
+  const scanning = c.stage === 'pending' && state.job?.state === 'running';
+  const stage = scanning ? '<span class="review-stage-badge">scanning…</span>' : '';
   const template = document.createElement('template');
   template.innerHTML = `
-    <div class="review-comment-card${c.stage === 'pending' ? ' is-pending' : ''}" data-id="${esc(c.id)}">
+    <div class="review-comment-card${scanning ? ' is-pending' : ''}" data-id="${esc(c.id)}">
       <div class="review-comment-head">
         <span class="severity severity-${esc(c.severity)}">${esc(c.severity)}</span>
         <code>${esc(c.filePath)}</code>
@@ -1007,7 +1008,10 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
     const id = ta.dataset.id ?? '';
     const target = state.job?.comments.find((x) => x.id === id);
     if (target) target.body = ta.value;
-    const edit = state.edits.get(id) ?? { body: '', status: 'pending' as ReviewCommentStatus };
+    const edit = state.edits.get(id) ?? {
+      body: target?.body ?? ta.value,
+      status: target?.status ?? 'pending',
+    };
     edit.body = ta.value;
     state.edits.set(id, edit);
     autosizeCommentBody(ta);
@@ -1026,9 +1030,9 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
 }
 
 /** Patch a card's status badge and body without rebuilding its excerpt. */
-function updateCommentCard(card: HTMLElement, c: ReviewComment): void {
+function updateCommentCard(card: HTMLElement, c: ReviewComment, running: boolean): void {
   card.dataset.meta = commentMetaSig(c);
-  card.classList.toggle('is-pending', c.stage === 'pending');
+  card.classList.toggle('is-pending', c.stage === 'pending' && running);
   const badge = card.querySelector<HTMLElement>('.review-status-badge');
   if (badge) {
     badge.className = `review-status-badge status-${c.status}`;
@@ -1064,7 +1068,9 @@ function reconcileCommentList(state: ReviewTabState, list: HTMLElement, visible:
     const structural = commentStructuralSig(c);
     let card = current.get(c.id);
     if (card && card.dataset.structural === structural) {
-      if (card.dataset.meta !== commentMetaSig(c)) updateCommentCard(card, c);
+      if (card.dataset.meta !== commentMetaSig(c)) {
+        updateCommentCard(card, c, state.job?.state === 'running');
+      }
     } else {
       if (card) {
         excerptHandles.get(c.id)?.handle.dispose();
@@ -1094,20 +1100,24 @@ function reconcileCommentList(state: ReviewTabState, list: HTMLElement, visible:
   if (!inOrder) for (const card of ordered) list.appendChild(card);
 }
 
-export function renderCommentQueue(state: ReviewTabState): void {
-  const job = state.job;
-  if (!job || job.comments.length === 0) {
-    $('#review-queue-wrap').hidden = true;
-    return;
-  }
-  // Re-apply local edits/approvals so a poll snapshot never clobbers typing.
-  for (const c of job.comments) {
+/** Re-apply local edits/approvals so a poll snapshot never clobbers typing. */
+function applyCommentEdits(state: ReviewTabState, comments: ReviewComment[]): void {
+  for (const c of comments) {
     const edit = state.edits.get(c.id);
     if (edit) {
       c.body = edit.body;
       c.status = edit.status;
     }
   }
+}
+
+export function renderCommentQueue(state: ReviewTabState): void {
+  const job = state.job;
+  if (!job || job.comments.length === 0) {
+    $('#review-queue-wrap').hidden = true;
+    return;
+  }
+  applyCommentEdits(state, job.comments);
   // Posted comments are done: hide them (and the queue itself when none remain).
   const unposted = job.comments.filter((c) => c.status !== 'posted');
   if (unposted.length === 0) {
@@ -1116,7 +1126,8 @@ export function renderCommentQueue(state: ReviewTabState): void {
   }
   $('#review-queue-wrap').hidden = false;
   const total = unposted.length;
-  const pending = unposted.filter((c) => c.stage === 'pending').length;
+  const pending =
+    job.state === 'running' ? unposted.filter((c) => c.stage === 'pending').length : 0;
   const rejected = unposted.filter((c) => c.status === 'rejected').length;
   $('#review-queue-count').textContent = pending > 0 ? `(${total}, ${pending} scanning…)` : `(${total})`;
   const toggle = $<HTMLButtonElement>('#review-toggle-rejected');
@@ -1251,10 +1262,15 @@ export function renderJob(state: ReviewTabState, job: ReviewJob): void {
  */
 export async function pollJob(state: ReviewTabState): Promise<void> {
   if (!state.job) return;
+  const jobId = state.job.id;
   const wasRunning = state.job.state === 'running';
   try {
-    const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/status', { jobId: state.job.id });
+    const { job } = await reviewApi<{ job: ReviewJob }>(state, '/review/status', { jobId });
+    // A restore or another poll may have replaced the job while this was in
+    // flight; never let an older snapshot overwrite the current session.
+    if (state.job?.id !== jobId || job.id !== jobId) return;
     state.job = job;
+    applyCommentEdits(state, job.comments);
     if (wasRunning !== (job.state === 'running')) renderTabs();
     if (isReviewShown(state)) renderJob(state, job);
     if (job.state === 'running') {
@@ -1534,6 +1550,7 @@ export function initReview(): void {
           index,
         });
         state.job = next;
+        applyCommentEdits(state, next.comments);
         window.clearTimeout(state.poll);
         resetReviewLogCaches();
         $<HTMLDialogElement>('#review-log-dialog').close();
@@ -1613,6 +1630,7 @@ export function initReview(): void {
     void reviewApi<{ job: ReviewJob }>(state, '/review/resume', { jobId: state.job.id })
       .then(({ job }) => {
         state.job = job;
+        applyCommentEdits(state, job.comments);
         status.textContent = '';
         renderJob(state, job);
         renderTabs();

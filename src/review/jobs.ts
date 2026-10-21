@@ -165,11 +165,7 @@ export function saveReviewSessionComments(
     const byId = new Map(comments.map((c) => [c.id, c]));
     for (const c of live.job.comments) {
       const next = byId.get(c.id);
-      if (!next) continue;
-      c.body = next.body;
-      c.status = next.status;
-      c.discussionId = next.discussionId;
-      c.error = next.error;
+      if (next) mergeComment(c, next);
     }
     persist(live);
     return true;
@@ -179,15 +175,24 @@ export function saveReviewSessionComments(
   const byId = new Map(comments.map((c) => [c.id, c]));
   for (const c of s.job.comments) {
     const next = byId.get(c.id);
-    if (!next) continue;
-    c.body = next.body;
-    c.status = next.status;
-    c.discussionId = next.discussionId;
-    c.error = next.error;
+    if (next) mergeComment(c, next);
   }
   s.updatedAt = Date.now();
   writeSession(s);
   return true;
+}
+
+/**
+ * Apply a renderer-side comment edit to the authoritative stored comment. A
+ * decided comment is authoritative: a stale poll snapshot must never downgrade
+ * it back to `pending` (or revert the body the user approved/rejected).
+ */
+function mergeComment(target: ReviewComment, next: ReviewComment): void {
+  if (next.status === 'pending' && target.status !== 'pending') return;
+  target.body = next.body;
+  target.status = next.status;
+  target.discussionId = next.discussionId;
+  target.error = next.error;
 }
 
 /** Delete a persisted session; also drops its in-memory job when not running. */
@@ -200,6 +205,20 @@ export function deleteReviewSession(repoPath: string, id: string): boolean {
   return deleted;
 }
 
+/**
+ * Highest comment id sequence in `comments`. Ids are `c<N>` (and legacy previews
+ * `p<N>`), so deriving the counter from the array length would reuse an id after
+ * any gap and let two comments share one status/edit slot.
+ */
+function nextCommentSeq(comments: ReviewComment[]): number {
+  let seq = comments.length;
+  for (const c of comments) {
+    const m = /(\d+)$/.exec(c.id);
+    if (m) seq = Math.max(seq, Number(m[1]));
+  }
+  return seq;
+}
+
 /** Rebuild an in-memory job record from a persisted session. */
 function recordFromStored(s: StoredReviewSession): JobRecord {
   return {
@@ -208,7 +227,7 @@ function recordFromStored(s: StoredReviewSession): JobRecord {
     cancelled: false,
     paused: false,
     repoPath: s.repoPath,
-    commentSeq: s.job.comments.length,
+    commentSeq: nextCommentSeq(s.job.comments),
     sessionId: s.id,
     createdAt: s.createdAt,
     changes: s.changes,
@@ -223,11 +242,11 @@ function recordFromStored(s: StoredReviewSession): JobRecord {
 
 /**
  * Merge newly seen comments into the job's live list. A comment is identified by
- * its anchor (file + line) when it has one, else by its body, so a streamed
- * preview and the validated final result collapse into one entry. Matching
- * previews are upgraded to `stage`. A `parsed` sync keeps comments already
- * validated in earlier batches and drops previews the final parse does not
- * contain; a `pending` sync merges into what is already shown.
+ * its anchor (file + line) when it has one, else by its body, so a re-proposed
+ * comment collapses into the existing entry. Existing comments are never
+ * dropped: rejected/approved comments from earlier batches must survive every
+ * batch boundary and resume. A comment the user already decided is left intact,
+ * so a later proposal cannot rewrite its body or inherit its hidden status.
  */
 function syncComments(
   rec: JobRecord,
@@ -239,7 +258,7 @@ function syncComments(
       c.oldLine === null && c.newLine === null ? c.body : ''
     }`;
   const existing = rec.job.comments;
-  const next = stage === 'parsed' ? existing.filter((c) => c.stage === 'parsed') : [...existing];
+  const next = [...existing];
   const inNext = new Set(next);
   const byKey = new Map<string, ReviewComment>(existing.map((c) => [key(c), c]));
   const seen = new Set<string>();
@@ -249,18 +268,21 @@ function syncComments(
     seen.add(k);
     const match = byKey.get(k);
     if (match) {
-      match.filePath = c.filePath;
-      match.oldLine = c.oldLine;
-      match.newLine = c.newLine;
-      match.severity = c.severity;
-      match.body = c.body;
-      match.stage = stage;
+      if (match.status === 'pending') {
+        match.filePath = c.filePath;
+        match.oldLine = c.oldLine;
+        match.newLine = c.newLine;
+        match.severity = c.severity;
+        match.body = c.body;
+        match.stage = stage;
+      }
       if (!inNext.has(match)) {
         next.push(match);
         inNext.add(match);
       }
     } else {
       c.id = `c${++rec.commentSeq}`;
+      c.stage = stage;
       next.push(c);
       inNext.add(c);
       byKey.set(k, c);
