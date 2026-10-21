@@ -264,6 +264,9 @@ export function renderDetail(commits: GitCommit[], state: RepoState | undefined,
     const short = commit.hash.slice(0, 8);
     html += `<div class="detail-head">
       <div class="detail-title">
+        <button type="button" class="icon-btn act" data-act="close-detail" title="Back to repository (Esc)" aria-label="Back to repository">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7 4 3 8l4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <h3>${esc(commit.subject)}</h3>
         <span class="head-actions">
           <button type="button" class="icon-btn act" data-act="copy-subject" data-copy="${esc(commit.subject)}" title="Copy commit text" aria-label="Copy commit text">

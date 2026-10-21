@@ -3,7 +3,7 @@
 import { api } from './api-client';
 import { copyToClipboard } from './clipboard';
 import { esc } from './format';
-import { renderAll } from './graph-view';
+import { renderAll, renderCached } from './graph-view';
 import { StateResponse, activeTab } from './store';
 import { addRepo, persistTabs, renderNoRepo, renderTabs } from './tabs';
 import { applyPanel, openTerminalTab } from './terminal-view';
@@ -192,6 +192,11 @@ export async function runAction(btn: HTMLButtonElement): Promise<void> {
       await api('/worktree-prune', {});
     } else if (act === 'copy-subject' || act === 'copy-hash') {
       await copyToClipboard(btn.dataset.copy ?? '');
+      return;
+    } else if (act === 'close-detail') {
+      store.selectedHash = null;
+      renderCached();
+      $('#detail-pane').scrollTop = 0;
       return;
     }
     await refresh();
