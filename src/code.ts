@@ -401,6 +401,9 @@ export function createDiffEditor(
     readOnly: true,
     originalEditable: false,
     renderSideBySide: opts.sideBySide ?? true,
+    // Monaco paints the overview ruler's viewport thumb with the scrollbar-slider
+    // color, so it reads as a second scrollbar beside the real one at the right.
+    renderOverviewRuler: false,
     scrollbar: { alwaysConsumeMouseWheel: opts.consumeMouseWheel ?? true },
     theme: ensureTheme(),
   });
