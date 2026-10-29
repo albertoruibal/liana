@@ -87,7 +87,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/commit-file-diff` | POST | `{hash, path, oldPath?}` | Unified diff of one file in a commit (`oldPath` includes a rename source) |
 | `/api/worktree-file-diff` | POST | `{path, oldPath?}` | Unified diff of a working-tree file against HEAD (staged + unstaged); untracked files diff against `/dev/null` |
 | `/api/file-content` | POST | `{hash?, path, oldPath?}` | Original + modified text of one file (`hash` set → parent vs. commit; omitted → HEAD vs. working tree), for the Monaco diff and viewer. Missing sides are null; binary sides omit text |
-| `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused |
+| `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused. A dirty tree is auto-stashed (including untracked files) and re-applied; returns `{stashed, restored, warning}` |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
 | `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |
 | `/api/tag-create` | POST | `{name, ref}` | Create a lightweight tag at `ref` |
@@ -166,7 +166,9 @@ merge commit), or reset the checked-out branch to it (soft / mixed / hard, confi
 or tag chip (in the graph or the detail pane) to check it out, merge or rebase the checked-out branch onto it, or delete
 it. Double-clicking a branch chip in the graph also checks it out. Checking out a remote-tracking ref creates or reuses
 the matching local branch tracking it — no fetch, purely local; if that local branch already exists and has diverged
-from the remote tip, the double-click hard-resets it to the remote tip after confirming. Deleting a remote branch runs `git push <remote>
+from the remote tip, the double-click hard-resets it to the remote tip after confirming. Switching branches with local
+changes stashes them (including untracked files) and re-applies them afterwards; if they cannot be re-applied the stash
+is kept and a warning points at it. Deleting a remote branch runs `git push <remote>
 --delete`. Destructive actions (and every other confirmation) use the app's own styled dialogs rather than the
 browser's native `confirm()` / `prompt()`.
 
@@ -243,7 +245,8 @@ integrated resolution panel (see below); git's error text is still surfaced unch
 Stash entries appear as synthetic nodes in the graph (one per `git stash list` entry, hanging off the commit they were
 created on) labeled `stash@{n}`. The toolbar's **Stash** button saves the current changes (`-u` optional), and a
 selected stash can be applied, applied-and-dropped (pop), or dropped from the detail pane or its right-click menu. `git
-stash apply` keeps the entry; it is only removed on an explicit pop/drop.
+stash apply` keeps the entry; it is only removed on an explicit pop/drop. Branch switching uses the same mechanism
+automatically, including untracked files, and leaves the stash in place if re-applying it conflicts.
 
 ## Conflict resolution
 

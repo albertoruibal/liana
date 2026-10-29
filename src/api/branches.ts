@@ -1,6 +1,9 @@
 // Branch and tag management. Node-only. Mirrored by src/git/branches.ts.
 
 import { gitRun, GitError, NET_ENV } from './exec';
+import { dirtyCount } from './repo';
+import { createStash, dropStash, applyStash, resolveStash } from './stash';
+import type { CheckoutResult } from '../types';
 
 const REF_NAME_RE = /^[^\s~^:?*[\\]+$/;
 
@@ -22,9 +25,74 @@ export function validRefName(name: string): boolean {
 /**
  * Check out a branch. Local names are checked out directly; for a remote-tracking
  * ref like `origin/feature` this creates (or reuses) the local `feature` branch and
- * tracks the remote — purely local, no fetch.
+ * tracks the remote — purely local, no fetch. Local changes (including untracked
+ * files) are stashed for the switch and reapplied afterwards; if they cannot be
+ * reapplied the stash is kept and reported in `warning`.
  */
-export async function checkoutBranch(repoPath: string, name: string, remote = false): Promise<void> {
+export async function checkoutBranch(
+  repoPath: string,
+  name: string,
+  remote = false,
+): Promise<CheckoutResult> {
+  if ((await dirtyCount(repoPath)) === 0) {
+    await switchBranch(repoPath, name, remote);
+    return { stashed: false, restored: false, warning: null };
+  }
+
+  const hash = await createStash(repoPath, `liana: auto-stash before checkout ${name}`, true);
+  if (!hash) {
+    await switchBranch(repoPath, name, remote);
+    return { stashed: false, restored: false, warning: null };
+  }
+  const selector = await resolveStash(repoPath, hash);
+
+  try {
+    await switchBranch(repoPath, name, remote);
+  } catch (err) {
+    try {
+      await applyStash(repoPath, selector, true);
+      await dropStash(repoPath, selector);
+    } catch (restoreErr) {
+      const detail = err instanceof GitError ? err.stderr || err.message : String(err);
+      const restoreDetail =
+        restoreErr instanceof GitError ? restoreErr.stderr || restoreErr.message : String(restoreErr);
+      throw new GitError(
+        `${detail}\nThe automatic stash could not be restored (${selector}): ${restoreDetail}`,
+        err instanceof GitError ? err.stderr : '',
+      );
+    }
+    throw err;
+  }
+
+  try {
+    await applyStash(repoPath, selector, true);
+  } catch (err) {
+    const detail = err instanceof GitError ? err.stderr || err.message : String(err);
+    return {
+      stashed: true,
+      restored: false,
+      warning:
+        `Switched to ${name}, but the automatic stash could not be restored: ${detail}. ` +
+        `Your changes are saved in ${selector}.`,
+    };
+  }
+  try {
+    await dropStash(repoPath, selector);
+  } catch (err) {
+    const detail = err instanceof GitError ? err.stderr || err.message : String(err);
+    return {
+      stashed: true,
+      restored: true,
+      warning:
+        `Switched to ${name} and restored your changes, but the stash entry ${selector} ` +
+        `could not be dropped: ${detail}.`,
+    };
+  }
+  return { stashed: true, restored: true, warning: null };
+}
+
+/** Perform the actual checkout without touching a dirty working tree. */
+async function switchBranch(repoPath: string, name: string, remote: boolean): Promise<void> {
   if (!remote) {
     await gitRun(repoPath, ['checkout', name]);
     return;

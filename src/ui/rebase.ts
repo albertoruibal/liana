@@ -5,7 +5,7 @@ import { esc } from './format';
 import { toast } from './toast';
 import { $ } from './dom';
 import { store } from './store';
-import { RebaseAction, RebaseTodoItem } from '../types';
+import { RebaseAction, RebaseTodoItem, CheckoutResult } from '../types';
 import { refresh } from './actions';
 
 // --- Interactive rebase dialog ---
@@ -99,8 +99,9 @@ export async function submitRebase(): Promise<void> {
 
 export async function checkout(branch: string, remote = false): Promise<void> {
   if (!branch) return;
-  await api('/checkout', remote ? { branch, remote: true } : { branch });
+  const result = await api<CheckoutResult>('/checkout', remote ? { branch, remote: true } : { branch });
   store.selectedHash = null;
+  if (result.warning) toast(result.warning);
   await refresh();
 }
 

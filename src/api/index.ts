@@ -800,8 +800,8 @@ export function createApi(defaultRepo: string | null): Api {
       if (route === '/checkout' && method === 'POST') {
         const { branch, remote } = JSON.parse(rawBody) as { branch?: string; remote?: boolean };
         if (!branch?.trim()) return { status: 400, body: { error: 'Missing branch' } };
-        await checkoutBranch(repoPath, branch.trim(), remote === true);
-        return { status: 200, body: { ok: true } };
+        const result = await checkoutBranch(repoPath, branch.trim(), remote === true);
+        return { status: 200, body: { ok: true, ...result } };
       }
       if (route === '/branch-create' && method === 'POST') {
         const { name, ref } = JSON.parse(rawBody) as { name?: string; ref?: string };

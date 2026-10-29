@@ -77,6 +77,16 @@ export interface BranchInfo {
   isRemote: boolean;
 }
 
+/** Outcome of a branch checkout, including the automatic stash around a dirty tree. */
+export interface CheckoutResult {
+  /** True when local changes were stashed to allow the switch. */
+  stashed: boolean;
+  /** True when that stash was reapplied and dropped. */
+  restored: boolean;
+  /** Set when the branch switched but the stash could not be reapplied. */
+  warning: string | null;
+}
+
 export interface RepoState {
   name: string;
   headBranch: string | null;

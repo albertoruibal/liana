@@ -30,8 +30,15 @@ export async function createStash(
 }
 
 /** `git stash apply` a selector; keeps the stash in place. */
-export async function applyStash(repoPath: string, selector: string): Promise<string> {
-  return (await git(repoPath, ['stash', 'apply', selector])).trim();
+export async function applyStash(
+  repoPath: string,
+  selector: string,
+  restoreIndex = false,
+): Promise<string> {
+  const args = ['stash', 'apply'];
+  if (restoreIndex) args.push('--index');
+  args.push(selector);
+  return (await git(repoPath, args)).trim();
 }
 
 /** `git stash drop` a selector; removes one stash entry. */
