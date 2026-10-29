@@ -263,11 +263,17 @@ Base / Ours / Theirs view (from `git show :1:/:2:/:3:<path>`) — labelled with 
 actual branch names where git records them (the rebased branch and its base, or the
 merge target) — with each side's changes highlighted against Base and the
 conflict-marker regions tinted in the **editable Result** pane seeded from the
-working-tree file with its conflict markers intact — edit it in Monaco and **Save &
-mark resolved** writes the file and stages it with `git add`. The side buttons (named
-for the branches) run `git checkout --ours/--theirs` and stage the result. Liana only
-ever writes the resolved working-tree file; it never invents a merge or touches git's
-own operation state, and git's stderr still comes back through the API unchanged.
+working-tree file with its conflict markers intact. A centered picker above the
+columns lists each conflict's Ours and Theirs lines; click lines from either side
+(they are inserted in click order, or use **All ours** / **All theirs**) and only
+that conflict block is rewritten in the Result, leaving context and manual edits
+alone. **Next / Previous** scrolls the Result to a conflict and puts the cursor there
+for manual editing. Unpicked blocks keep their markers. Edit the Result in Monaco and
+**Save & mark resolved** writes the file and stages it with `git add`. The side
+buttons (named for the branches) run `git checkout --ours/--theirs` and stage the
+result. Liana only ever writes the resolved working-tree file; it never invents a
+merge or touches git's own operation state, and git's stderr still comes back through
+the API unchanged.
 
 **Fix with AI** complements the file-level controls: for one conflicted path it sends the Base / Ours / Theirs stages to
 the active OpenAI-compatible provider (the same one Code review uses) and shows the proposed merged file, with a short

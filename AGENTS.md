@@ -151,9 +151,13 @@ in the packaged app.
 
 - Resolve conflicts **file-level**: the UI shows base / ours / theirs from `git show :1:/:2:/:3:<path>`, offers `git
   checkout --ours|--theirs` plus `git add`, and lets the user **edit the working-tree file directly** in an editor
-  seeded with its current (marker-bearing) contents; saving writes that file and stages it with `git add`. Liana never
-  invents a merge or touches git's own operation state (`rebase-merge`/`MERGE_HEAD`/…) — only the resolved working-tree
-  file is written. The one automated exception is the AI conflict fix below.
+  seeded with its current (marker-bearing) contents; saving writes that file and stages it with `git add`. A centered
+  per-conflict picker (`src/conflict-markers.ts` + `src/ui/conflicts.ts`) lists each marker block's Ours / Theirs lines;
+  clicking lines splices them into that block of the Result in click order (with All ours / All theirs shortcuts),
+  leaving context and manual edits untouched. Prev / Next reveals a block in the Result and leaves the cursor there.
+  Picker rewrites only the block's tracked line range; unpicked blocks keep their markers. Liana never invents a merge or
+  touches git's own operation state (`rebase-merge`/`MERGE_HEAD`/…) — only the resolved working-tree file is written.
+  The one automated exception is the AI conflict fix below.
 - **AI conflict fix** (`src/conflict-fix.ts`, Node-only): a per-file, on-demand proposal. `POST /api/conflict-fix` reads
   the three index stages via `loadConflictFile` and asks the active provider (the same OpenAI-compatible endpoint as
   reviews, through `completeText` in `src/review/ai.ts`) for a merged file; `POST /api/conflict-apply` writes that

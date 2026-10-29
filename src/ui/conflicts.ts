@@ -7,6 +7,7 @@ import { disposeDiffEditor, readDiffView, setDiffPatch, setDiffView } from './di
 import { esc } from './format';
 import { $, $svg } from './dom';
 import { CodeHandle } from '../code';
+import { ConflictMarkerBlock, parseConflictBlocks } from '../conflict-markers';
 import { isoDate } from '../dates';
 import { TextDiffLine, diffLines } from '../diff';
 import { ConflictFile, GitCommit } from '../types';
@@ -64,10 +65,32 @@ export let conflictHandles: CodeHandle[] = [];
 
 export let conflictResult: CodeHandle | null = null;
 
+/** One line picked from a conflict side, remembered in click order. */
+interface ConflictChoice {
+  side: 'ours' | 'theirs';
+  line: number;
+  text: string;
+}
+
+/** Live picker state for one conflict block in the open Result editor. */
+interface ConflictUiState {
+  block: ConflictMarkerBlock;
+  chosen: ConflictChoice[];
+  /** False until the user touches the block, so the Result keeps its markers. */
+  touched: boolean;
+  /** Decoration-backed range in the Result editor, or null until Monaco creates it. */
+  rangeId: string | null;
+}
+
+let conflictStates: ConflictUiState[] = [];
+let activeConflict = 0;
+
 export function disposeConflictEditors(): void {
   for (const handle of conflictHandles) handle.dispose();
   conflictHandles = [];
   conflictResult = null;
+  conflictStates = [];
+  activeConflict = 0;
 }
 
 /**
@@ -83,10 +106,14 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
     conflictTypeLabel(file.type) + (file.isSubmodule ? ' · submodule' : '');
   const editable = !file.isBinary && !file.isSubmodule && file.worktreeAvailable;
   const useMonaco = !file.isBinary && !file.isSubmodule;
+  const blocks = editable ? parseConflictBlocks(file.worktree ?? '') : [];
+  const showPicker = editable && blocks.length > 0;
   let note: string;
   if (file.isSubmodule) {
     note =
       '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>';
+  } else if (editable && showPicker) {
+    note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base. Pick lines from either side above — the Result updates live and stays editable. Unpicked blocks keep their markers; saving writes the working-tree file and stages it.</p>`;
   } else if (editable) {
     note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base; the Result pane tints the conflict-marker regions. Pick a side, or edit the Result and save — saving writes the working-tree file and stages it.</p>`;
   } else {
@@ -122,8 +149,9 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
     : '';
 
   disposeConflictEditors();
+  const picker = showPicker ? '<div id="conflict-picker" class="conflict-picker"></div>' : '';
   $('#conflict-body').innerHTML =
-    note + `<div class="conflict-columns">${cols}</div>` + result;
+    note + picker + `<div class="conflict-columns">${cols}</div>` + result;
   $<HTMLButtonElement>('#conflict-ours').textContent = `Use ${oursLabel}`;
   $<HTMLButtonElement>('#conflict-theirs').textContent = `Use ${theirsLabel}`;
   $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
@@ -133,7 +161,11 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
 
   if (!useMonaco) return;
   const code = await loadCode();
-  if (!code) return; // Monaco unavailable: plain-text columns remain (no Result editor).
+  if (!code) {
+    // Monaco unavailable: plain-text columns remain (no Result editor or picker).
+    document.getElementById('conflict-picker')?.remove();
+    return;
+  }
   const body = $<HTMLDivElement>('#conflict-body');
   for (const side of ['base', 'ours', 'theirs'] as const) {
     const host = body.querySelector<HTMLElement>(`.code-host[data-side="${side}"]`);
@@ -176,6 +208,139 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
       });
     }
   }
+  if (showPicker && conflictResult) initConflictPicker(oursLabel, theirsLabel, blocks);
+}
+
+// --- Per-conflict line picker ---
+
+/** Build the picker shell; the line lists are filled by refreshConflictPicker. */
+function initConflictPicker(
+  oursLabel: string,
+  theirsLabel: string,
+  blocks: ConflictMarkerBlock[],
+): void {
+  const result = conflictResult;
+  if (!result) return;
+  conflictStates = blocks.map((block) => ({
+    block,
+    chosen: [],
+    touched: false,
+    // Parser lines are 0-based; CodeHandle ranges are 1-based inclusive.
+    rangeId: result.trackLineRange(block.startLine + 1, block.endLine),
+  }));
+  activeConflict = 0;
+  const picker = document.getElementById('conflict-picker');
+  if (!picker) return;
+  picker.innerHTML = `<div class="conflict-picker-head">
+    <button type="button" class="icon-btn conflict-nav" data-conflict-nav="prev" title="Previous conflict" aria-label="Previous conflict">↑</button>
+    <span class="conflict-picker-count" data-conflict-count></span>
+    <button type="button" class="icon-btn conflict-nav" data-conflict-nav="next" title="Next conflict" aria-label="Next conflict">↓</button>
+    <span class="conflict-picker-shortcuts">
+      <button type="button" class="btn btn-sm" data-conflict-all="ours">All ${esc(oursLabel)}</button>
+      <button type="button" class="btn btn-sm" data-conflict-all="theirs">All ${esc(theirsLabel)}</button>
+    </span>
+  </div>
+  <div class="conflict-picker-lines">
+    <div class="conflict-picker-side conflict-picker-ours">
+      <h5>${esc(oursLabel)}</h5>
+      <div class="conflict-picker-list" data-conflict-list="ours"></div>
+    </div>
+    <div class="conflict-picker-side conflict-picker-theirs">
+      <h5>${esc(theirsLabel)}</h5>
+      <div class="conflict-picker-list" data-conflict-list="theirs"></div>
+    </div>
+  </div>`;
+  refreshConflictPicker();
+  // Reveal the first conflict once the dialog has laid the editor out.
+  requestAnimationFrame(() => revealConflict(activeConflict));
+}
+
+/** Re-render the current conflict's lines, checked state, and click order badges. */
+function refreshConflictPicker(): void {
+  const picker = document.getElementById('conflict-picker');
+  const state = conflictStates[activeConflict];
+  if (!picker || !state) return;
+  const count = picker.querySelector<HTMLElement>('[data-conflict-count]');
+  if (count) count.textContent = `Conflict ${activeConflict + 1} of ${conflictStates.length}`;
+  for (const side of ['ours', 'theirs'] as const) {
+    const list = picker.querySelector<HTMLElement>(`[data-conflict-list="${side}"]`);
+    if (!list) continue;
+    const lines = side === 'ours' ? state.block.ours : state.block.theirs;
+    if (lines.length === 0) {
+      list.innerHTML = '<div class="conflict-picker-empty">(no lines)</div>';
+      continue;
+    }
+    list.innerHTML = lines
+      .map((text, index) => {
+        const order = state.chosen.findIndex((c) => c.side === side && c.line === index);
+        const on = order >= 0;
+        const body =
+          text.replace(/\r$/, '') === ''
+            ? '<span class="conflict-line-empty">(empty line)</span>'
+            : esc(text.replace(/\r$/, ''));
+        return `<button type="button" class="conflict-line" data-conflict-side="${side}" data-conflict-line="${index}" aria-pressed="${on}">
+          <span class="conflict-line-order">${on ? order + 1 : ''}</span><code>${body}</code>
+        </button>`;
+      })
+      .join('');
+  }
+}
+
+/** Compute the block's current text and splice it into the Result editor. */
+function applyConflictBlock(index: number): void {
+  const state = conflictStates[index];
+  if (!state || !state.rangeId || !conflictResult) return;
+  if (!state.touched) return;
+  const text = state.chosen.map((choice) => choice.text).join('\n');
+  const nextId = conflictResult.replaceTrackedRange(state.rangeId, text);
+  if (nextId) state.rangeId = nextId;
+}
+
+/** Toggle one side's line into (or out of) the current conflict's click-ordered choice. */
+function toggleConflictLine(side: 'ours' | 'theirs', line: number): void {
+  const state = conflictStates[activeConflict];
+  if (!state) return;
+  const existing = state.chosen.findIndex((c) => c.side === side && c.line === line);
+  if (existing >= 0) {
+    state.chosen.splice(existing, 1);
+  } else {
+    const text = (side === 'ours' ? state.block.ours : state.block.theirs)[line];
+    if (text === undefined) return;
+    state.chosen.push({ side, line, text });
+  }
+  state.touched = true;
+  applyConflictBlock(activeConflict);
+  refreshConflictPicker();
+}
+
+/** Take every line from one side for the current conflict. */
+function selectAllConflictLines(side: 'ours' | 'theirs'): void {
+  const state = conflictStates[activeConflict];
+  if (!state) return;
+  const lines = side === 'ours' ? state.block.ours : state.block.theirs;
+  state.chosen = lines.map((text, line) => ({ side, line, text }));
+  state.touched = true;
+  applyConflictBlock(activeConflict);
+  refreshConflictPicker();
+}
+
+/** Move the picker to the next/previous conflict and reveal it in the Result. */
+function navigateConflict(delta: number): void {
+  if (conflictStates.length === 0) return;
+  activeConflict = (activeConflict + delta + conflictStates.length) % conflictStates.length;
+  refreshConflictPicker();
+  revealConflict(activeConflict);
+}
+
+/** Scroll the Result editor to a conflict and leave the cursor there for editing. */
+function revealConflict(index: number): void {
+  const state = conflictStates[index];
+  if (!state || !conflictResult) return;
+  const tracked = state.rangeId ? conflictResult.getTrackedLineRange(state.rangeId) : null;
+  conflictResult.revealLineRange(
+    tracked?.startLine ?? state.block.startLine + 1,
+    tracked?.endLine ?? state.block.endLine,
+  );
 }
 
 // --- Conflict resolution dialog ---
@@ -287,6 +452,31 @@ export function initConflicts(): void {
   $('#conflict-ai-fix').addEventListener('click', () => {
     $<HTMLDialogElement>('#conflict-dialog').close();
     void openAiConflictDialog(conflictPath);
+  });
+
+  // The picker's buttons are regenerated for each conflict, so delegate from the
+  // static dialog body rather than binding to the current nodes.
+  $<HTMLDivElement>('#conflict-body').addEventListener('click', (ev) => {
+    const target =
+      ev.target instanceof Element
+        ? ev.target.closest('[data-conflict-nav],[data-conflict-all],[data-conflict-side]')
+        : null;
+    if (!(target instanceof HTMLElement)) return;
+    const nav = target.getAttribute('data-conflict-nav');
+    if (nav === 'prev' || nav === 'next') {
+      navigateConflict(nav === 'prev' ? -1 : 1);
+      return;
+    }
+    const all = target.getAttribute('data-conflict-all');
+    if (all === 'ours' || all === 'theirs') {
+      selectAllConflictLines(all);
+      return;
+    }
+    const side = target.getAttribute('data-conflict-side');
+    const rawLine = target.getAttribute('data-conflict-line');
+    if ((side !== 'ours' && side !== 'theirs') || rawLine === null) return;
+    const line = Number(rawLine);
+    if (Number.isInteger(line)) toggleConflictLine(side, line);
   });
 
   // Keep the Base / Ours / Theirs columns' scroll in step on both axes.

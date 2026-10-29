@@ -148,6 +148,14 @@ export interface CodeHandle {
   getScrollPosition(): { top: number; left: number };
   /** Jump to a scroll offset without animation (for syncing sibling panes). */
   setScrollPosition(top: number, left: number): void;
+  /** Track a 1-based inclusive line range that follows edits; returns an opaque id. */
+  trackLineRange(startLine: number, endLine: number): string;
+  /** Current 1-based inclusive line range for a tracked id, or null when it was lost. */
+  getTrackedLineRange(id: string): { startLine: number; endLine: number } | null;
+  /** Replace a tracked full-line range, returning the id re-anchored to the new text. */
+  replaceTrackedRange(id: string, text: string): string | null;
+  /** Center a 1-based inclusive line range and put the cursor on its first line. */
+  revealLineRange(startLine: number, endLine: number): void;
   dispose(): void;
 }
 
@@ -175,6 +183,105 @@ function scrollControl(editor: monaco.editor.ICodeEditor): {
     dispose: () => {
       listeners.clear();
       sub.dispose();
+    },
+  };
+}
+
+/** Clamp a 1-based inclusive line range to the model and cover whole lines. */
+function fullLineRange(
+  model: monaco.editor.ITextModel,
+  startLine: number,
+  endLine: number,
+): monaco.Range {
+  const count = model.getLineCount();
+  const start = Math.min(Math.max(1, startLine), count);
+  const end = Math.min(Math.max(start, endLine), count);
+  return new monaco.Range(start, 1, end, model.getLineMaxColumn(end));
+}
+
+/** Line-range tracking helpers shared by editable Monaco editors. */
+function trackedRangeControl(editor: monaco.editor.IStandaloneCodeEditor): {
+  api: Pick<
+    CodeHandle,
+    'trackLineRange' | 'getTrackedLineRange' | 'replaceTrackedRange' | 'revealLineRange'
+  >;
+} {
+  const stickiness = monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges;
+  return {
+    api: {
+      trackLineRange: (startLine, endLine) => {
+        const model = editor.getModel();
+        if (!model) return '';
+        const [id] = model.deltaDecorations(
+          [],
+          [{ range: fullLineRange(model, startLine, endLine), options: { stickiness } }],
+        );
+        return id ?? '';
+      },
+      getTrackedLineRange: (id) => {
+        const model = editor.getModel();
+        if (!model) return null;
+        const range = model.getDecorationRange(id);
+        return range ? { startLine: range.startLineNumber, endLine: range.endLineNumber } : null;
+      },
+      replaceTrackedRange: (id, text) => {
+        const model = editor.getModel();
+        if (!model) return null;
+        const range = model.getDecorationRange(id);
+        if (!range) return null;
+        const startLine = range.startLineNumber;
+        const endLine = range.endLineNumber;
+        const lines = text === '' ? [] : text.split('\n');
+        const count = model.getLineCount();
+        let editRange: monaco.Range;
+        let insert: string;
+        if (endLine < count) {
+          // Replace the block and the line break after it, so empty output leaves
+          // no blank line behind.
+          editRange = new monaco.Range(startLine, 1, endLine + 1, 1);
+          insert = lines.length ? `${lines.join('\n')}\n` : '';
+        } else if (startLine > 1) {
+          // Last line(s): include the preceding line break for the same reason.
+          editRange = new monaco.Range(
+            startLine - 1,
+            model.getLineMaxColumn(startLine - 1),
+            endLine,
+            model.getLineMaxColumn(endLine),
+          );
+          insert = lines.length ? `\n${lines.join('\n')}` : '';
+        } else {
+          editRange = new monaco.Range(
+            startLine,
+            1,
+            endLine,
+            model.getLineMaxColumn(endLine),
+          );
+          insert = lines.length ? lines.join('\n') : '';
+        }
+        model.applyEdits([{ range: editRange, text: insert }]);
+        const [nextId] = model.deltaDecorations(
+          [id],
+          [
+            {
+              range: fullLineRange(
+                model,
+                startLine,
+                lines.length ? startLine + lines.length - 1 : startLine,
+              ),
+              options: { stickiness },
+            },
+          ],
+        );
+        return nextId ?? null;
+      },
+      revealLineRange: (startLine, endLine) => {
+        const model = editor.getModel();
+        if (!model) return;
+        const range = fullLineRange(model, startLine, endLine);
+        editor.revealRangeInCenter(range);
+        editor.setPosition({ lineNumber: range.startLineNumber, column: 1 });
+        editor.focus();
+      },
     },
   };
 }
@@ -243,6 +350,7 @@ export function createEditor(
     }
   }
   const scroll = scrollControl(editor);
+  const tracked = trackedRangeControl(editor);
   return {
     kind: 'editor',
     setValue: (next) => editor.setValue(next),
@@ -252,6 +360,10 @@ export function createEditor(
     onDidScroll: (cb) => scroll.api.onDidScroll(cb),
     getScrollPosition: () => scroll.api.getScrollPosition(),
     setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
+    trackLineRange: (startLine, endLine) => tracked.api.trackLineRange(startLine, endLine),
+    getTrackedLineRange: (id) => tracked.api.getTrackedLineRange(id),
+    replaceTrackedRange: (id, text) => tracked.api.replaceTrackedRange(id, text),
+    revealLineRange: (startLine, endLine) => tracked.api.revealLineRange(startLine, endLine),
     dispose: () => {
       scroll.dispose();
       contentSub?.dispose();
@@ -330,6 +442,10 @@ export function createDiffEditor(
     onDidScroll: (cb) => scroll.api.onDidScroll(cb),
     getScrollPosition: () => scroll.api.getScrollPosition(),
     setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
+    trackLineRange: () => '',
+    getTrackedLineRange: () => null,
+    replaceTrackedRange: () => null,
+    revealLineRange: () => {},
     dispose: () => {
       scroll.dispose();
       for (const d of decorations) d.clear();
