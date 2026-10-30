@@ -1759,11 +1759,11 @@ ul.branch-list li:hover {
   overflow: hidden;
 }
 
-/* Per-conflict line picker, centered above Base / Ours / Theirs. */
+/* Per-conflict line picker, full width below Base / Ours / Theirs and Result. */
 .conflict-picker {
   flex: 0 0 auto;
-  align-self: center;
-  width: min(100%, 980px);
+  width: 100%;
+  min-width: 0;
   margin-top: 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);

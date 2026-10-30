@@ -113,7 +113,7 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
     note =
       '<p class="muted hint">Submodule pointer conflict — the columns show each commit id. Liana never merges submodule contents.</p>';
   } else if (editable && showPicker) {
-    note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base. Pick lines from either side above — the Result updates live and stays editable. Unpicked blocks keep their markers; saving writes the working-tree file and stages it.</p>`;
+    note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base. Pick lines from either side below — the Result updates live and stays editable. Unpicked blocks keep their markers; saving writes the working-tree file and stages it.</p>`;
   } else if (editable) {
     note = `<p class="muted hint">${esc(oursLabel)} / ${esc(theirsLabel)} highlight their changes against Base; the Result pane tints the conflict-marker regions. Pick a side, or edit the Result and save — saving writes the working-tree file and stages it.</p>`;
   } else {
@@ -151,7 +151,7 @@ export async function renderConflictDialog(file: ConflictFile): Promise<void> {
   disposeConflictEditors();
   const picker = showPicker ? '<div id="conflict-picker" class="conflict-picker"></div>' : '';
   $('#conflict-body').innerHTML =
-    note + picker + `<div class="conflict-columns">${cols}</div>` + result;
+    note + `<div class="conflict-columns">${cols}</div>` + result + picker;
   $<HTMLButtonElement>('#conflict-ours').textContent = `Use ${oursLabel}`;
   $<HTMLButtonElement>('#conflict-theirs').textContent = `Use ${theirsLabel}`;
   $<HTMLButtonElement>('#conflict-ours').disabled = !file.hasOurs;
