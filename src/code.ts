@@ -131,6 +131,18 @@ function commonOptions(): monaco.editor.IStandaloneEditorConstructionOptions {
   };
 }
 
+/** One whole-line decoration with an optional inline badge (e.g. pick order). */
+export interface LineDecoration {
+  /** 1-based inclusive first line. */
+  startLine: number;
+  /** 1-based inclusive last line. */
+  endLine: number;
+  /** CSS class applied to the whole line. */
+  className: string;
+  /** Optional text injected at the end of the line. */
+  badge?: string;
+}
+
 /** A live Monaco editor bound to a container in a dialog. */
 export interface CodeHandle {
   kind: 'editor' | 'diff';
@@ -148,6 +160,10 @@ export interface CodeHandle {
   getScrollPosition(): { top: number; left: number };
   /** Jump to a scroll offset without animation (for syncing sibling panes). */
   setScrollPosition(top: number, left: number): void;
+  /** Run `cb` when the user left-clicks a content line (1-based). */
+  onLineClick(cb: (line: number) => void): void;
+  /** Replace the whole-line decorations shown in the editor. */
+  setLineDecorations(decorations: LineDecoration[]): void;
   /** Track a 1-based inclusive line range that follows edits; returns an opaque id. */
   trackLineRange(startLine: number, endLine: number): string;
   /** Current 1-based inclusive line range for a tracked id, or null when it was lost. */
@@ -185,6 +201,61 @@ function scrollControl(editor: monaco.editor.ICodeEditor): {
     dispose: () => {
       listeners.clear();
       sub.dispose();
+    },
+  };
+}
+
+/** Line-click and whole-line-decoration accessors shared by editor handles. */
+function lineDecorationControl(editor: monaco.editor.ICodeEditor): {
+  api: Pick<CodeHandle, 'onLineClick' | 'setLineDecorations'>;
+  dispose(): void;
+} {
+  const listeners = new Set<(line: number) => void>();
+  const sub = editor.onMouseDown((e) => {
+    if (!e.event.leftButton) return;
+    const type = e.target.type;
+    if (
+      type !== monaco.editor.MouseTargetType.CONTENT_TEXT &&
+      type !== monaco.editor.MouseTargetType.CONTENT_EMPTY &&
+      type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS &&
+      type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+    ) {
+      return;
+    }
+    const line = e.target.position?.lineNumber;
+    if (line === undefined) return;
+    for (const cb of listeners) cb(line);
+  });
+  let collection: monaco.editor.IEditorDecorationsCollection | null = null;
+  return {
+    api: {
+      onLineClick: (cb) => {
+        listeners.add(cb);
+      },
+      setLineDecorations: (decorations) => {
+        const model = editor.getModel();
+        const options = decorations.map((d) => ({
+          range: new monaco.Range(
+            d.startLine,
+            1,
+            d.endLine,
+            model ? model.getLineMaxColumn(Math.min(d.endLine, model.getLineCount())) : 1,
+          ),
+          options: {
+            isWholeLine: true,
+            className: d.className,
+            ...(d.badge ? { after: { content: ` ${d.badge}`, inlineClassName: 'conflict-pick-badge' } } : {}),
+          },
+        }));
+        if (!collection) collection = editor.createDecorationsCollection(options);
+        else collection.set(options);
+      },
+    },
+    dispose: () => {
+      listeners.clear();
+      sub.dispose();
+      collection?.clear();
+      collection = null;
     },
   };
 }
@@ -352,6 +423,7 @@ export function createEditor(
     }
   }
   const scroll = scrollControl(editor);
+  const lines = lineDecorationControl(editor);
   const tracked = trackedRangeControl(editor);
   return {
     kind: 'editor',
@@ -362,6 +434,8 @@ export function createEditor(
     onDidScroll: (cb) => scroll.api.onDidScroll(cb),
     getScrollPosition: () => scroll.api.getScrollPosition(),
     setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
+    onLineClick: (cb) => lines.api.onLineClick(cb),
+    setLineDecorations: (decorations) => lines.api.setLineDecorations(decorations),
     trackLineRange: (startLine, endLine) => tracked.api.trackLineRange(startLine, endLine),
     getTrackedLineRange: (id) => tracked.api.getTrackedLineRange(id),
     replaceTrackedRange: (id, text) => tracked.api.replaceTrackedRange(id, text),
@@ -369,6 +443,7 @@ export function createEditor(
     revealFirstDiff: () => {},
     dispose: () => {
       scroll.dispose();
+      lines.dispose();
       contentSub?.dispose();
       markerCollection?.clear();
       editor.dispose();
@@ -439,6 +514,7 @@ export function createDiffEditor(
   if (opts.anchors?.modified?.length) decorate('modified', opts.anchors.modified);
   // Inline diffs scroll as one; the modified sub-editor is the shared viewport.
   const scroll = scrollControl(editor.getModifiedEditor());
+  const lines = lineDecorationControl(editor.getModifiedEditor());
   return {
     kind: 'diff',
     setValue: () => {},
@@ -448,6 +524,8 @@ export function createDiffEditor(
     onDidScroll: (cb) => scroll.api.onDidScroll(cb),
     getScrollPosition: () => scroll.api.getScrollPosition(),
     setScrollPosition: (top, left) => scroll.api.setScrollPosition(top, left),
+    onLineClick: (cb) => lines.api.onLineClick(cb),
+    setLineDecorations: (decorations) => lines.api.setLineDecorations(decorations),
     trackLineRange: () => '',
     getTrackedLineRange: () => null,
     replaceTrackedRange: () => null,
@@ -455,6 +533,7 @@ export function createDiffEditor(
     revealFirstDiff: () => editor.revealFirstDiff(),
     dispose: () => {
       scroll.dispose();
+      lines.dispose();
       for (const d of decorations) d.clear();
       editor.dispose();
       originalModel.dispose();

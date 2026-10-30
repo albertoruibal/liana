@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { gitRun, GitError } from './exec';
 import { looksBinary, readRepoFile, safeResolve } from './paths';
+import { currentBranch } from './remotes';
 import { parseUnmerged } from '../commit-files';
 import type { ConflictEntry, ConflictFile, MergeOperation } from '../types';
 
@@ -80,13 +81,18 @@ async function conflictSideLabels(
 ): Promise<{ oursLabel: string | null; theirsLabel: string | null }> {
   if (kind === 'none') return { oursLabel: null, theirsLabel: null };
   if (kind === 'rebase') {
-    return { oursLabel: await rebaseHeadName(repoPath), theirsLabel: onto ? await refNameAt(repoPath, onto) : null };
+    // Rebase swaps the sides: ours is the upstream (onto), theirs is the replayed branch.
+    return { oursLabel: onto ? await refNameAt(repoPath, onto) : null, theirsLabel: await rebaseHeadName(repoPath) };
   }
   if (kind === 'merge') {
     const theirs = onto ?? (await readGitPath(repoPath, 'MERGE_HEAD'));
-    return { oursLabel: null, theirsLabel: theirs ? await refNameAt(repoPath, theirs) : null };
+    return {
+      oursLabel: await currentBranch(repoPath),
+      theirsLabel: theirs ? await refNameAt(repoPath, theirs) : null,
+    };
   }
-  return { oursLabel: null, theirsLabel: null };
+  // Cherry-pick / revert apply onto the current branch; the picked commit is not a branch.
+  return { oursLabel: await currentBranch(repoPath), theirsLabel: null };
 }
 
 /**

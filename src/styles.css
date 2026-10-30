@@ -1759,30 +1759,53 @@ ul.branch-list li:hover {
   overflow: hidden;
 }
 
-/* Per-conflict line picker, full width below Base / Ours / Theirs and Result. */
-.conflict-picker {
-  flex: 0 0 auto;
-  width: 100%;
-  min-width: 0;
+/* Conflict resolver: two side panes above, editable Result spanning below. */
+.conflict-panels {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+  min-height: 0;
   margin-top: 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elev-2, var(--bg));
-  overflow: hidden;
 }
 
-.conflict-picker-head {
+.conflict-col h4,
+.conflict-result h4 {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 5px 8px;
-  background: var(--bg-hover);
-  border-bottom: 1px solid var(--border-soft);
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.conflict-picker-count {
+.conflict-col h4 > span,
+.conflict-result h4 > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conflict-col h4 .btn {
+  flex: 0 0 auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.conflict-result-nav {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.conflict-nav {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.conflict-nav-count {
   min-width: 8.5em;
   text-align: center;
   font-size: 11px;
@@ -1791,116 +1814,31 @@ ul.branch-list li:hover {
   color: var(--fg-dim);
 }
 
-.conflict-picker-shortcuts {
-  display: inline-flex;
-  gap: 5px;
-  margin-left: 6px;
-}
-
-.conflict-nav {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.conflict-picker-lines {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 6px 8px 8px;
-}
-
-.conflict-picker-side {
-  min-width: 0;
-}
-
-.conflict-picker-side h5 {
-  margin: 0 0 3px;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--fg-dim);
-}
-
-.conflict-picker-ours h5 { color: var(--ok, var(--accent)); }
-.conflict-picker-theirs h5 { color: var(--warn, var(--accent-2)); }
-
-.conflict-picker-list {
-  max-height: 108px;
-  overflow: auto;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-}
-
-.conflict-picker-empty {
-  padding: 4px 7px;
-  color: var(--fg-faint);
-  font-size: 11px;
-  font-style: italic;
-}
-
-.conflict-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  width: 100%;
-  margin: 0;
-  padding: 1px 6px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--fg);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 1.45;
-  text-align: left;
+/* Clickable conflict lines in the side panes. */
+.conflict-panel-line {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   cursor: pointer;
 }
 
-.conflict-line:hover { background: var(--bg-hover); }
+.conflict-panel-active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 
-.conflict-line[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
+.conflict-panel-picked { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 
-.conflict-line-order {
-  flex: 0 0 1.3em;
-  color: var(--accent);
+.conflict-pick-badge {
+  margin-left: 0.6em;
+  padding: 0 0.35em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
   font-size: 10px;
   font-weight: 700;
-  text-align: right;
-}
-
-.conflict-line code {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  font-family: inherit;
-  font-size: inherit;
-  white-space: pre;
-  text-overflow: ellipsis;
-}
-
-.conflict-line-empty {
-  color: var(--fg-faint);
-  font-style: italic;
-}
-
-.conflict-columns {
-  display: grid;
-  flex: 1 1 40%;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  min-height: 0;
-  margin-top: 8px;
 }
 
 .conflict-result {
   display: flex;
-  flex: 1 1 60%;
+  grid-column: 1 / -1;
   flex-direction: column;
   min-height: 0;
-  margin-top: 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -1945,21 +1883,6 @@ ul.branch-list li:hover {
 
 .conflict-col-ours h4 { color: var(--ok, var(--accent)); }
 .conflict-col-theirs h4 { color: var(--warn, var(--accent-2)); }
-
-/* No-Monaco fallback: tint a side's added / deleted lines against Base. */
-.conflict-pre .cl {
-  display: block;
-  margin: 0 -8px;
-  padding: 0 8px;
-}
-.conflict-col-ours .conflict-pre .cl.dl-add,
-.conflict-col-theirs .conflict-pre .cl.dl-add {
-  background: color-mix(in srgb, var(--add) 15%, transparent);
-}
-.conflict-col-ours .conflict-pre .cl.dl-del,
-.conflict-col-theirs .conflict-pre .cl.dl-del {
-  background: color-mix(in srgb, var(--del) 15%, transparent);
-}
 
 /* Monaco conflict-marker decorations in the Result pane. */
 .conflict-marker-ours { background: color-mix(in srgb, var(--ok) 14%, transparent); }
