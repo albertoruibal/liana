@@ -156,6 +156,8 @@ export interface CodeHandle {
   replaceTrackedRange(id: string, text: string): string | null;
   /** Center a 1-based inclusive line range and put the cursor on its first line. */
   revealLineRange(startLine: number, endLine: number): void;
+  /** Scroll a diff handle to its first change once the diff is computed. No-op otherwise. */
+  revealFirstDiff(): void;
   dispose(): void;
 }
 
@@ -364,6 +366,7 @@ export function createEditor(
     getTrackedLineRange: (id) => tracked.api.getTrackedLineRange(id),
     replaceTrackedRange: (id, text) => tracked.api.replaceTrackedRange(id, text),
     revealLineRange: (startLine, endLine) => tracked.api.revealLineRange(startLine, endLine),
+    revealFirstDiff: () => {},
     dispose: () => {
       scroll.dispose();
       contentSub?.dispose();
@@ -449,6 +452,7 @@ export function createDiffEditor(
     getTrackedLineRange: () => null,
     replaceTrackedRange: () => null,
     revealLineRange: () => {},
+    revealFirstDiff: () => editor.revealFirstDiff(),
     dispose: () => {
       scroll.dispose();
       for (const d of decorations) d.clear();

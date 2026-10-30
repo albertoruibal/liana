@@ -65,6 +65,7 @@ export async function mountMonacoDiff(original: string, modified: string, path: 
     path,
     sideBySide: diffView === 'split',
   });
+  diffHandle.revealFirstDiff();
   return true;
 }
 
