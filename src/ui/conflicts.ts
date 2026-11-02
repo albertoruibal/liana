@@ -295,8 +295,10 @@ function initConflictPicking(file: ConflictFile, blocks: ConflictMarkerBlock[]):
     });
   }
   refreshConflictPicking();
-  // Reveal the first conflict once the dialog has laid the editors out.
-  requestAnimationFrame(() => revealConflict(activeConflict));
+  // Reveal the first conflict once the dialog has laid the editors out. The
+  // second frame runs after Monaco has measured the panes, so the reveal is not
+  // lost to a zero-height viewport on open.
+  requestAnimationFrame(() => requestAnimationFrame(() => revealConflict(activeConflict)));
 }
 
 /** Update the conflict counter and both side panes' line decorations. */
@@ -379,7 +381,7 @@ function navigateConflict(delta: number): void {
   revealConflict(activeConflict);
 }
 
-/** Scroll the Result editor to a conflict and leave the cursor there for editing. */
+/** Scroll every pane to a conflict and leave the cursor on it in the Result. */
 function revealConflict(index: number): void {
   const state = conflictStates[index];
   if (!state || !conflictResult) return;
@@ -388,6 +390,12 @@ function revealConflict(index: number): void {
     tracked?.startLine ?? state.block.startLine + 1,
     tracked?.endLine ?? state.block.endLine,
   );
+  // The Result's scroll event syncs the side panes, but it can arrive after the
+  // dialog appears; align them now so opening lands on the conflict everywhere.
+  const top = conflictResult.getScrollPosition().top;
+  for (const handle of conflictHandles) {
+    handle.setScrollPosition(top, handle.getScrollPosition().left);
+  }
 }
 
 // --- Conflict resolution dialog ---
