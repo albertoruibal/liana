@@ -38,7 +38,7 @@ export {
 } from './worktrees';
 export { commitFiles, commitPatch, worktreePatch, selectedWorktreeDiffs, fileContents } from './diffs';
 export { loadRebasePlan, executeRebase, type RebasePlanItem } from './rebase';
-export { validRefName, remoteBranchLocalName, checkoutBranch, createBranch, deleteBranch, deleteRemoteBranchPush, createTag, deleteTag } from './branches';
+export { validRefName, remoteBranchLocalName, checkoutBranch, createBranch, deleteBranch, deleteRemoteBranchPush, renameBranch, renameRemoteBranch, createTag, deleteTag } from './branches';
 export { currentBranch, loadRemotes, upstreamRef, loadRemoteStatus, pushBranch, pullBranch, testRemote } from './remotes';
 export { resetBranch } from './reset';
 export { resolveStash, createStash, applyStash, dropStash } from './stash';

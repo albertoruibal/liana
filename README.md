@@ -90,6 +90,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/checkout` | POST | `{branch, remote?}` | Checkout a local branch; with `remote:true`, `branch` is a remote-tracking ref (`origin/feature`) and a local tracking branch is created/reused. A dirty tree is auto-stashed (including untracked files) and re-applied; returns `{stashed, restored, warning}` |
 | `/api/branch-create` | POST | `{name, ref}` | Create `ref` and check out a branch (`git checkout -b`) |
 | `/api/branch-delete` | POST | `{name, remote?}` | Delete a branch: local `-D`, or `push --delete` when `remote` |
+| `/api/branch-rename` | POST | `{name, newName, remote?}` | Rename a local branch (`branch -m`). When `remote`, `name` is `origin/old` and `newName` is the new short name: pushes the new remote branch, deletes the old one, and renames/retargets a matching local branch |
 | `/api/tag-create` | POST | `{name, ref}` | Create a lightweight tag at `ref` |
 | `/api/tag-delete` | POST | `{name}` | Delete a tag (`git tag -d`) |
 | `/api/reset` | POST | `{mode, ref}` | `git reset --soft\|--mixed\|--hard <ref>` on the checked-out branch |

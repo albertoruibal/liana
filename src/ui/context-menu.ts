@@ -4,6 +4,7 @@ import { api } from './api-client';
 import { copyToClipboard } from './clipboard';
 import { esc } from './format';
 import { openNameDialog } from './name-dialog';
+import { promptText } from './prompt';
 import { remoteLocalName } from './rebase';
 import { store } from './store';
 import { toast } from './toast';
@@ -104,6 +105,11 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
   if ((target.kind === 'local' || target.kind === 'remote' || target.kind === 'tag') && name) {
     items.push({ separator: true });
     items.push({ label: 'Copy name', action: () => void copyToClipboard(name) });
+  }
+  if (target.kind === 'local' && name) {
+    items.push({ label: `Rename branch ${name}…`, action: () => void renameBranch(name) });
+  } else if (target.kind === 'remote' && name && remoteLocalName(name)) {
+    items.push({ label: `Rename remote branch ${name}…`, action: () => void renameRemoteBranch(name) });
   }
   if (target.kind === 'local' && name && name !== currentBranch && !target.isHead) {
     items.push({ separator: true });
@@ -264,6 +270,47 @@ export async function deleteBranch(name: string, remote: boolean): Promise<void>
     await refresh();
   } catch (err) {
     toast(`Delete failed: ${String(err)}`);
+  }
+}
+
+export async function renameBranch(name: string): Promise<void> {
+  const next = (await promptText('Rename branch', 'New branch name', name))?.trim();
+  if (!next || next === name) return;
+  try {
+    await api('/branch-rename', { name, newName: next });
+    await refresh();
+  } catch (err) {
+    toast(`Rename failed: ${String(err)}`);
+  }
+}
+
+export async function renameRemoteBranch(name: string): Promise<void> {
+  const local = remoteLocalName(name);
+  if (!local) {
+    toast(`Not a remote branch: ${name}`);
+    return;
+  }
+  const remote = name.slice(0, name.length - local.length - 1);
+  const next = (await promptText(`Rename ${name}`, 'New branch name', local))?.trim();
+  if (!next || next === local) return;
+  if (
+    !(await confirmDialog({
+      title: 'Rename remote branch?',
+      message:
+        `Rename ${name} to ${remote}/${next}? Liana will push the new branch, delete the old ` +
+        `one on ${remote}, and rename the local branch when it tracks ${name}.`,
+      confirmLabel: 'Rename',
+      danger: true,
+      warning: 'Anyone else tracking the old name will need to update their branch.',
+    }))
+  ) {
+    return;
+  }
+  try {
+    await api('/branch-rename', { name, newName: next, remote: true });
+    await refresh();
+  } catch (err) {
+    toast(`Rename failed: ${String(err)}`);
   }
 }
 

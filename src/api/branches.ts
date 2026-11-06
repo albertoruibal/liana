@@ -127,6 +127,121 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
   await gitRun(repoPath, ['branch', '-D', name]);
 }
 
+/** True when a local or remote-tracking ref exists. */
+async function refExists(repoPath: string, ref: string): Promise<boolean> {
+  return gitRun(repoPath, ['show-ref', '--verify', '--quiet', ref])
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Detailed text for a git failure, preferring git's stderr. */
+function errorDetail(err: unknown): string {
+  return err instanceof GitError ? err.stderr || err.message : String(err);
+}
+
+/** Local branches whose upstream is `upstream` (e.g. `origin/feature`). */
+async function localBranchesTracking(repoPath: string, upstream: string): Promise<string[]> {
+  const out = await gitRun(repoPath, [
+    'for-each-ref',
+    '--format=%(refname:short)%00%(upstream:short)',
+    'refs/heads',
+  ]);
+  const result: string[] = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const [name = '', tracked = ''] = line.split('\0');
+    if (name && tracked === upstream) result.push(name);
+  }
+  return result;
+}
+
+/** Rename a local branch (`git branch -m`); its config and upstream are kept. */
+export async function renameBranch(repoPath: string, name: string, newName: string): Promise<void> {
+  if (name === newName) return;
+  await gitRun(repoPath, ['branch', '-m', name, newName]);
+}
+
+/**
+ * Rename a remote branch. The local branch named after it (when it tracks the
+ * old ref) is renamed too, then the new remote branch is pushed from the old
+ * remote-tracking tip, the old remote branch is deleted, and every local branch
+ * that tracked it is pointed at the new upstream. Git has no atomic remote
+ * branch rename, so a failed delete is reported after the new branch exists.
+ */
+export async function renameRemoteBranch(
+  repoPath: string,
+  name: string,
+  newName: string,
+): Promise<void> {
+  const m = /^([^/]+)\/(.+)$/.exec(name);
+  const remote = m?.[1] ?? '';
+  const oldBranch = m?.[2] ?? '';
+  if (!remote || !oldBranch || oldBranch === 'HEAD') {
+    throw new GitError(`Not a remote branch: ${name}`, '');
+  }
+  if (oldBranch === newName) return;
+
+  const oldRef = `refs/remotes/${remote}/${oldBranch}`;
+  const newRef = `refs/remotes/${remote}/${newName}`;
+  if (await refExists(repoPath, newRef)) {
+    throw new GitError(`Remote branch already exists: ${remote}/${newName}`, '', 400);
+  }
+
+  const tracking = await localBranchesTracking(repoPath, `${remote}/${oldBranch}`);
+  const localToRename = tracking.includes(oldBranch) ? oldBranch : null;
+  if (localToRename && (await refExists(repoPath, `refs/heads/${newName}`))) {
+    throw new GitError(`Local branch already exists: ${newName}`, '', 400);
+  }
+
+  // Rename the local side first: a failure here (collision, another worktree)
+  // leaves the remote untouched. A failed push rolls the local rename back.
+  if (localToRename) await renameBranch(repoPath, localToRename, newName);
+
+  try {
+    await gitRun(repoPath, ['push', remote, `${oldRef}:refs/heads/${newName}`], NET_ENV);
+  } catch (err) {
+    if (localToRename) {
+      try {
+        await renameBranch(repoPath, newName, localToRename);
+      } catch (rollbackErr) {
+        throw new GitError(
+          `${errorDetail(err)}\nThe local branch was renamed to ${newName} but could not be ` +
+            `renamed back: ${errorDetail(rollbackErr)}`,
+          err instanceof GitError ? err.stderr : '',
+        );
+      }
+    }
+    throw err;
+  }
+
+  const problems: string[] = [];
+  let stderr = '';
+  try {
+    await gitRun(repoPath, ['push', remote, '--delete', oldBranch], NET_ENV);
+  } catch (err) {
+    problems.push(`the old remote branch could not be deleted: ${errorDetail(err)}`);
+    if (err instanceof GitError) stderr = err.stderr;
+  }
+
+  for (const local of tracking) {
+    const target = local === localToRename ? newName : local;
+    try {
+      await gitRun(repoPath, ['config', `branch.${target}.remote`, remote]);
+      await gitRun(repoPath, ['config', `branch.${target}.merge`, `refs/heads/${newName}`]);
+    } catch (err) {
+      problems.push(`the upstream of ${target} could not be updated: ${errorDetail(err)}`);
+      if (!stderr && err instanceof GitError) stderr = err.stderr;
+    }
+  }
+
+  if (problems.length > 0) {
+    throw new GitError(
+      `Renamed ${name} to ${remote}/${newName}, but ${problems.join('; ')}`,
+      stderr,
+    );
+  }
+}
+
 /** Delete the branch on the remote and its tracking ref (`git push --delete`). */
 export async function deleteRemoteBranchPush(repoPath: string, name: string): Promise<void> {
   const m = /^([^/]+)\/(.+)$/.exec(name);

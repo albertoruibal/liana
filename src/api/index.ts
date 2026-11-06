@@ -82,6 +82,8 @@ import {
   createBranch,
   deleteBranch,
   deleteRemoteBranchPush,
+  renameBranch,
+  renameRemoteBranch,
   createTag,
   deleteTag,
 } from './branches';
@@ -817,6 +819,20 @@ export function createApi(defaultRepo: string | null): Api {
         if (!branch) return { status: 400, body: { error: 'Missing branch' } };
         if (remote) await deleteRemoteBranchPush(repoPath, branch);
         else await deleteBranch(repoPath, branch);
+        return { status: 200, body: { ok: true } };
+      }
+      if (route === '/branch-rename' && method === 'POST') {
+        const { name, newName, remote } = JSON.parse(rawBody) as {
+          name?: string;
+          newName?: string;
+          remote?: boolean;
+        };
+        const from = name?.trim() ?? '';
+        const to = newName?.trim() ?? '';
+        if (!from) return { status: 400, body: { error: 'Missing branch' } };
+        if (!validRefName(to)) return { status: 400, body: { error: 'Invalid branch name' } };
+        if (remote) await renameRemoteBranch(repoPath, from, to);
+        else await renameBranch(repoPath, from, to);
         return { status: 200, body: { ok: true } };
       }
       if (route === '/tag-create' && method === 'POST') {
