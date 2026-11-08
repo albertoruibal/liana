@@ -137,6 +137,7 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/gitlab/mr` | POST | `{iid, fetch?}` | Deprecated alias for `/api/forge/mr` forcing GitLab |
 | `/api/gitlab/approve` | POST | `{iid}` | Deprecated alias for `/api/forge/approve` forcing GitLab |
 | `/api/review/generate` | POST | `{iid, providerId?, rule?}` | Start a review job; returns `{job}` |
+| `/api/review/generate-commit` | POST | `{hash, providerId?, rule?}` | Start a local-only review of one commit (diffed against its first parent); returns `{job, changes}` |
 | `/api/review/status` | POST | `{jobId}` | Job state, agent trace, proposed comments (model log stripped to step metadata) |
 | `/api/review/log` | POST | `{jobId, index}` | One model call's full untruncated prompt and response, loaded on demand |
 | `/api/review/cancel` | POST | `{jobId}` | Abort a running review (terminal) |
@@ -293,8 +294,15 @@ metadata, changed files, and diff refs, then starts a background job that asks a
 review comments. Selecting a request fetches its head commit into the repository — GitLab via `git fetch --no-tags
 <origin> +refs/merge-requests/<iid>/head:refs/liana/mr/<iid>`, GitHub via `+refs/pull/<n>/head:refs/liana/pr/<n>`, each
 falling back to fetching the head SHA — so the read-only tools can read it; this writes only objects and the hidden
-`refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree. The tab polls
-the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
+`refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree.
+
+**Single-commit review.** Right-click any commit in the graph and choose **Review commit with AI…** to review just that
+commit instead of a request. The job reads the repository at the commit and diffs it against its first parent (a root
+commit has no base), so it works for unpushed commits and never needs the network. Proposed comments are **local-only**:
+the review tab labels the target as a commit and hides Post comment / Checkout / Approve, because there is no request to
+post to. Saved reviews from commits are labelled `Commit <short-hash>` in the picker.
+
+The tab polls the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
 and each proposed comment lands in the list as it arrives. Clicking the job's **Batch N/M · Step X** progress line (shown
 whenever a review job exists, running or not) opens the **Model log** dialog, a single timeline that
 interleaves every model call with the tool calls it made, and loads

@@ -12,7 +12,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatMessage } from './review-tools';
-import type { ForgeKind, ReviewChanges, ReviewJob, ReviewPromptStep, ReviewRuleConfig } from './types';
+import type {
+  ForgeKind,
+  ReviewChanges,
+  ReviewCommitInfo,
+  ReviewJob,
+  ReviewPromptStep,
+  ReviewRuleConfig,
+} from './types';
 
 /** In-flight agent checkpoint inside the current batch, sufficient to resume. */
 export interface BatchCheckpoint {
@@ -177,7 +184,7 @@ function coerceChanges(v: unknown): ReviewChanges | null {
   const refs = v.diffRefs;
   // Sessions written before the forge field existed are GitLab-only.
   const forge: ForgeKind = v.forge === 'github' ? 'github' : 'gitlab';
-  return {
+  const changes: ReviewChanges = {
     forge,
     mr: {
       iid: Math.floor(num(mr.iid, 0)),
@@ -204,6 +211,19 @@ function coerceChanges(v: unknown): ReviewChanges | null {
       startSha: str(refs.startSha, ''),
     },
   };
+  if (isRecord(v.commit)) {
+    const c = v.commit;
+    const commit: ReviewCommitInfo = {
+      hash: str(c.hash, ''),
+      shortHash: str(c.shortHash, ''),
+      subject: str(c.subject, ''),
+      author: str(c.author, ''),
+      timestamp: Math.max(0, Math.floor(num(c.timestamp, 0))),
+      baseHash: optionalString(c.baseHash),
+    };
+    if (commit.hash) changes.commit = commit;
+  }
+  return changes;
 }
 
 function coerceRule(v: unknown): ReviewRuleConfig {

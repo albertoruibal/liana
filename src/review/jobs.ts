@@ -116,6 +116,7 @@ export function listReviewSessions(repoPath: string): ReviewSession[] {
     batchTotal: s.job.batchTotal,
     llmDurationMs: s.job.llmDurationMs,
     forge: s.changes.forge,
+    commit: s.changes.commit?.shortHash ?? null,
   }));
 }
 
@@ -133,6 +134,7 @@ function publicSession(s: StoredReviewSession): ReviewSession {
     batchTotal: s.job.batchTotal,
     llmDurationMs: s.job.llmDurationMs,
     forge: s.changes.forge,
+    commit: s.changes.commit?.shortHash ?? null,
   };
 }
 
@@ -828,9 +830,14 @@ async function runBatch(
   // than silently reviewing the diff alone.
   const headAvailable = headRef !== '' && (await hasCommit(rec.repoPath, headRef).catch(() => false));
   if (!headAvailable) {
+    const target = changes.commit
+      ? `commit ${changes.commit.shortHash}`
+      : `${forgeLabel(changes.forge)} head commit`;
     throw new Error(
-      `The ${forgeLabel(changes.forge)} head commit is not available locally — ` +
-        'use "Checkout branch" to fetch it, then start the review again.',
+      `The ${target} is not available locally — ` +
+        (changes.commit
+          ? 'start the review again from the commit.'
+          : 'use "Checkout branch" to fetch it, then start the review again.'),
     );
   }
   const ctx: ToolContext = {
@@ -846,8 +853,9 @@ async function runBatch(
     {
       role: 'user',
       content:
-        'Review the merge request changes above. Report each issue by calling add_comment; ' +
-        'only comment on the files listed above. When you are done, call finish_batch.',
+        `Review the ${changes.commit ? 'commit' : 'merge request'} changes above. ` +
+        'Report each issue by calling add_comment; only comment on the files listed ' +
+        'above. When you are done, call finish_batch.',
     },
   ];
   // Reuse a checkpoint only when it belongs to the batch we are about to run;
@@ -1097,6 +1105,7 @@ function buildSystemPrompt(
   batchIndex: number,
   batchTotal: number,
 ): string {
+  const commit = changes.commit;
   const batching = batchTotal > 1;
   const files = batch
     .map((f) => `- ${f.newPath}${f.newFile ? ' (new)' : ''}${f.deletedFile ? ' (deleted)' : ''}`)
@@ -1104,34 +1113,51 @@ function buildSystemPrompt(
   const diffs = batch
     .map((f) => `### ${f.newPath}\n${f.diff || '(binary or empty diff)'}`)
     .join('\n\n');
+  const target = commit ? 'commit' : forgeLabel(changes.forge);
+  const headLabel = commit ? 'the commit' : 'the merge request head';
+  const baseLabel = commit
+    ? commit.baseHash
+      ? `Base: ${commit.baseHash.slice(0, 8)} (first parent)`
+      : 'Root commit: every file is new.'
+    : `Branches: ${changes.mr.sourceBranch} → ${changes.mr.targetBranch}`;
   const lines = [
-    `You are reviewing a ${forgeLabel(changes.forge)}.`,
+    `You are reviewing a ${commit ? 'single commit' : target}.`,
     rule.instructions,
     '',
-    `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,
-    `Branches: ${changes.mr.sourceBranch} → ${changes.mr.targetBranch}`,
+    ...(commit
+      ? [
+          `Commit ${commit.shortHash}: ${commit.subject}`,
+          `Author: ${commit.author}`,
+          baseLabel,
+        ]
+      : [
+          `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,
+          baseLabel,
+        ]),
     '',
-    // When the MR is split across batches, make the model's scope explicit: it is
-    // reviewing a subset, and the other changed files belong to other batches.
+    // When the review is split across batches, make the model's scope explicit:
+    // it is reviewing a subset, and the other changed files belong to other batches.
     ...(batching
       ? [
-          `This is batch ${batchIndex} of ${batchTotal} of this merge request; only the ` +
-            'files listed below are under review here. The remaining changed files are ' +
-            'covered by the other batches — do not search for them, read their diffs, ' +
-            'or comment on them.',
+          `This is batch ${batchIndex} of ${batchTotal} of this ${commit ? 'commit' : 'merge request'}; ` +
+            'only the files listed below are under review here. The remaining changed ' +
+            'files are covered by the other batches — do not search for them, read ' +
+            'their diffs, or comment on them.',
           '',
         ]
       : []),
     batching ? 'Changed files in this batch:' : 'Changed files:',
     files,
     '',
-    'Diff:',
+    commit && commit.baseHash
+      ? `Diff against ${commit.baseHash.slice(0, 8)}:`
+      : 'Diff:',
     diffs,
     '',
-    // A comment must be substantiated by the repository at the MR head, including
-    // code the diff does not show.
-    'Before writing a comment, verify the fact against the repository at the ' +
-      'merge request head — read the file and search related code, including files ' +
+    // A comment must be substantiated by the repository at the target ref,
+    // including code the diff does not show.
+    'Before writing a comment, verify the fact against the repository at ' +
+      `${headLabel} — read the file and search related code, including files ` +
       'that are not part of the diff (callers, interfaces, tests, config). Only ' +
       'report an issue you can substantiate with a concrete file and line; if the ' +
       'code already handles the case, do not comment.',
@@ -1146,7 +1172,7 @@ function buildSystemPrompt(
     '',
     'Report every issue by calling add_comment as soon as you can substantiate it — ' +
       'never wait until the end, and never write comments in a final message. Use the ' +
-      'provided tools to read the rest of the repository at the MR head before ' +
+      `provided tools to read the rest of the repository at ${headLabel} before ` +
       'commenting. Give a line that is present in the diff, or omit the anchor for a ' +
       'comment about the file as a whole rather than guessing a line.',
     '',

@@ -415,6 +415,21 @@ export interface ReviewRequest {
   draft: boolean;
 }
 
+/** A single local commit reviewed instead of a forge request. */
+export interface ReviewCommitInfo {
+  /** Full 40-char SHA under review. */
+  hash: string;
+  /** Abbreviated hash for display. */
+  shortHash: string;
+  /** Commit subject line. */
+  subject: string;
+  author: string;
+  /** Author timestamp, unix seconds. */
+  timestamp: number;
+  /** First parent used as the diff base, or null for a root commit. */
+  baseHash: string | null;
+}
+
 /** One changed file in a request, with its unified diff. */
 export interface ReviewFile {
   oldPath: string;
@@ -435,11 +450,13 @@ export interface DiffRefs {
 
 /** A request plus its changed files and diff refs. */
 export interface ReviewChanges {
-  /** Forge the request came from. */
+  /** Forge the request came from (also the repository's forge for commit reviews). */
   forge: ForgeKind;
   mr: ReviewRequest;
   files: ReviewFile[];
   diffRefs: DiffRefs;
+  /** Present when this review targets a single local commit rather than a request. */
+  commit?: ReviewCommitInfo;
 }
 
 // Back-compat aliases: the persisted session wire shape keeps the `mr`/`iid`
@@ -565,6 +582,8 @@ export interface ReviewSession {
   llmDurationMs: number;
   /** Forge the session was created against (defaults to gitlab for old files). */
   forge: ForgeKind;
+  /** Short commit hash when this session reviews a single commit, else null. */
+  commit: string | null;
 }
 
 /** A review session restored in full, ready to render in the review view. */

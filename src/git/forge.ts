@@ -5,7 +5,7 @@
 // over HTTP, callable directly. Types come from src/types.ts and are identical on
 // both sides. The browser UI still talks to /api (see src/ui/).
 
-import type { AiModelInfo, ForgeKind, ReviewChanges, ReviewRequest } from '../types';
+import type { AiModelInfo, ForgeKind, ReviewChanges, ReviewJob, ReviewRequest, ReviewRuleConfig } from '../types';
 import type { StoredProvider } from '../settings';
 
 /** Open merge/pull requests for the repository's resolved forge. */
@@ -38,6 +38,20 @@ export async function apiGetRequestChanges(
 export async function apiApproveRequest(repoPath: string, iid: number): Promise<void> {
   const { resolveForge } = await import('../forges');
   await (await resolveForge(repoPath)).approve(repoPath, iid);
+}
+
+/**
+ * Start a local-only review of one commit (mirrors `POST
+ * /api/review/generate-commit` in src/api/index.ts).
+ */
+export async function apiStartCommitReview(
+  repoPath: string,
+  hash: string,
+  providerId?: string,
+  rule?: Partial<ReviewRuleConfig>,
+): Promise<{ job: ReviewJob; changes: ReviewChanges }> {
+  const { startCommitReview } = await import('../review');
+  return startCommitReview({ repoPath, hash, providerId, rule });
 }
 
 /** Check out a request's source branch and reset it to the request head. */

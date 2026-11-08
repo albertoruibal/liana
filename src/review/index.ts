@@ -12,6 +12,12 @@
 export { testProvider, completeText, listProviderModels } from './ai';
 export { generateCommitMessage, type CommitMessageInput } from './commit-message';
 export {
+  isFullCommitHash,
+  reviewChangesForCommit,
+  startCommitReview,
+  type StartCommitReviewOptions,
+} from './commit-review';
+export {
   listMergeRequests,
   getMergeRequestChanges,
   ensureMergeRequestRefs,

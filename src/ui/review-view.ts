@@ -44,17 +44,34 @@ export function requestNumber(forge: ForgeKind | undefined, iid: number): string
 /** The review subtitle shown on its tab tooltip: the selected request, or a hint. */
 export function reviewTabSubtitle(state: ReviewTabState | undefined): string {
   const changes = state?.changes;
-  return changes
-    ? `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`
-    : 'Review an open merge/pull request with AI.';
+  if (!changes) return 'Review an open merge/pull request or a single commit with AI.';
+  if (changes.commit) {
+    return `Commit ${changes.commit.shortHash}: ${changes.commit.subject} — ${changes.files.length} file(s)`;
+  }
+  return `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
 }
 
 /** Update the review toolbar wording (merge request vs pull request) for a tab. */
 export function paintForgeWording(state: ReviewTabState): void {
   if (!isReviewShown(state)) return;
+  const commit = state.changes?.commit;
+  const select = $<HTMLSelectElement>('#review-mr-select');
+  if (commit) {
+    $('#review-mr-label').textContent = 'Commit';
+    $('#review-refresh-mrs').hidden = true;
+    $('#review-checkout-mr').hidden = true;
+    $('#review-approve-mr').hidden = true;
+    select.disabled = true;
+    select.title = 'Single-commit reviews keep their proposed comments local.';
+    return;
+  }
   const { short, long } = forgeLabels(state.changes?.forge);
   $('#review-mr-label').textContent = long.charAt(0).toUpperCase() + long.slice(1);
   $('#review-approve-mr').textContent = `Approve ${short}`;
+  $('#review-refresh-mrs').hidden = false;
+  $('#review-checkout-mr').hidden = false;
+  select.disabled = false;
+  select.title = '';
   $<HTMLButtonElement>('#review-checkout-mr').disabled = state.changes === null;
 }
 
@@ -158,11 +175,15 @@ export function refreshSessionSelect(state: ReviewTabState): void {
   sel.innerHTML =
     '<option value="">— Saved reviews —</option>' +
     state.sessions
-      .map(
-        (s) =>
+      .map((s) => {
+        const label = s.commit
+          ? `Commit ${esc(s.commit)} ${esc(s.title)}`
+          : `${requestNumber(s.forge, s.iid)} ${esc(s.title)}`;
+        return (
           `<option value="${esc(s.id)}"${s.id === current ? ' selected' : ''}>` +
-          `${requestNumber(s.forge, s.iid)} ${esc(s.title)} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}${s.llmDurationMs > 0 ? ` · ${fmtDuration(s.llmDurationMs)}` : ''}</option>`,
-      )
+          `${label} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}${s.llmDurationMs > 0 ? ` · ${fmtDuration(s.llmDurationMs)}` : ''}</option>`
+        );
+      })
       .join('');
   $<HTMLButtonElement>('#review-delete-session').toggleAttribute('disabled', !current);
 }
@@ -212,13 +233,22 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   if (!isReviewShown(state)) return;
   paintForgeWording(state);
   refreshMrSelect(state);
-  $('#review-approve-mr').hidden = false;
+  $('#review-approve-mr').hidden = !!view.changes.commit;
   renderJob(state, view.job);
   if (view.job.comments.length === 0) $('#review-queue-wrap').hidden = true;
 }
 
 export function refreshMrSelect(state: ReviewTabState): void {
   const sel = $<HTMLSelectElement>('#review-mr-select');
+  const commit = state.changes?.commit;
+  if (commit) {
+    sel.innerHTML = `<option value="0">${esc(commit.shortHash)} — ${esc(commit.subject)}</option>`;
+    sel.value = '0';
+    sel.disabled = true;
+    $('#review-generate').hidden = true;
+    return;
+  }
+  sel.disabled = false;
   const listed = state.mrs.some((m) => m.iid === state.mrIid);
   // A session may target a request that is no longer open (closed/merged);
   // pin it as an extra option so the picker still reflects the restored MR.
@@ -284,7 +314,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     refreshSessionSelect(state);
     paintForgeWording(state);
     $('#review-queue-wrap').hidden = true;
-    paintJobControls(null);
+    paintJobControls(state, null);
     $('#review-approve-mr').hidden = false;
     // A failed head fetch silently degrades the AI review to diff-only, so keep
     // it visible: the warning offers to check out the request branch instead.
@@ -982,6 +1012,7 @@ function autosizeCommentBodies(root: ParentNode): void {
 /** Build a fresh comment card (with the HTML excerpt fallback) and wire it up. */
 function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement {
   const line = commentLineLabel(c);
+  const commitReview = !!state.changes?.commit;
   const scanning = c.stage === 'pending' && state.job?.state === 'running';
   const stage = scanning ? '<span class="review-stage-badge">scanning…</span>' : '';
   const template = document.createElement('template');
@@ -998,7 +1029,11 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
       <textarea class="review-comment-body" rows="3" data-id="${esc(c.id)}">${esc(c.body)}</textarea>
       <div class="review-comment-actions">
         <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
-        <button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>
+        ${
+          commitReview
+            ? ''
+            : `<button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>`
+        }
       </div>
     </div>`;
   const card = template.content.firstElementChild as HTMLElement;
@@ -1151,6 +1186,7 @@ export function setCommentStatus(state: ReviewTabState, c: ReviewComment, status
 
 /** Approve a comment: mark it, then post that comment alone to the MR. */
 export async function approveComment(state: ReviewTabState, id: string): Promise<void> {
+  if (state.changes?.commit) return;
   const c = state.job?.comments.find((x) => x.id === id);
   if (!c || c.status === 'posted' || state.sending.has(id)) return;
   state.sending.add(id);
@@ -1178,7 +1214,7 @@ export function rejectComment(state: ReviewTabState, id: string): void {
 export async function sendComment(state: ReviewTabState, id: string): Promise<void> {
   const job = state.job;
   const changes = state.changes;
-  if (!job || !changes) return;
+  if (!job || !changes || changes.commit) return;
   const c = job.comments.find((x) => x.id === id);
   if (!c) return;
   const status = $('#review-status');
@@ -1221,19 +1257,21 @@ export async function sendComment(state: ReviewTabState, id: string): Promise<vo
  * review). An active session (running or paused) hides "Review with AI" so the
  * row shows Pause/Cancel (or Resume/Cancel) instead.
  */
-function paintJobControls(job: ReviewJob | null): void {
-  const state = job?.state ?? null;
-  $('#review-generate').hidden = state === 'running' || state === 'paused';
-  $('#review-pause-job').hidden = state !== 'running';
-  $('#review-resume-job').hidden = state !== 'paused' && state !== 'error';
-  $('#review-cancel-job').hidden = state !== 'running' && state !== 'paused';
+function paintJobControls(state: ReviewTabState | null, job: ReviewJob | null): void {
+  const jobState = job?.state ?? null;
+  // A commit review has no request to start over; re-open it from the graph.
+  $('#review-generate').hidden =
+    !!state?.changes?.commit || jobState === 'running' || jobState === 'paused';
+  $('#review-pause-job').hidden = jobState !== 'running';
+  $('#review-resume-job').hidden = jobState !== 'paused' && jobState !== 'error';
+  $('#review-cancel-job').hidden = jobState !== 'running' && jobState !== 'paused';
   const progress = $<HTMLButtonElement>('#review-progress');
-  progress.hidden = state === null;
-  progress.setAttribute('aria-busy', state === 'running' ? 'true' : 'false');
+  progress.hidden = jobState === null;
+  progress.setAttribute('aria-busy', jobState === 'running' ? 'true' : 'false');
 }
 
 export function renderJob(state: ReviewTabState, job: ReviewJob): void {
-  paintJobControls(job);
+  paintJobControls(state, job);
   // Paused and errored jobs are both resumable: resume re-issues the last step
   // (from the checkpoint when there is one, else the current batch from scratch).
   const stalled = job.state === 'paused' && job.stalledBatch !== null;
@@ -1298,7 +1336,7 @@ export async function persistSessionEdits(state: ReviewTabState): Promise<void> 
 /** Load the selected MR, then start a review job for it. */
 export async function generateReview(): Promise<void> {
   const state = activeReview();
-  if (!state) return;
+  if (!state || state.changes?.commit) return;
   if (!(await loadSelectedMr(true))) return;
   if (!state.changes) return;
   const status = $('#review-status');
@@ -1326,7 +1364,7 @@ export async function generateReview(): Promise<void> {
 export async function checkoutMrBranch(): Promise<void> {
   const state = activeReview();
   const changes = state?.changes;
-  if (!state || !changes) return;
+  if (!state || !changes || changes.commit) return;
   const branch = changes.mr.sourceBranch.trim();
   const { short } = forgeLabels(changes.forge);
   const status = $('#review-status');
@@ -1357,20 +1395,15 @@ export async function checkoutMrBranch(): Promise<void> {
   }
 }
 
-/** Hide the graph/detail columns and show the review view for this repository. */
-export function openReviewTab(): void {
-  // Bind to the active repository; opening review with no repo is a no-op.
+/** The current repository's review state, creating it on first use. */
+function ensureReviewState(): ReviewTabState | null {
   if (!store.activeId) {
     toast('Open a repository first.', 'info');
-    return;
-  }
-  // Re-opening for a repo that already has a review tab focuses it, keeping state.
-  if (activeTab()?.review) {
-    activateReviewTab(store.activeId);
-    return;
+    return null;
   }
   const tab = activeTab();
-  if (!tab) return;
+  if (!tab) return null;
+  if (tab.review) return tab.review;
   const state: ReviewTabState = {
     repoId: store.activeId,
     repoPath: tab.path,
@@ -1387,7 +1420,41 @@ export function openReviewTab(): void {
     headWarning: null,
   };
   tab.review = state;
-  store.activePanel = { kind: 'review', repoId: store.activeId };
+  return state;
+}
+
+/** Hide the graph/detail columns and show the review view for this repository. */
+export function openReviewTab(): void {
+  const existing = store.activeId ? activeTab()?.review : null;
+  if (existing) {
+    // A commit review is a one-off target; re-opening Code review returns to
+    // the request picker. A request review is focused with its state preserved.
+    if (!existing.changes?.commit) {
+      if (store.activeId) activateReviewTab(store.activeId);
+      return;
+    }
+    window.clearTimeout(existing.poll);
+    window.clearTimeout(existing.saveTimer);
+    existing.changes = null;
+    existing.job = null;
+    existing.edits.clear();
+    existing.showRejected = false;
+    existing.headWarning = null;
+    existing.mrIid = 0;
+    store.activePanel = { kind: 'review', repoId: existing.repoId };
+    resetReviewDom();
+    refreshMrSelect(existing);
+    refreshSessionSelect(existing);
+    paintForgeWording(existing);
+    applyPanel();
+    renderTabs();
+    void loadMergeRequests(existing);
+    void loadReviewSessions(existing);
+    return;
+  }
+  const state = ensureReviewState();
+  if (!state) return;
+  store.activePanel = { kind: 'review', repoId: state.repoId };
   resetReviewDom();
   refreshSessionSelect(state);
   persistReviewTabs();
@@ -1397,12 +1464,76 @@ export function openReviewTab(): void {
   void loadReviewSessions(state);
 }
 
+/**
+ * Open the review panel on one local commit and start its AI review. Comments
+ * are local-only: there is no request to post them to.
+ */
+export async function openCommitReview(hash: string): Promise<void> {
+  const state = ensureReviewState();
+  if (!state) return;
+  if (state.job?.state === 'running') {
+    const proceed = await confirmDialog({
+      title: 'Start a commit review?',
+      message:
+        'A review is running in this tab. Starting a commit review hides it; it keeps ' +
+        'running in the background and remains available under Saved reviews.',
+      confirmLabel: 'Start commit review',
+    });
+    if (!proceed) return;
+  }
+  window.clearTimeout(state.poll);
+  window.clearTimeout(state.saveTimer);
+  state.changes = null;
+  state.job = null;
+  state.edits.clear();
+  state.showRejected = false;
+  state.headWarning = null;
+  state.mrIid = 0;
+  store.activePanel = { kind: 'review', repoId: state.repoId };
+  resetReviewDom();
+  refreshSessionSelect(state);
+  refreshMrSelect(state);
+  paintForgeWording(state);
+  persistReviewTabs();
+  applyPanel();
+  renderTabs();
+  const status = $('#review-status');
+  status.textContent = 'Starting commit review…';
+  try {
+    const { job, changes } = await reviewApi<{ job: ReviewJob; changes: ReviewChanges }>(
+      state,
+      '/review/generate-commit',
+      { hash },
+    );
+    state.changes = changes;
+    state.job = job;
+    state.edits.clear();
+    state.showRejected = false;
+    state.headWarning = null;
+    refreshMrSelect(state);
+    paintForgeWording(state);
+    $('#review-approve-mr').hidden = true;
+    $('#review-queue-wrap').hidden = true;
+    status.textContent = '';
+    if (isReviewShown(state)) renderJob(state, job);
+    renderTabs();
+    window.clearTimeout(state.poll);
+    state.poll = window.setTimeout(() => void pollJob(state), 600);
+    void loadReviewSessions(state);
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
 /** Clear the review view's DOM for a fresh tab. */
 export function resetReviewDom(): void {
   $('#review-queue-wrap').hidden = true;
-  paintJobControls(null);
+  paintJobControls(null, null);
   $('#review-approve-mr').hidden = true;
   $('#review-warning').hidden = true;
+  $<HTMLSelectElement>('#review-mr-select').disabled = false;
+  $('#review-refresh-mrs').hidden = false;
+  $('#review-checkout-mr').hidden = false;
 }
 
 /** Repaint the review view from a tab's stored state when it becomes visible. */
@@ -1411,9 +1542,9 @@ export function paintReview(state: ReviewTabState): void {
   refreshSessionSelect(state);
   const changes = state.changes;
   paintForgeWording(state);
-  $('#review-approve-mr').hidden = changes === null;
+  $('#review-approve-mr').hidden = changes === null || !!changes.commit;
   $('#review-queue-wrap').hidden = true;
-  paintJobControls(state.job);
+  paintJobControls(state, state.job);
   $('#review-status').textContent = '';
   paintReviewWarning(state);
   if (state.job) renderJob(state, state.job);
@@ -1442,6 +1573,13 @@ export function closeReviewTab(repoId: string): void {
 
 export function initReview(): void {
   window.addEventListener('pagehide', flushReviewEdits);
+
+  // The graph context menu asks for a single-commit review through this event,
+  // avoiding a static import cycle between the two UI modules.
+  window.addEventListener('liana-review-commit', (ev) => {
+    const hash = (ev as CustomEvent<unknown>).detail;
+    if (typeof hash === 'string' && hash) void openCommitReview(hash);
+  });
 
   // Text can reflow when the window narrows; re-grow comment bodies so their
   // full text stays visible without an inner scrollbar.
@@ -1594,7 +1732,7 @@ export function initReview(): void {
         state.showRejected = false;
         refreshSessionSelect(state);
         $('#review-queue-wrap').hidden = true;
-        paintJobControls(null);
+        paintJobControls(state, null);
         $('#review-status').textContent = 'Saved review deleted.';
         renderTabs();
         void loadReviewSessions(state);
@@ -1649,7 +1787,7 @@ export function initReview(): void {
       .then(() => {
         window.clearTimeout(state.poll);
         if (state.job) state.job.state = 'cancelled';
-        paintJobControls(state.job);
+        paintJobControls(state, state.job);
         renderTabs();
         $('#review-status').textContent = 'Review cancelled.';
       })

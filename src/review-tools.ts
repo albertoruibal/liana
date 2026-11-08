@@ -51,13 +51,13 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_files',
     description:
-      'List repository files at a ref (the merge request head by default), optionally ' +
+      'List repository files at a ref (the request head or reviewed commit by default), optionally ' +
       'filtered by a glob pattern. Covers the whole repository, including files not in the diff.',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: 'Glob like "src/**/*.ts". Empty lists everything.' },
-        ref: { type: 'string', description: 'Git ref; defaults to the merge request head.' },
+        ref: { type: 'string', description: 'Git ref; defaults to the reviewed ref.' },
       },
       required: [],
     },
@@ -65,13 +65,13 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'read_file',
     description:
-      'Read a text file at a ref (the merge request head by default), optionally a line ' +
+      'Read a text file at a ref (the request head or reviewed commit by default), optionally a line ' +
       'range (1-based, inclusive). Use this to verify facts in files outside the diff.',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Repository-relative path.' },
-        ref: { type: 'string', description: 'Git ref; defaults to the merge request head.' },
+        ref: { type: 'string', description: 'Git ref; defaults to the reviewed ref.' },
         startLine: { type: 'integer', description: 'First line to return (1-based).' },
         endLine: { type: 'integer', description: 'Last line to return (inclusive).' },
       },
@@ -81,7 +81,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'search_code',
     description:
-      'Search tracked file contents at a ref (the merge request head by default), ' +
+      'Search tracked file contents at a ref (the request head or reviewed commit by default), ' +
       'returning matching lines (ripgrep-like). Searches the whole repository, including ' +
       'files not in the diff, so related code can be verified. ' +
       'Supports extended regex, case-insensitive, whole-word, fixed-string, context lines, and filenames-only modes.',
@@ -90,7 +90,7 @@ export const TOOLS: ToolDef[] = [
       properties: {
         pattern: { type: 'string', description: 'Regular expression to search for.' },
         glob: { type: 'string', description: 'Optional pathspec/glob to limit the search.' },
-        ref: { type: 'string', description: 'Git ref; defaults to the merge request head.' },
+        ref: { type: 'string', description: 'Git ref; defaults to the reviewed ref.' },
         ignoreCase: { type: 'boolean', description: 'Case-insensitive match.' },
         fixedStrings: { type: 'boolean', description: 'Treat the pattern as a literal string.' },
         word: { type: 'boolean', description: 'Match whole words only.' },
@@ -108,7 +108,7 @@ export const TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Limit history to this path.' },
-        ref: { type: 'string', description: 'Git ref; defaults to the merge request head.' },
+        ref: { type: 'string', description: 'Git ref; defaults to the reviewed ref.' },
         max: { type: 'integer', description: 'Maximum commits (default 20).' },
       },
       required: [],

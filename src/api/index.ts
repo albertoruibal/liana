@@ -13,6 +13,7 @@ import {
   generateCommitMessage,
   getReviewJob,
   getReviewLog,
+  isFullCommitHash,
   listReviewSessions,
   loadReviewSession,
   pauseReviewJob,
@@ -20,6 +21,7 @@ import {
   resumeReviewAtStep,
   reviewJobRepo,
   saveReviewSessionComments,
+  startCommitReview,
   startReview,
   testForge,
   testGitLab,
@@ -287,6 +289,26 @@ export function createApi(defaultRepo: string | null): Api {
           rule: parsed.rule,
         });
         return { status: 200, body: { ok: true, job } };
+      }
+      if (route === '/review/generate-commit' && method === 'POST') {
+        const parsed = JSON.parse(rawBody) as {
+          hash?: string;
+          providerId?: string;
+          rule?: Partial<ReviewRuleConfig>;
+        };
+        if (!parsed.hash?.trim()) {
+          return { status: 400, body: { error: 'Missing commit hash' } };
+        }
+        if (!isFullCommitHash(parsed.hash)) {
+          return { status: 400, body: { error: 'Invalid commit hash' } };
+        }
+        const { job, changes } = await startCommitReview({
+          repoPath,
+          hash: parsed.hash.trim(),
+          providerId: parsed.providerId,
+          rule: parsed.rule,
+        });
+        return { status: 200, body: { ok: true, job, changes } };
       }
       if (route === '/review/checkout-branch' && method === 'POST') {
         const { iid, branch, forge } = JSON.parse(rawBody) as {

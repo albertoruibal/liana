@@ -70,6 +70,11 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
     items.push({ label: 'Create branch here…', action: () => openNameDialog('branch', hash) });
     items.push({ label: 'Create tag here…', action: () => openNameDialog('tag', hash) });
     items.push({ label: 'Create worktree here…', action: () => openWorktreeDialog(hash) });
+    items.push({
+      label: 'Review commit with AI…',
+      action: () =>
+        window.dispatchEvent(new CustomEvent('liana-review-commit', { detail: hash })),
+    });
   }
   const name = target.name ?? '';
   const currentBranch = store.lastResponse?.state?.headBranch ?? '';
