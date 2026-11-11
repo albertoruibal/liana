@@ -353,6 +353,14 @@ async function runTool(
 // --- context budgeting ---
 
 /**
+ * Upper bound on the persisted real/estimated token ratio. The chars/3.5
+ * estimate under-counts code, so a server that reports real usage (or an
+ * overflow) can reveal a ratio several times larger; keep the correction
+ * effective without letting one freak observation collapse the budget.
+ */
+export const MAX_TOKEN_DRIFT = 8;
+
+/**
  * Rough token estimate plus per-message overhead. Code and diffs tokenize
  * denser than prose (~2.5–3 chars/token on real tokenizers), so the divisor is
  * conservative (3.5 instead of 4) to keep the estimated prompt under the

@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChatMessage } from './review-tools';
+import { MAX_TOKEN_DRIFT, type ChatMessage } from './review-tools';
 import type {
   ForgeKind,
   ReviewChanges,
@@ -40,9 +40,9 @@ export interface StoredReviewSession {
   providerId: string | null;
   budget: number;
   /**
-   * Observed real/estimated prompt-token ratio (clamped 1–2); shrinks the
-   * effective budget on resume. Written before it existed, so read with a
-   * default of 1.
+   * Observed real/estimated prompt-token ratio (clamped 1–`MAX_TOKEN_DRIFT`);
+   * shrinks the effective budget on resume. Written before it existed, so read
+   * with a default of 1.
    */
   tokenDrift: number;
   /** Changed-file indices grouped into batches, preserving order. */
@@ -370,7 +370,7 @@ function coerceSession(raw: unknown): StoredReviewSession | null {
     rule: coerceRule(raw.rule),
     providerId: optionalString(raw.providerId),
     budget: Math.max(1024, Math.floor(num(raw.budget, 4096))),
-    tokenDrift: Math.min(2, Math.max(1, num(raw.tokenDrift, 1))),
+    tokenDrift: Math.min(MAX_TOKEN_DRIFT, Math.max(1, num(raw.tokenDrift, 1))),
     batches,
     batchIndex: Math.max(0, Math.floor(num(raw.batchIndex, 0))),
     checkpoint: coerceCheckpoint(raw.checkpoint),

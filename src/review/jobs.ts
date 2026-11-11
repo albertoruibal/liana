@@ -12,6 +12,7 @@ import {
   executeTool,
   estimateTokens,
   matchesAnyGlob,
+  MAX_TOKEN_DRIFT,
   messagesTokens,
   summarizeResult,
   TOOLS,
@@ -39,7 +40,13 @@ import type {
   ReviewSessionView,
   ReviewTraceStep,
 } from '../types';
-import { chatCompletion, type ChatRequest, type CompletionResult } from './ai';
+import {
+  chatCompletion,
+  isContextOverflow,
+  type ChatRequest,
+  type CompletionResult,
+  type ContextOverflowError,
+} from './ai';
 import { commentFromTool } from './comments';
 
 interface JobRecord {
@@ -636,14 +643,8 @@ const BATCH_BUDGET_FRACTION = 0.5;
  */
 const OUTPUT_RESERVE_FRACTION = 0.25;
 
-/**
- * Upper clamp on the adaptive token-budget calibration. When the endpoint
- * reports real `usage.promptTokens`, the drift between it and the chars/3.5
- * estimate grows the enforced shrink factor up to this much; the estimate
- * under-counts code, and a prompt past the real window makes local servers
- * truncate from the left — dropping the system prompt mid-review.
- */
-const MAX_TOKEN_DRIFT = 2;
+/** Context-overflow retries per model step before the review surfaces the error. */
+const MAX_CONTEXT_RETRIES = 2;
 
 /** Corrective user nudges per batch before a tool-free turn force-ends the batch. */
 const MAX_NUDGES = 2;
@@ -661,6 +662,11 @@ const REPEAT_OVERLAP = 0.6;
 /** Repetition is compared over at most the trailing window of each message. */
 const REPEAT_WINDOW_CHARS = 4000;
 
+/** Output headroom for a given context window; `maxTokens === 0` means unlimited. */
+function outputReserveFor(window: number, provider: StoredProvider): number {
+  return provider.maxTokens > 0 ? provider.maxTokens : Math.floor(window * OUTPUT_RESERVE_FRACTION);
+}
+
 /** Set up the batch plan on the first run. */
 function planReview(rec: JobRecord): StoredProvider {
   const provider = requireProvider(rec.providerId);
@@ -668,9 +674,11 @@ function planReview(rec: JobRecord): StoredProvider {
   // Reserve headroom for the model's output. With unlimited output tokens
   // (`maxTokens === 0`) reserve a fraction of the context window instead, so the
   // input budget never collapses.
-  const outputReserve =
-    provider.maxTokens > 0 ? provider.maxTokens : Math.floor(provider.contextWindow * OUTPUT_RESERVE_FRACTION);
-  rec.budget = Math.max(1024, provider.contextWindow - outputReserve - 256);
+  const outputReserve = outputReserveFor(provider.contextWindow, provider);
+  const configuredBudget = Math.max(1024, provider.contextWindow - outputReserve - 256);
+  // A resumed session may already have learned a smaller real window from an
+  // overflow rejection; never overwrite that with the (possibly wrong) setting.
+  rec.budget = rec.batches.length > 0 ? Math.min(rec.budget, configuredBudget) : configuredBudget;
   if (rec.batches.length === 0) {
     const relevant = rec.changes.files.filter((f) => {
       const p = f.newPath || f.oldPath;
@@ -844,9 +852,18 @@ async function runBatch(
   };
 
   const batchIndex = Math.max(0, rec.job.batchIndex - 1);
-  const base = buildSystemPrompt(rule, changes, batch, rec.job.batchIndex, rec.job.batchTotal);
   const fresh: ChatMessage[] = [
-    { role: 'system', content: base },
+    {
+      role: 'system',
+      content: fitSystemPrompt(
+        rule,
+        changes,
+        batch,
+        rec.job.batchIndex,
+        rec.job.batchTotal,
+        effectiveBudget(rec),
+      ),
+    },
     {
       role: 'user',
       content:
@@ -878,63 +895,92 @@ async function runBatch(
     if (rec.cancelled || rec.paused) return { comments: batchComments, finished: false };
     step++;
     rec.job.batchStep = step;
-    pruneMessages(messages, effectiveBudget(rec));
-    // Checkpoint before the model call: if we are paused mid-call, resume
-    // re-issues this step rather than skipping its result.
-    rec.checkpoint = { batchIndex, messages, step };
-    persist(rec);
 
-    let sawDelta = false;
-    let sawReasoningDelta = false;
+    let result!: CompletionResult;
+    let promptEntry!: ReviewPromptStep;
+    // The same step may be retried after a context-window rejection, so its
+    // budget/system prompt can be corrected without advancing the agent turn.
+    for (let attempt = 0; ; attempt++) {
+      if (rec.cancelled || rec.paused) return { comments: batchComments, finished: false };
+      const system = messages[0];
+      if (system && system.role === 'system') {
+        system.content = fitSystemPrompt(
+          rule,
+          changes,
+          batch,
+          rec.job.batchIndex,
+          rec.job.batchTotal,
+          effectiveBudget(rec),
+        );
+      }
+      pruneMessages(messages, effectiveBudget(rec));
+      // Checkpoint before the model call: if we are paused mid-call, resume
+      // re-issues this step rather than skipping its result.
+      rec.checkpoint = { batchIndex, messages, step };
+      persist(rec);
 
-    const wire = messages.map(toWire());
-    const request: ChatRequest = {
-      model: provider.model,
-      messages: wire,
-      temperature: provider.temperature,
-      // `0` means unlimited: omit the field so the server uses its own cap.
-      ...(provider.maxTokens > 0 ? { max_tokens: provider.maxTokens } : {}),
-      stream: true,
-      stream_options: { include_usage: true },
-      tools: nativeTools(),
-      tool_choice: 'auto',
-    };
-    const promptEntry = recordPrompt(rec, step, request, nudges);
-    // Record the streamed response as ordered segments so content and reasoning
-    // stay interleaved; the full response is kept untruncated.
-    const appendSeg = (kind: 'content' | 'reasoning', text: string): void => {
-      if (text.length === 0) return;
-      const last = promptEntry.segments[promptEntry.segments.length - 1];
-      if (last && last.kind === kind) last.text += text;
-      else promptEntry.segments.push({ kind, text });
-    };
-    const modelStarted = Date.now();
-    const result = await chatCompletion(
-      provider,
-      request,
-      (chunk) => {
-        sawDelta = true;
-        appendSeg('content', chunk);
-      },
-      rec.controller.signal,
-      {},
-      (chunk) => {
-        sawReasoningDelta = true;
-        appendSeg('reasoning', chunk);
-      },
-    );
-    recordUsage(rec, promptEntry, modelStarted, result, messages);
+      let sawDelta = false;
+      let sawReasoningDelta = false;
+
+      const wire = messages.map(toWire());
+      const request: ChatRequest = {
+        model: provider.model,
+        messages: wire,
+        temperature: provider.temperature,
+        // `0` means unlimited: omit the field so the server uses its own cap.
+        ...(provider.maxTokens > 0 ? { max_tokens: provider.maxTokens } : {}),
+        stream: true,
+        stream_options: { include_usage: true },
+        tools: nativeTools(),
+        tool_choice: 'auto',
+      };
+      promptEntry = recordPrompt(rec, step, request, nudges);
+      // Record the streamed response as ordered segments so content and reasoning
+      // stay interleaved; the full response is kept untruncated.
+      const appendSeg = (kind: 'content' | 'reasoning', text: string): void => {
+        if (text.length === 0) return;
+        const last = promptEntry.segments[promptEntry.segments.length - 1];
+        if (last && last.kind === kind) last.text += text;
+        else promptEntry.segments.push({ kind, text });
+      };
+      const modelStarted = Date.now();
+      try {
+        result = await chatCompletion(
+          provider,
+          request,
+          (chunk) => {
+            sawDelta = true;
+            appendSeg('content', chunk);
+          },
+          rec.controller.signal,
+          {},
+          (chunk) => {
+            sawReasoningDelta = true;
+            appendSeg('reasoning', chunk);
+          },
+        );
+      } catch (err) {
+        // A failed attempt never ran, so drop its model-log entry before retrying.
+        rec.job.prompts = rec.job.prompts.filter((p) => p !== promptEntry);
+        if (!isContextOverflow(err) || attempt >= MAX_CONTEXT_RETRIES) throw err;
+        adaptContextBudget(rec, provider, err, messages, attempt);
+        persist(rec);
+        continue;
+      }
+      recordUsage(rec, promptEntry, modelStarted, result, messages);
+
+      // Non-streamed responses never hit the delta callbacks; record the whole
+      // response once so the log still shows it.
+      if (!sawDelta && !sawReasoningDelta) {
+        if (result.reasoning.length > 0) appendSeg('reasoning', result.reasoning);
+        if (result.content.length > 0) appendSeg('content', result.content);
+      }
+      // Persist the completed call so its output/reasoning survives a restart.
+      persist(rec);
+      break;
+    }
 
     const parsed = { content: result.content, toolCalls: result.toolCalls };
-
-    // Non-streamed responses never hit the delta callbacks; record the whole
-    // response once so the log still shows it.
-    if (!sawDelta && !sawReasoningDelta) {
-      if (result.reasoning.length > 0) appendSeg('reasoning', result.reasoning);
-      if (result.content.length > 0) appendSeg('content', result.content);
-    }
-    // Persist the completed call so its output/reasoning survives a restart.
-    persist(rec);
 
     // Termination is explicit: only a `finish_batch` tool call ends the batch. A
     // tool-free turn is an abrupt ending — nudge the model to keep reviewing or
@@ -1038,6 +1084,35 @@ function handleAddComment(
  */
 function effectiveBudget(rec: JobRecord): number {
   return Math.max(1024, Math.floor(rec.budget / rec.tokenDrift));
+}
+
+/**
+ * Learn the endpoint's real window from an overflow rejection. The reported
+ * `n_ctx` replaces a too-large configured window, and the reported prompt size
+ * calibrates the estimate drift. A further retry that still overflows shrinks
+ * the budget slightly so each attempt asks for strictly less.
+ */
+function adaptContextBudget(
+  rec: JobRecord,
+  provider: StoredProvider,
+  err: ContextOverflowError,
+  messages: ChatMessage[],
+  attempt: number,
+): void {
+  const estimate = Math.max(1, messagesTokens(messages));
+  if (err.promptTokens !== undefined && err.promptTokens > 0) {
+    const drift = err.promptTokens / estimate;
+    if (Number.isFinite(drift) && drift > rec.tokenDrift) {
+      rec.tokenDrift = Math.min(MAX_TOKEN_DRIFT, Math.max(1, drift));
+    }
+  }
+  if (err.contextSize !== undefined && err.contextSize > 0) {
+    const next = Math.max(1024, Math.floor(err.contextSize - outputReserveFor(err.contextSize, provider) - 256));
+    rec.budget = Math.min(rec.budget, next);
+  } else {
+    rec.budget = Math.max(1024, Math.floor(rec.budget * 0.5));
+  }
+  if (attempt > 0) rec.budget = Math.max(1024, Math.floor(rec.budget * 0.85));
 }
 
 /** Word 3-grams over the trailing `REPEAT_WINDOW_CHARS` of `text`, normalized. */
@@ -1179,6 +1254,66 @@ function buildSystemPrompt(
   return lines.join('\n');
 }
 
+const DIFF_TRUNCATED_SUFFIX =
+  '\n… [diff truncated to fit the model context; use read_file or search_code to inspect the rest]';
+
+/** Cut `diff` to at most `maxChars`, appending the truncation marker when it fits. */
+function truncateDiff(diff: string, maxChars: number): string {
+  if (diff.length <= maxChars) return diff;
+  if (maxChars <= DIFF_TRUNCATED_SUFFIX.length) return DIFF_TRUNCATED_SUFFIX.slice(0, Math.max(0, maxChars));
+  return diff.slice(0, maxChars - DIFF_TRUNCATED_SUFFIX.length) + DIFF_TRUNCATED_SUFFIX;
+}
+
+/**
+ * Build the system prompt so it fits the enforced token budget. The batch diff
+ * is the only part that can grow without bound (a single huge file cannot be
+ * split by the batch planner), so when the full prompt is too large the diffs
+ * are truncated proportionally with a marker that points the model at the
+ * repository tools. Headers and instructions are never dropped.
+ */
+function fitSystemPrompt(
+  rule: ReviewRuleConfig,
+  changes: ReviewChanges,
+  batch: ReviewFile[],
+  batchIndex: number,
+  batchTotal: number,
+  budget: number,
+): string {
+  const full = buildSystemPrompt(rule, changes, batch, batchIndex, batchTotal);
+  if (estimateTokens(full) <= budget) return full;
+
+  const header = buildSystemPrompt(
+    rule,
+    changes,
+    batch.map((f) => ({ ...f, diff: '' })),
+    batchIndex,
+    batchTotal,
+  );
+  const availableChars = Math.max(0, Math.floor((budget - estimateTokens(header)) * 3.5));
+  if (availableChars === 0) return header;
+
+  // Keep every diff that fits whole; divide the remaining characters evenly
+  // among the oversized ones so a huge file cannot starve the small files.
+  const caps = new Map<ReviewFile, number>();
+  let remaining = availableChars;
+  let pending = batch.filter((f) => f.diff.length > 0);
+  while (pending.length > 0) {
+    const share = Math.floor(remaining / pending.length);
+    const fits = pending.filter((f) => f.diff.length <= share);
+    if (fits.length === 0) {
+      for (const f of pending) caps.set(f, share);
+      break;
+    }
+    for (const f of fits) {
+      caps.set(f, f.diff.length);
+      remaining -= f.diff.length;
+    }
+    pending = pending.filter((f) => !fits.includes(f));
+  }
+  const fitted = batch.map((f) => ({ ...f, diff: truncateDiff(f.diff, caps.get(f) ?? f.diff.length) }));
+  return buildSystemPrompt(rule, changes, fitted, batchIndex, batchTotal);
+}
+
 /** Native `tools` payload sent to OpenAI-compatible endpoints. */
 function nativeTools(): unknown[] {
   return TOOLS.map((t) => ({
@@ -1210,12 +1345,14 @@ function toWire(): (m: ChatMessage) => Record<string, unknown> {
 
 /**
  * Keep the conversation inside the context budget, best-effort. The batch diff
- * lives in the system prompt and cannot shrink, so one pass may not reach the
- * budget; escalate in bounded passes: condense old tool results, then old
- * assistant prose, then drop the details of the oldest tool results entirely.
- * Assistant `tool_calls` arrays are never rewritten, so every tool result keeps
- * its pairing on the wire (no message is ever removed); the system message, the
- * first user message, and the last few turns stay verbatim.
+ * lives in the system prompt and is shrunk separately by `fitSystemPrompt`, so
+ * this only trims the agent conversation. Escalate in bounded passes: condense
+ * old tool results, then old assistant prose, then drop the details of the
+ * oldest tool results entirely. A final pass also covers the normally protected
+ * tail — an unlimited (`toolResultChars === 0`) result can be large enough to
+ * overflow on its own. Assistant `tool_calls` arrays are never rewritten, so
+ * every tool result keeps its pairing on the wire (no message is ever removed);
+ * the system message and the first user message always stay verbatim.
  */
 function pruneMessages(messages: ChatMessage[], budget: number): void {
   const protect = 4;
@@ -1238,6 +1375,20 @@ function pruneMessages(messages: ChatMessage[], budget: number): void {
     const m = messages[i];
     if (m && m.role === 'tool' && m.content.length > 80) {
       m.content = '(earlier tool result omitted)';
+    }
+  }
+  if (messagesTokens(messages) <= budget) return;
+  for (let i = 2; i < messages.length; i++) {
+    const m = messages[i];
+    if (m && m.role === 'tool' && m.content.length > 0) {
+      m.content = '(tool result omitted to fit the model context)';
+    }
+  }
+  if (messagesTokens(messages) <= budget) return;
+  for (let i = 2; i < messages.length; i++) {
+    const m = messages[i];
+    if (m && m.role === 'assistant' && m.content.length > 0) {
+      m.content = '(assistant message omitted to fit the model context)';
     }
   }
 }

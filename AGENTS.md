@@ -95,8 +95,10 @@ in the packaged app.
 - The LLM harness runs **read-only repository tools** against the merge request's head SHA (never the local working
   tree). Repository tools resolve paths inside the repo only, truncate output, and never write to the working tree or
   index. The agent loop has no fixed step cap: it is bounded by a conservative chars/3.5 token budget, shrunk further by the
-  drift observed between real `usage.promptTokens` and the estimate (clamped ×2, persisted in the session) so
-  `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable. A
+  drift observed between real `usage.promptTokens` and the estimate (clamped ×8, persisted in the session) so
+  `pruneMessages` stays ahead of a local server's silent prompt truncation; batching keeps small local models usable.
+  A context-window rejection is recovered by adopting the server's reported `n_ctx`/prompt tokens, truncating an
+  oversized diff with a marker, re-pruning, and retrying the same step (bounded), rather than failing the review. A
   batch ends **only** on an explicit `finish_batch` tool call; a turn with no tool calls is treated as an abrupt ending,
   and up to 2 corrective user nudges per batch ask it to call `add_comment` or `finish_batch`, while a turn that repeats
   the same tool call(s) for 3 consecutive turns is treated as a loop. Either way the batch force-ends rather than

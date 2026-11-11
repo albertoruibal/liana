@@ -31,6 +31,104 @@ export interface CompletionResult {
   usage?: CompletionUsage;
 }
 
+/** Structured hints carried by an endpoint's context-window rejection. */
+export interface ContextOverflowDetails {
+  status: number;
+  /** Tokens the endpoint counted in the rejected request, when reported. */
+  promptTokens?: number;
+  /** Server's actual context window, when reported. */
+  contextSize?: number;
+}
+
+/** A 4xx rejection because the request exceeded the model's real context window. */
+export class ContextOverflowError extends Error {
+  readonly status: number;
+  readonly promptTokens?: number;
+  readonly contextSize?: number;
+
+  constructor(message: string, details: ContextOverflowDetails) {
+    super(message);
+    this.name = 'ContextOverflowError';
+    this.status = details.status;
+    this.promptTokens = details.promptTokens;
+    this.contextSize = details.contextSize;
+  }
+}
+
+/** Whether `err` is an endpoint rejecting a prompt that is too large. */
+export function isContextOverflow(err: unknown): err is ContextOverflowError {
+  return err instanceof ContextOverflowError;
+}
+
+const CONTEXT_SIZE_KEYS = [
+  'n_ctx',
+  'context_length',
+  'max_model_len',
+  'max_context_length',
+  'context_window',
+  'context_size',
+];
+
+const PROMPT_TOKEN_KEYS = [
+  'n_prompt_tokens',
+  'prompt_tokens',
+  'num_prompt_tokens',
+  'input_tokens',
+  'num_tokens',
+];
+
+/** First positive integer following any of `keys` as a JSON field or `key=value`. */
+function numberForKeys(text: string, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const match = new RegExp(`["']?${key}["']?\\s*[:=]\\s*(\\d+)`, 'i').exec(text);
+    const n = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+/** First positive integer captured by any of `patterns`. */
+function numberForPatterns(text: string, patterns: RegExp[]): number | undefined {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    const n = match?.[1] ? Number(match[1]) : NaN;
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+/**
+ * Recognize the several shapes local and hosted OpenAI-compatible servers use
+ * for a context-window overflow: llama.cpp exposes `n_ctx`/`n_prompt_tokens`,
+ * vLLM talks about a “maximum context length”, and others say the prompt is too
+ * long. Returns null for unrelated errors so they pass through untouched.
+ */
+function parseContextOverflow(text: string, status: number): ContextOverflowDetails | null {
+  const contextSize =
+    numberForKeys(text, CONTEXT_SIZE_KEYS) ??
+    numberForPatterns(text, [
+      /available context size[^0-9]{0,20}(\d+)/i,
+      /maximum context length[^0-9]{0,20}(\d+)/i,
+      /context length of only[^0-9]{0,10}(\d+)/i,
+      /context window[^0-9]{0,20}(\d+)/i,
+    ]);
+  const promptTokens =
+    numberForKeys(text, PROMPT_TOKEN_KEYS) ??
+    numberForPatterns(text, [
+      /request[^0-9]{0,20}(\d+)\s*tokens/i,
+      /prompt[^0-9]{0,20}(\d+)\s*tokens/i,
+      /(\d+)\s+prompt tokens/i,
+    ]);
+  const phrase =
+    /(exceed(?:s|ed)?[^.]{0,40}context (?:size|window|length|limit)|maximum context (?:length|size)|available context size|context (?:length|window|size)|too many tokens|prompt is too long|input is too long)/i.test(
+      text,
+    );
+  const numericOverflow =
+    contextSize !== undefined && promptTokens !== undefined && promptTokens > contextSize;
+  if (!phrase && !numericOverflow) return null;
+  return { status, promptTokens, contextSize };
+}
+
 export interface ChatRequest {
   model: string;
   messages: unknown[];
@@ -80,7 +178,10 @@ export async function chatCompletion(
     });
     if (!res.ok) {
       const text = await res.text();
-      const err = new Error(`AI endpoint ${res.status}: ${text}`) as Error & { status?: number };
+      const message = `AI endpoint ${res.status}: ${text}`;
+      const overflow = parseContextOverflow(text, res.status);
+      if (overflow) throw new ContextOverflowError(message, overflow);
+      const err = new Error(message) as Error & { status?: number };
       err.status = res.status;
       throw err;
     }
@@ -296,12 +397,15 @@ function parseOpenAiModels(raw: unknown): AiModelInfo[] {
     const meta = asRecord(m.meta);
     out.push({
       id,
+      // Runtime limits win over training maxima: a model that was trained for
+      // 128k may still be served with a much smaller `n_ctx`.
       contextWindow: pickNumber(
+        meta?.n_ctx,
+        m.n_ctx,
         m.context_length,
         m.max_model_len,
         m.max_context_length,
         meta?.n_ctx_train,
-        meta?.n_ctx,
       ),
       maxTokens: pickNumber(m.max_output_tokens, m.max_completion_tokens),
     });
@@ -309,8 +413,35 @@ function parseOpenAiModels(raw: unknown): AiModelInfo[] {
   return out;
 }
 
-/** Read the context window from an Ollama `/api/show` reply (`model_info` or `num_ctx`). */
+/** Read the runtime context from an Ollama `/api/ps` reply, keyed by model name. */
+function ollamaLoadedContexts(raw: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  const models = asRecord(raw)?.models;
+  if (!Array.isArray(models)) return out;
+  for (const entry of models) {
+    const model = asRecord(entry);
+    if (!model) continue;
+    const name =
+      typeof model.name === 'string'
+        ? model.name
+        : typeof model.model === 'string'
+          ? model.model
+          : '';
+    const context = pickNumber(model.context_length, model.num_ctx);
+    if (name && context) out.set(name, context);
+  }
+  return out;
+}
+
+/** Read the context window from an Ollama `/api/show` reply (`num_ctx` or `model_info`). */
 function ollamaContext(raw: unknown): number | undefined {
+  // `parameters` reflects the loaded runtime override; `model_info` only has the
+  // training context, which can be several times larger than the server's window.
+  const params = asRecord(raw)?.parameters;
+  if (typeof params === 'string') {
+    const match = /num_ctx\s+(\d+)/.exec(params);
+    if (match?.[1]) return Number(match[1]);
+  }
   const info = asRecord(asRecord(raw)?.model_info);
   if (info) {
     for (const [key, value] of Object.entries(info)) {
@@ -319,11 +450,6 @@ function ollamaContext(raw: unknown): number | undefined {
         if (n) return n;
       }
     }
-  }
-  const params = asRecord(raw)?.parameters;
-  if (typeof params === 'string') {
-    const match = /num_ctx\s+(\d+)/.exec(params);
-    if (match?.[1]) return Number(match[1]);
   }
   return undefined;
 }
@@ -337,12 +463,22 @@ function ollamaContext(raw: unknown): number | undefined {
 export async function listProviderModels(provider: StoredProvider): Promise<AiModelInfo[]> {
   const base = provider.baseUrl.replace(/\/+$/, '');
   const models = parseOpenAiModels(await probeJson(`${base}/models`, provider));
-  // Ollama's OpenAI shim reports no limits; backfill from its native API. Only
-  // probe when nothing reported a window, and cap the fan-out for large catalogs.
-  if (models.length > 0 && models.length <= 32 && models.every((m) => m.contextWindow === undefined)) {
+  // Ollama's OpenAI shim reports no limits (and llama.cpp may report only the
+  // training context). Prefer the context of an actually loaded model from
+  // Ollama's native API, then backfill anything still missing from `/api/show`.
+  // Cap the fan-out for large catalogs.
+  if (models.length > 0 && models.length <= 32) {
     const origin = base.replace(/\/v\d+$/i, '');
+    const loaded = await probeJson(`${origin}/api/ps`, provider)
+      .then(ollamaLoadedContexts)
+      .catch(() => new Map<string, number>());
+    for (const m of models) {
+      const runtime = loaded.get(m.id) ?? loaded.get(m.id.replace(/:.*$/, ''));
+      if (runtime !== undefined) m.contextWindow = runtime;
+    }
     await Promise.all(
       models.map(async (m) => {
+        if (m.contextWindow !== undefined) return;
         try {
           m.contextWindow = ollamaContext(await probeJson(`${origin}/api/show`, provider, { model: m.id }));
         } catch {
