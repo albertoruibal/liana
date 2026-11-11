@@ -84,6 +84,8 @@ export function commentFromTool(
   const filePath = typeof raw.filePath === 'string' ? raw.filePath.trim() : '';
   const body = typeof raw.body === 'string' ? raw.body.trim() : '';
   if (!filePath || !body) return { comment: null, hint: 'filePath and body are required' };
+  const prefix = rule.commentPrefix;
+  const finalBody = prefix.trim() ? `${prefix}${body}` : body;
   const known = new Set(files.flatMap((f) => [f.newPath, f.oldPath]));
   if (known.size > 0 && !known.has(filePath)) {
     return { comment: null, hint: `${filePath} is not a changed file` };
@@ -129,7 +131,7 @@ export function commentFromTool(
       oldLine,
       newLine,
       severity,
-      body,
+      body: finalBody,
       status: 'pending',
       stage: 'parsed',
       discussionId: null,

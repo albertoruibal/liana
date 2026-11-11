@@ -347,6 +347,8 @@ export interface AiModelInfo {
 export interface ReviewRuleConfig {
   /** Natural-language reviewer guidance prepended to the system prompt. */
   instructions: string;
+  /** Text placed directly before every AI-generated comment body (empty = none). */
+  commentPrefix: string;
   /** Minimum severity to keep from the model's output. */
   severityThreshold: ReviewSeverity;
   /** Path globs to exclude from review and from the agent's file list. */

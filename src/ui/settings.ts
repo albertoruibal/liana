@@ -137,6 +137,7 @@ export async function openSettingsDialog(): Promise<void> {
     renderProviderList();
 
     $<HTMLTextAreaElement>('#settings-review-instructions').value = s.review.instructions;
+    $<HTMLInputElement>('#settings-review-comment-prefix').value = s.review.commentPrefix;
     $<HTMLSelectElement>('#settings-review-severity').value = s.review.severityThreshold;
     $<HTMLInputElement>('#settings-review-maxcomments').value = String(s.review.maxComments);
     $<HTMLTextAreaElement>('#settings-review-ignore').value = s.review.ignoreGlobs.join('\n');
@@ -191,6 +192,7 @@ export function collectSettingsPatch(): Record<string, unknown> {
     ai: { providers, activeProviderId: settingsActiveProviderId },
     review: {
       instructions: $<HTMLTextAreaElement>('#settings-review-instructions').value,
+      commentPrefix: $<HTMLInputElement>('#settings-review-comment-prefix').value,
       severityThreshold: $<HTMLSelectElement>('#settings-review-severity').value,
       maxComments: Number($<HTMLInputElement>('#settings-review-maxcomments').value) || 0,
       ignoreGlobs: $<HTMLTextAreaElement>('#settings-review-ignore')

@@ -231,6 +231,7 @@ function coerceRule(v: unknown): ReviewRuleConfig {
   const sev = r.severityThreshold;
   return {
     instructions: str(r.instructions, ''),
+    commentPrefix: str(r.commentPrefix, ''),
     severityThreshold:
       sev === 'warning' || sev === 'error' || sev === 'info' ? sev : 'info',
     ignoreGlobs: Array.isArray(r.ignoreGlobs)

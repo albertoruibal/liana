@@ -67,6 +67,7 @@ function defaultRule(): ReviewRuleConfig {
       'You are a careful senior reviewer. Focus on correctness, security, and ' +
       'maintainability. Point to concrete lines and explain the risk. Avoid ' +
       'style nitpicks unless they hide a bug.',
+    commentPrefix: '',
     severityThreshold: 'info',
     ignoreGlobs: ['**/dist/**', '**/node_modules/**', '**/*.lock', '**/*.min.js'],
     maxComments: 0,
@@ -170,6 +171,7 @@ function parseRule(v: unknown): ReviewRuleConfig {
   const r = v as Record<string, unknown>;
   return {
     instructions: str(r.instructions, base.instructions),
+    commentPrefix: str(r.commentPrefix, base.commentPrefix),
     severityThreshold: severity(r.severityThreshold, base.severityThreshold),
     ignoreGlobs: globs(r.ignoreGlobs, base.ignoreGlobs),
     maxComments: int(r.maxComments, base.maxComments, 0),
