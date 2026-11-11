@@ -104,20 +104,14 @@ function persist(rec: JobRecord): void {
 
 /** List the persisted sessions for a repository, for the review UI. */
 export function listReviewSessions(repoPath: string): ReviewSession[] {
-  return listSessions(repoPath).map((s) => ({
-    id: s.id,
-    iid: s.changes.mr.iid,
-    title: s.changes.mr.title,
-    state: s.job.state,
-    updatedAt: s.updatedAt,
-    providerId: s.providerId,
-    commentCount: s.job.comments.length,
-    batchIndex: s.job.batchIndex,
-    batchTotal: s.job.batchTotal,
-    llmDurationMs: s.job.llmDurationMs,
-    forge: s.changes.forge,
-    commit: s.changes.commit?.shortHash ?? null,
-  }));
+  const stored = listSessions(repoPath).map(publicSession);
+  // A just-started job is persisted up front, but include any live job that is
+  // not on disk yet (or whose write failed) so it is selectable immediately.
+  const known = new Set(stored.map((s) => s.id));
+  const live = [...jobs.values()]
+    .filter((rec) => rec.repoPath === repoPath && !known.has(rec.sessionId))
+    .map((rec) => publicSession(snapshotSession(rec)));
+  return [...stored, ...live].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** The public listing shape of one session. */
@@ -588,6 +582,9 @@ export function startReview(opts: StartReviewOptions): ReviewJob {
   rec.changes = opts.changes;
   rec.rule = { ...reviewRule(), ...opts.rule };
   rec.providerId = opts.providerId ?? null;
+  // Persist before the first model call so the review is listed under Saved
+  // reviews the moment it starts, not only after its first checkpoint.
+  persist(rec);
   void runReview(rec).catch((err: unknown) => finishWithError(rec, err));
   return leanJob(structuredClone(rec.job));
 }

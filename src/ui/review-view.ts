@@ -198,6 +198,28 @@ export async function loadReviewSessions(state: ReviewTabState): Promise<void> {
   }
 }
 
+/** Add a just-started review to the picker before the server listing refreshes. */
+function rememberStartedSession(state: ReviewTabState, job: ReviewJob): void {
+  const changes = state.changes;
+  if (!changes) return;
+  const entry: ReviewSession = {
+    id: job.id,
+    iid: changes.mr.iid,
+    title: changes.mr.title,
+    state: job.state,
+    updatedAt: Date.now(),
+    providerId: null,
+    commentCount: job.comments.length,
+    batchIndex: job.batchIndex,
+    batchTotal: job.batchTotal,
+    llmDurationMs: job.llmDurationMs,
+    forge: changes.forge,
+    commit: changes.commit?.shortHash ?? null,
+  };
+  state.sessions = [entry, ...state.sessions.filter((s) => s.id !== entry.id)];
+  if (isReviewShown(state)) refreshSessionSelect(state);
+}
+
 /** Restore a persisted session (or a live paused job) into the review view. */
 export async function restoreSession(state: ReviewTabState, sessionId: string): Promise<void> {
   if (!sessionId) return;
@@ -1346,6 +1368,7 @@ export async function generateReview(): Promise<void> {
       iid: state.changes.mr.iid,
     });
     state.job = job;
+    rememberStartedSession(state, job);
     state.edits.clear();
     state.showRejected = false;
     $('#review-queue-wrap').hidden = true;
@@ -1507,6 +1530,7 @@ export async function openCommitReview(hash: string): Promise<void> {
     );
     state.changes = changes;
     state.job = job;
+    rememberStartedSession(state, job);
     state.edits.clear();
     state.showRejected = false;
     state.headWarning = null;
