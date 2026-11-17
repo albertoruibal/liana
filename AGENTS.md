@@ -140,7 +140,8 @@ in the packaged app.
   `store.activePanel` (`{kind:'graph'|'review'|'terminal', …}`; `review` also carries `mode:'request'|'compare'`), replaces the former `activeReviewId`/`activeTerminalPath`
   pair and marks which panel the columns show, so the graph, a review, and a terminal are mutually exclusive by
   construction; `applyPanel()` repaints all three. Code review and Compare are separate tabs at the same
-  level (both rendered from `#review-view`). Opening either on a repo that already has that tab focuses it
+  level (both rendered from `#review-view`). Single-commit reviews open in the Compare tab, where the
+  base/head pickers keep listing branches with the commit and its parent pinned. Opening either on a repo that already has that tab focuses it
   (state preserved); switching to another repo tab hides the panel while its background polling continues (DOM writes
   are guarded by `isReviewShown(state)`). The tab strip renders each review tab right after its repo tab. All
   review/forge calls go through `reviewApi(state, …)`, scoped to `state.repoId` rather than the active tab, so background

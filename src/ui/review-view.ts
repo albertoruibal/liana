@@ -236,7 +236,7 @@ export function refreshSessionSelect(state: ReviewTabState): void {
   const sel = $<HTMLSelectElement>('#review-session-select');
   const current = state.job?.id ?? '';
   const relevant = state.sessions.filter((s) =>
-    state.mode === 'compare' ? !!s.compare : !s.compare,
+    state.mode === 'compare' ? !!(s.compare || s.commit) : !s.compare && !s.commit,
   );
   sel.innerHTML =
     '<option value="">— Saved reviews —</option>' +
@@ -314,10 +314,14 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   state.changes = view.changes;
   state.job = view.job;
   const compare = view.changes.compare;
-  state.mode = compare ? 'compare' : 'request';
+  const commit = view.changes.commit;
+  state.mode = compare || commit ? 'compare' : 'request';
   if (compare) {
     state.compareBase = compare.baseRef;
     state.compareHead = compare.headRef;
+  } else if (commit) {
+    state.compareBase = commit.baseHash ?? '';
+    state.compareHead = commit.hash;
   }
   state.selectedFile = null;
   // Keep the MR picker in step with the session it belongs to, even when the
@@ -1651,12 +1655,18 @@ function paintCompareForm(state: ReviewTabState): void {
     $<HTMLButtonElement>('#review-generate').toggleAttribute('disabled', !ready);
   }
   const hint = $('#review-compare-hint');
+  const commit = state.changes?.commit;
   const usesRemote = refs.some(
     (r) => r.isRemote && (r.name === state.compareBase || r.name === state.compareHead),
   );
   if (state.mode !== 'compare') {
     hint.hidden = true;
     hint.textContent = '';
+  } else if (commit) {
+    hint.hidden = false;
+    hint.textContent = commit.baseHash
+      ? `Reviewing commit ${commit.shortHash} against its first parent.`
+      : `Reviewing root commit ${commit.shortHash} (no parent).`;
   } else if (refs.length === 0) {
     hint.hidden = false;
     hint.textContent = 'No local branches, remote branches, or tags are available to compare.';
@@ -1878,15 +1888,7 @@ function showReviewPanel(state: ReviewTabState): void {
 export function openReviewTab(): void {
   const existing = store.activeId ? activeTab()?.review : null;
   if (existing) {
-    // A commit review is a one-off target; re-opening Code review returns to
-    // the request picker. A request review is focused with its state preserved.
-    if (!existing.changes?.commit) {
-      if (store.activeId) activateReviewTab(store.activeId);
-      return;
-    }
-    clearReviewTarget(existing);
-    existing.mode = 'request';
-    showReviewPanel(existing);
+    if (store.activeId) activateReviewTab(store.activeId);
     return;
   }
   const state = ensureReviewState('request');
@@ -1907,11 +1909,12 @@ export function openCompareTab(): void {
 }
 
 /**
- * Open the review panel on one local commit and start its AI review. Comments
- * are local-only: there is no request to post them to.
+ * Open the comparison panel on one local commit and start its AI review. The
+ * base/head pickers keep listing every branch, with the commit and its first
+ * parent pinned. Comments are local-only: there is no request to post them to.
  */
 export async function openCommitReview(hash: string): Promise<void> {
-  const state = ensureReviewState('request');
+  const state = ensureReviewState('compare');
   if (!state) return;
   if (state.job?.state === 'running') {
     const proceed = await confirmDialog({
@@ -1926,8 +1929,9 @@ export async function openCommitReview(hash: string): Promise<void> {
   window.clearTimeout(state.poll);
   window.clearTimeout(state.saveTimer);
   clearReviewTarget(state);
-  state.mode = 'request';
-  store.activePanel = { kind: 'review', repoId: state.repoId, mode: 'request' };
+  state.mode = 'compare';
+  state.compareHead = hash;
+  store.activePanel = { kind: 'review', repoId: state.repoId, mode: 'compare' };
   resetReviewDom();
   refreshSessionSelect(state);
   refreshMrSelect(state);
@@ -1948,12 +1952,15 @@ export async function openCommitReview(hash: string): Promise<void> {
     );
     state.changes = changes;
     state.job = job;
+    state.compareBase = changes.commit?.baseHash ?? '';
+    state.compareHead = changes.commit?.hash ?? hash;
     rememberStartedSession(state, job);
     state.edits.clear();
     state.showRejected = false;
     state.headWarning = null;
     refreshMrSelect(state);
     paintForgeWording(state);
+    paintCompareForm(state);
     renderReviewChanges(state);
     $('#review-approve-mr').hidden = true;
     $('#review-queue-wrap').hidden = true;

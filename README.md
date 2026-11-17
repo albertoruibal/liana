@@ -300,10 +300,12 @@ falling back to fetching the head SHA — so the read-only tools can read it; th
 `refs/liana/mr/<iid>` / `refs/liana/pr/<n>` ref and never moves `HEAD`, the index, or the working tree.
 
 **Single-commit review.** Right-click any commit in the graph and choose **Review commit with AI…** to review just that
-commit instead of a request. The job reads the repository at the commit and diffs it against its first parent (a root
-commit has no base), so it works for unpushed commits and never needs the network. Proposed comments are **local-only**:
-the review tab labels the target as a commit and hides Post comment / Checkout / Approve, because there is no request to
-post to. Saved reviews from commits are labelled `Commit <short-hash>` in the picker.
+commit instead of a request. It opens in the **Compare** tab, whose base/head pickers keep listing every branch, tag,
+and remote-tracking ref while pinning the commit and its first parent as the reviewed range. The job reads the
+repository at the commit and diffs it against its first parent (a root commit has no base), so it works for unpushed
+commits and never needs the network. Proposed comments are **local-only**: the review labels the target as a commit and
+hides Post comment / Checkout / Approve, because there is no request to post to. Saved reviews from commits are labelled
+`Commit <short-hash>` in the picker.
 
 **Compare.** The ⋯ menu's **Compare** entry opens a tab beside **Code review** (same tab level,
 owned by the repository). It picks a base (destination) and head (source) from the repository's local branches,
