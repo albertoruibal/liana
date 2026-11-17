@@ -8,13 +8,26 @@ import { store } from './store';
 import { CodeHandle } from '../code';
 import { FileContents } from '../types';
 
-/** Diff layout preference for the modal viewer. */
+function diffDialog(): HTMLDialogElement {
+  return $<HTMLDialogElement>('#diff-dialog');
+}
+
+/** Diff layout preference shared by the commit, review, and comparison viewers. */
 export type DiffView = 'unified' | 'split';
 
 export const DIFF_VIEW_KEY = 'liana-diff-view';
 
 export function readDiffView(): DiffView {
   return localStorage.getItem(DIFF_VIEW_KEY) === 'split' ? 'split' : 'unified';
+}
+
+/** Persist the layout preference shared by every diff view (modal, review, compare). */
+export function writeDiffView(view: DiffView): void {
+  try {
+    localStorage.setItem(DIFF_VIEW_KEY, view);
+  } catch {
+    // localStorage may be unavailable; the view still works in-session.
+  }
 }
 
 /** Cached patch for the currently open file, so toggling layout needn't refetch. */
@@ -31,6 +44,74 @@ export function disposeDiffEditor(): void {
   diffHandle = null;
 }
 
+/** 0-based change cursor for the modal diff navigator. */
+let changeIndex = -1;
+
+function htmlHunkGroups(): HTMLElement[][] {
+  const body = $<HTMLDivElement>('#diff-body');
+  const panes = [...body.querySelectorAll<HTMLElement>('.dl-split-pane')];
+  if (panes.length > 0) {
+    return panes.map((pane) => [...pane.querySelectorAll<HTMLElement>('.dl-hunk')]);
+  }
+  return [[...body.querySelectorAll<HTMLElement>('.dl-row.dl-hunk')]];
+}
+
+function htmlScrollers(): HTMLElement[] {
+  const body = $<HTMLDivElement>('#diff-body');
+  const panes = [...body.querySelectorAll<HTMLElement>('.dl-split-pane')];
+  return panes.length > 0 ? panes : [body];
+}
+
+function scrollToHtmlChange(index: number): void {
+  const groups = htmlHunkGroups();
+  const scrollers = htmlScrollers();
+  scrollers.forEach((scroller, pane) => {
+    const hunk = groups[pane]?.[index];
+    if (!hunk) return;
+    const top =
+      hunk.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, top - 8);
+  });
+}
+
+function changeCount(): number {
+  if (diffHandle?.kind === 'diff') return diffHandle.diffChangeCount();
+  return htmlHunkGroups()[0]?.length ?? 0;
+}
+
+/** Repaint the modal diff's previous/next change controls. */
+export function updateDiffChangeNav(): void {
+  const total = changeCount();
+  if (total === 0) changeIndex = -1;
+  else if (changeIndex < 0) changeIndex = 0;
+  else if (changeIndex >= total) changeIndex = total - 1;
+  const prev = $<HTMLButtonElement>('#diff-change-prev');
+  const next = $<HTMLButtonElement>('#diff-change-next');
+  prev.disabled = total === 0 || changeIndex <= 0;
+  next.disabled = total === 0 || changeIndex >= total - 1;
+  $('#diff-change-position').textContent =
+    total === 0 ? '' : changeIndex < 0 ? `— / ${total}` : `${changeIndex + 1} / ${total}`;
+}
+
+/** Go to the previous/next change in the modal diff. */
+export function jumpDiffChange(direction: 1 | -1): void {
+  const total = changeCount();
+  if (total === 0) return;
+  changeIndex =
+    changeIndex < 0
+      ? 0
+      : Math.max(0, Math.min(total - 1, changeIndex + direction));
+  if (diffHandle?.kind === 'diff') diffHandle.revealDiffChange(changeIndex);
+  else scrollToHtmlChange(changeIndex);
+  updateDiffChangeNav();
+}
+
+function isTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest('.monaco-editor')) return false;
+  return !!target.closest('input, textarea, [contenteditable="true"]');
+}
+
 /** Mirror `diffView` onto the toggle buttons. */
 export function syncDiffToggle(): void {
   document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((b) => {
@@ -44,12 +125,16 @@ export function renderDiffDialog(): void {
   syncDiffToggle();
   if (diffHandle) {
     diffHandle.setSideBySide(diffView === 'split');
+    updateDiffChangeNav();
+    if (changeIndex >= 0) diffHandle.revealDiffChange(changeIndex);
     return;
   }
   const body = $<HTMLDivElement>('#diff-body');
   body.classList.toggle('is-split', diffView === 'split');
   body.classList.remove('is-code');
   body.innerHTML = renderDiffBody(diffPatch, diffView);
+  updateDiffChangeNav();
+  if (changeIndex >= 0) scrollToHtmlChange(changeIndex);
 }
 
 /** Mount the Monaco diff editor into `#diff-body`; false when Monaco is unavailable. */
@@ -65,7 +150,14 @@ export async function mountMonacoDiff(original: string, modified: string, path: 
     path,
     sideBySide: diffView === 'split',
   });
+  changeIndex = -1;
+  diffHandle.onDiffUpdated(() => {
+    const total = diffHandle?.diffChangeCount() ?? 0;
+    if (total > 0 && changeIndex < 0) changeIndex = 0;
+    updateDiffChangeNav();
+  });
   diffHandle.revealFirstDiff();
+  updateDiffChangeNav();
   return true;
 }
 
@@ -86,11 +178,13 @@ export async function openCodeDiff(opts: {
   $('#diff-subtitle').textContent = opts.subtitle;
   $('#diff-status').textContent = '';
   disposeDiffEditor();
+  changeIndex = -1;
   diffPatch = '';
   diffView = readDiffView();
   body.classList.remove('is-split', 'is-code');
   body.textContent = 'Loading diff…';
   syncDiffToggle();
+  updateDiffChangeNav();
   dlg.showModal();
   try {
     const contents = await api<FileContents>('/file-content', {
@@ -151,17 +245,29 @@ export function initDiffView(): void {
   // Dispose Monaco editors on any close path (button or Escape's native cancel).
   $<HTMLDialogElement>('#diff-dialog').addEventListener('close', () => disposeDiffEditor());
 
+  $('#diff-change-prev').addEventListener('click', () => jumpDiffChange(-1));
+  $('#diff-change-next').addEventListener('click', () => jumpDiffChange(1));
+
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (!(diffDialog().open)) return;
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+      if (isTextEntry(ev.target)) return;
+      ev.preventDefault();
+      jumpDiffChange(ev.key === 'ArrowUp' ? -1 : 1);
+    },
+    true,
+  );
+
   // Unified / split layout toggle; the choice persists across opens.
   document.querySelectorAll<HTMLButtonElement>('.diff-view-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = btn.dataset.view === 'split' ? 'split' : 'unified';
       if (next === diffView) return;
       diffView = next;
-      try {
-        localStorage.setItem(DIFF_VIEW_KEY, diffView);
-      } catch {
-        // localStorage may be unavailable; the dialog still works in-session.
-      }
+      writeDiffView(diffView);
       renderDiffDialog();
     });
   });
