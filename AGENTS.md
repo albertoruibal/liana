@@ -135,18 +135,20 @@ in the packaged app.
   env vars and are never returned to the renderer.
 - The review UI is a **main view** (`#review-view`), not a dialog, shown in place of the graph/detail columns and
   surfaced as a `#repo-tabs` pill. Panels are **owned by their repository tab**: `RepoTab.review` holds the repo's
-  MR/job/session/edit state (`null` when closed) and `RepoTab.terminals` its worktree shells. A single discriminant,
-  `store.activePanel` (`{kind:'graph'|'review'|'terminal', …}`), replaces the former `activeReviewId`/`activeTerminalPath`
+  MR/job/session/edit state and `RepoTab.compare` the branch-comparison state (`null` when closed), while
+  `RepoTab.terminals` holds its worktree shells. A single discriminant,
+  `store.activePanel` (`{kind:'graph'|'review'|'terminal', …}`; `review` also carries `mode:'request'|'compare'`), replaces the former `activeReviewId`/`activeTerminalPath`
   pair and marks which panel the columns show, so the graph, a review, and a terminal are mutually exclusive by
-  construction; `applyPanel()` repaints all three. Opening Code review on a repo that already has a tab focuses it
+  construction; `applyPanel()` repaints all three. Code review and Compare are separate tabs at the same
+  level (both rendered from `#review-view`). Opening either on a repo that already has that tab focuses it
   (state preserved); switching to another repo tab hides the panel while its background polling continues (DOM writes
   are guarded by `isReviewShown(state)`). The tab strip renders each review tab right after its repo tab. All
   review/forge calls go through `reviewApi(state, …)`, scoped to `state.repoId` rather than the active tab, so background
-  status polling survives a tab switch. The Saved-review picker defaults to none; choosing a session calls
+  status polling survives a tab switch. Each review/compare tab has `Changes` and `Comments` subtabs (`state.reviewPane`); the diff and comment queue never share the pane. The Saved-review picker defaults to none; choosing a session calls
   `restoreSession`, which applies both its MR (`state.mrIid`, pinned as a "(not open)" option when the request is no
   longer open) and its job, so a paused session shows the resume state. Open review tabs and the active panel are
-  persisted in `localStorage` (`liana-review-tabs` / `liana-review-active`, migrating the old `liana-review-repo`) so
-  they reopen after a reload. Sessions are already keyed by absolute repo path server-side, so no backend change is
+  persisted in `localStorage` (`liana-review-tabs`, `liana-compare-tabs`, and `liana-review-active` carrying its mode,
+  migrating the old `liana-review-repo`) so they reopen after a reload. Sessions are already keyed by absolute repo path server-side, so no backend change is
   needed for this.
 
 ## Conflict resolution & submodules

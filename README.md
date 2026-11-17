@@ -138,6 +138,9 @@ header naming a repository from `GET /api/repos` or `POST /api/open`; a missing 
 | `/api/gitlab/approve` | POST | `{iid}` | Deprecated alias for `/api/forge/approve` forcing GitLab |
 | `/api/review/generate` | POST | `{iid, providerId?, rule?}` | Start a review job; returns `{job}` |
 | `/api/review/generate-commit` | POST | `{hash, providerId?, rule?}` | Start a local-only review of one commit (diffed against its first parent); returns `{job, changes}` |
+| `/api/compare` | POST | `{base, head}` | Local changed files between two refs (`base..head`); no fetch |
+| `/api/review/generate-compare` | POST | `{base, head, providerId?, rule?}` | Start a local-only review of a branch comparison; returns `{job, changes}` |
+| `/api/review-file-content` | POST | `{baseSha, headSha, path, oldPath?}` | Full original/modified file for the review diff (local git objects; no network) |
 | `/api/review/status` | POST | `{jobId}` | Job state, agent trace, proposed comments (model log stripped to step metadata) |
 | `/api/review/log` | POST | `{jobId, index}` | One model call's full untruncated prompt and response, loaded on demand |
 | `/api/review/cancel` | POST | `{jobId}` | Abort a running review (terminal) |
@@ -301,6 +304,27 @@ commit instead of a request. The job reads the repository at the commit and diff
 commit has no base), so it works for unpushed commits and never needs the network. Proposed comments are **local-only**:
 the review tab labels the target as a commit and hides Post comment / Checkout / Approve, because there is no request to
 post to. Saved reviews from commits are labelled `Commit <short-hash>` in the picker.
+
+**Compare.** The ⋯ menu's **Compare** entry opens a tab beside **Code review** (same tab level,
+owned by the repository). It picks a base (destination) and head (source) from the repository's local branches,
+remote-tracking branches, and tags. It is purely local: refs that are not present are reported (pull first), never
+fetched. It compares the two branch tips directly (`base..head`), so the destination-only changes appear as reversals;
+that is intentional. The summary shows file count and how far the head is ahead/behind, and the changed-files list shows
+each file's full-file unified or split diff (Monaco, like the commit detail viewer, with the patch as a fallback). The
+file-list sidebar is drag-resizable, and the diff fills the remaining height. The ↑/↓ arrows step through every
+difference, moving to the next/previous file at a file boundary; the same shortcuts work in the full-screen diff window (Ctrl+↑ / Ctrl+↓). Right-click a branch, tag, or commit in the graph and choose **Compare … with current
+branch…** to open the same tab. Selecting a request exposes **Compare with target**, which opens the comparison tab
+using the request's current destination branch and fetched head SHA. **Review comparison with AI** runs the same agent
+against the comparison head; like commit reviews, its comments are **local-only** (no Post / Approve) because there is
+no request to publish them to. The **Saved review** picker in each tab lists only that tab's sessions, and saved
+comparisons are labelled `Compare base..head`.
+
+Every request, commit, and comparison is split into **Changes** and **Comments** subtabs (each top-level tab remembers
+its own subtab). Changes holds the changed-files browser backed by the same diff text the AI review sees; Comments
+holds the proposed-comment queue, which can use the full pane height. Both Code review and Compare use this
+layout: the diff fills the available screen height, the file-list sidebar is drag-resizable, the full file is shown
+when its base/head commits are available locally (Monaco), and the ↑/↓ arrows walk through all differences across
+files.
 
 The tab polls the job and shows a live agent trace and a live list of the issues found: the model calls `add_comment` as it works,
 and each proposed comment lands in the list as it arrives. Clicking the job's **Batch N/M · Step X** progress line (shown
