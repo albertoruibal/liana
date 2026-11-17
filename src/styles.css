@@ -858,34 +858,46 @@ body::before {
   display: none;
 }
 
-.repo-tab {
+/* Shared tab pill: repository tabs, settings tabs, and review subtabs. */
+.repo-tab,
+.settings-tab,
+.review-subtab {
   display: inline-flex;
   align-items: center;
-  flex: 0 0 auto;
-  gap: 8px;
-  max-width: 260px;
   min-height: 32px;
-  padding: 6px 10px 6px 12px;
+  padding: 6px 12px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--fg-dim);
   font-size: 13px;
   font-weight: 550;
-  cursor: pointer;
+  line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
   transition:
     background var(--dur) var(--ease),
     color var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
 }
 
-.repo-tab:hover {
+.repo-tab {
+  flex: 0 0 auto;
+  gap: 8px;
+  max-width: 260px;
+  padding: 6px 10px 6px 12px;
+}
+
+.repo-tab:hover,
+.settings-tab:hover,
+.review-subtab:hover {
   background: var(--bg-elev-2);
   color: var(--fg);
 }
 
-.repo-tab.is-active {
+.repo-tab.is-active,
+.settings-tab.active,
+.review-subtab.is-active {
   background: var(--accent-soft);
   border-color: transparent;
   color: var(--fg);
@@ -3537,37 +3549,6 @@ dialog select:focus-visible {
   display: none;
 }
 
-.settings-tab {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 6px 12px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--fg-dim);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 550;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-}
-
-.settings-tab:hover {
-  background: var(--bg-elev-2);
-  color: var(--fg);
-}
-
-.settings-tab.active {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--fg);
-}
-
 .settings-body {
   flex: 1;
   min-height: 0;
@@ -3829,12 +3810,6 @@ dialog select:focus-visible {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
-}
-
-.review-subtab.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--fg);
 }
 
 .review-subtab-count {
