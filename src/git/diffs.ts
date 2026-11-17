@@ -3,8 +3,25 @@
 import { git, GitError } from './exec';
 import { looksBinary, readRepoFile } from './paths';
 import { headExists, loadStatus } from './repo';
+import { validRefName } from './branches';
 import { parseCommitFiles } from '../commit-files';
 import type { CommitFile, FileContents } from '../types';
+
+/** Resolved endpoints of a local branch/tag/commit comparison. */
+export interface CompareTarget {
+  /** Base/destination tip. */
+  baseSha: string;
+  /** Head/source tip. */
+  headSha: string;
+  /** Tree diff base: the merge base, or `baseSha` in direct mode. */
+  diffBaseSha: string;
+  /** Common ancestor, or null in direct mode. */
+  mergeBaseSha: string | null;
+  /** Commits reachable from head but not base. */
+  ahead: number;
+  /** Commits reachable from base but not head. */
+  behind: number;
+}
 
 /**
  * Files changed by a commit, with per-file line counts. Uses `--first-parent` so a
@@ -36,6 +53,122 @@ export async function commitPatch(
       '--find-renames',
       '--first-parent',
       hash,
+      '--',
+      ...paths,
+    ])
+  ).trim();
+}
+
+/** Validate a user-supplied ref before it reaches git. */
+function validCompareRef(ref: string): string {
+  const name = ref.trim();
+  if (!validRefName(name)) {
+    throw new GitError(`Invalid ref: ${ref}`, `"${name}" is not a valid branch, tag, or commit`, 400);
+  }
+  return name;
+}
+
+/** Resolve a branch/tag/commit to a commit SHA, with an actionable failure. */
+async function resolveCommitRef(repoPath: string, ref: string): Promise<string> {
+  const name = validCompareRef(ref);
+  try {
+    const sha = (
+      await git(repoPath, ['rev-parse', '--verify', '--end-of-options', `${name}^{commit}`])
+    ).trim();
+    if (sha) return sha;
+  } catch (err) {
+    const detail = err instanceof GitError ? err.stderr || err.message : String(err);
+    throw new GitError(
+      `Cannot resolve "${name}" locally`,
+      detail
+        ? `Cannot resolve "${name}" locally: ${detail}`
+        : `Cannot resolve "${name}" locally — fetch or pull it first.`,
+      400,
+    );
+  }
+  throw new GitError(`Cannot resolve "${name}" locally`, `Ref "${name}" has no commit`, 400);
+}
+
+/**
+ * Resolve both sides of a comparison. Merge-base mode diffs from the common
+ * ancestor to the head (what a merge/pull request shows); direct mode diffs the
+ * two tips. Local only: refs that are not present are reported, never fetched.
+ */
+export async function resolveCompareTarget(
+  repoPath: string,
+  baseRef: string,
+  headRef: string,
+  mergeBase: boolean,
+): Promise<CompareTarget> {
+  const [baseSha, headSha] = await Promise.all([
+    resolveCommitRef(repoPath, baseRef),
+    resolveCommitRef(repoPath, headRef),
+  ]);
+  let mergeBaseSha: string | null = null;
+  let diffBaseSha = baseSha;
+  if (mergeBase) {
+    try {
+      mergeBaseSha =
+        (await git(repoPath, ['merge-base', baseSha, headSha])).trim() || null;
+    } catch {
+      mergeBaseSha = null;
+    }
+    if (!mergeBaseSha) {
+      throw new GitError(
+        `No common ancestor between ${baseRef.trim()} and ${headRef.trim()}`,
+        'The branches have no common ancestor; compare their tips instead.',
+        400,
+      );
+    }
+    diffBaseSha = mergeBaseSha;
+  }
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const out = (
+      await git(repoPath, ['rev-list', '--left-right', '--count', `${baseSha}...${headSha}`])
+    ).trim();
+    const [behindStr = '0', aheadStr = '0'] = out.split(/\s+/);
+    behind = Number(behindStr) || 0;
+    ahead = Number(aheadStr) || 0;
+  } catch {
+    // Counts are informational; the diff itself still works.
+  }
+  return { baseSha, headSha, diffBaseSha, mergeBaseSha, ahead, behind };
+}
+
+/** Files changed between the comparison's diff base and its head. */
+export async function compareFiles(repoPath: string, target: CompareTarget): Promise<CommitFile[]> {
+  const [nameStatusOut, numstatOut, rawOut] = await Promise.all([
+    git(repoPath, [
+      'diff',
+      '--name-status',
+      '-z',
+      '--find-renames',
+      target.diffBaseSha,
+      target.headSha,
+    ]),
+    git(repoPath, ['diff', '--numstat', '-z', '--find-renames', target.diffBaseSha, target.headSha]),
+    git(repoPath, ['diff', '--raw', '-z', '--find-renames', target.diffBaseSha, target.headSha]),
+  ]);
+  return parseCommitFiles(nameStatusOut, numstatOut, rawOut);
+}
+
+/** Unified diff for one file of a comparison; renames keep their source path. */
+export async function comparePatch(
+  repoPath: string,
+  target: CompareTarget,
+  filePath: string,
+  oldPath: string | null,
+): Promise<string> {
+  const paths = oldPath && oldPath !== filePath ? [oldPath, filePath] : [filePath];
+  return (
+    await git(repoPath, [
+      'diff',
+      '--no-color',
+      '--find-renames',
+      target.diffBaseSha,
+      target.headSha,
       '--',
       ...paths,
     ])
@@ -120,6 +253,59 @@ export async function selectedWorktreeDiffs(
     total += slice.length;
   }
   return parts.join('\n\n');
+}
+
+
+/** Resolve a commit-ish for a content read, or null when empty/unavailable. */
+async function resolveContentRef(repoPath: string, ref: string): Promise<string | null> {
+  const name = ref.trim();
+  if (!name || !validRefName(name)) return null;
+  try {
+    return (
+      (await git(repoPath, ['rev-parse', '--verify', '--end-of-options', `${name}^{commit}`])).trim() ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Original / modified text of one file between two commit-ish refs, for the
+ * full-file review diff. Missing sides are null (new/deleted files); binary
+ * sides omit their text.
+ */
+export async function fileContentsBetween(
+  repoPath: string,
+  baseRef: string,
+  headRef: string,
+  filePath: string,
+  oldPath: string | null,
+): Promise<FileContents> {
+  const head = await resolveContentRef(repoPath, headRef);
+  if (!head) throw new GitError('The reviewed head commit is not available locally', '', 400);
+  const wantsBase = !!baseRef.trim();
+  const base = await resolveContentRef(repoPath, baseRef);
+  if (wantsBase && !base) {
+    throw new GitError('The reviewed base commit is not available locally', '', 400);
+  }
+  const src = oldPath && oldPath !== filePath ? oldPath : filePath;
+  const readBlob = async (sha: string, path: string): Promise<string | null> => {
+    try {
+      return await git(repoPath, ['show', `${sha}:${path}`]);
+    } catch {
+      return null;
+    }
+  };
+  const original = base ? await readBlob(base, src) : null;
+  const modified = await readBlob(head, filePath);
+  const binary = [original, modified].some((t) => t !== null && looksBinary(t));
+  return {
+    path: filePath,
+    original: binary ? null : original,
+    modified: binary ? null : modified,
+    binary,
+  };
 }
 
 /**

@@ -36,13 +36,13 @@ export {
   worktreeMove,
   worktreePrune,
 } from './worktrees';
-export { commitFiles, commitPatch, worktreePatch, selectedWorktreeDiffs, fileContents } from './diffs';
+export { commitFiles, commitPatch, worktreePatch, selectedWorktreeDiffs, fileContents, fileContentsBetween, resolveCompareTarget, compareFiles, comparePatch, type CompareTarget } from './diffs';
 export { loadRebasePlan, executeRebase, type RebasePlanItem } from './rebase';
 export { validRefName, remoteBranchLocalName, checkoutBranch, createBranch, deleteBranch, deleteRemoteBranchPush, renameBranch, renameRemoteBranch, createTag, deleteTag } from './branches';
 export { currentBranch, loadRemotes, upstreamRef, loadRemoteStatus, pushBranch, pullBranch, testRemote } from './remotes';
 export { resetBranch } from './reset';
 export { resolveStash, createStash, applyStash, dropStash } from './stash';
-export { apiListRequests, apiGetRequestChanges, apiApproveRequest, apiCheckoutRequestBranch, apiTestForge, apiStartCommitReview } from './forge';
+export { apiListRequests, apiGetRequestChanges, apiApproveRequest, apiCheckoutRequestBranch, apiTestForge, apiStartCommitReview, apiCompareBranches, apiStartCompareReview } from './forge';
 
 /**
  * Generate a commit message for the given working-tree paths (mirrors

@@ -18,6 +18,11 @@ export {
   type StartCommitReviewOptions,
 } from './commit-review';
 export {
+  reviewChangesForCompare,
+  startCompareReview,
+  type StartCompareReviewOptions,
+} from './compare-review';
+export {
   listMergeRequests,
   getMergeRequestChanges,
   ensureMergeRequestRefs,

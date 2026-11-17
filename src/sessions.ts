@@ -16,6 +16,7 @@ import type {
   ForgeKind,
   ReviewChanges,
   ReviewCommitInfo,
+  ReviewCompareInfo,
   ReviewJob,
   ReviewPromptStep,
   ReviewRuleConfig,
@@ -204,6 +205,8 @@ function coerceChanges(v: unknown): ReviewChanges | null {
       deletedFile: f.deletedFile === true,
       renamedFile: f.renamedFile === true,
       diff: str(f.diff, ''),
+      ...(typeof f.binary === 'boolean' ? { binary: f.binary } : {}),
+      ...(typeof f.isSubmodule === 'boolean' ? { isSubmodule: f.isSubmodule } : {}),
     })),
     diffRefs: {
       baseSha: str(refs.baseSha, ''),
@@ -222,6 +225,20 @@ function coerceChanges(v: unknown): ReviewChanges | null {
       baseHash: optionalString(c.baseHash),
     };
     if (commit.hash) changes.commit = commit;
+  }
+  if (isRecord(v.compare)) {
+    const c = v.compare;
+    const compare: ReviewCompareInfo = {
+      baseRef: str(c.baseRef, ''),
+      headRef: str(c.headRef, ''),
+      baseSha: str(c.baseSha, ''),
+      headSha: str(c.headSha, ''),
+      mergeBaseSha: optionalString(c.mergeBaseSha),
+      mode: c.mode === 'direct' ? 'direct' : 'merge-base',
+      ahead: Math.max(0, Math.floor(num(c.ahead, 0))),
+      behind: Math.max(0, Math.floor(num(c.behind, 0))),
+    };
+    if (compare.baseRef && compare.headRef && compare.headSha) changes.compare = compare;
   }
   return changes;
 }

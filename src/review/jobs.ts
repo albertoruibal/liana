@@ -136,6 +136,9 @@ function publicSession(s: StoredReviewSession): ReviewSession {
     llmDurationMs: s.job.llmDurationMs,
     forge: s.changes.forge,
     commit: s.changes.commit?.shortHash ?? null,
+    compare: s.changes.compare
+      ? `${s.changes.compare.baseRef}${s.changes.compare.mode === 'merge-base' ? '...' : '..'}${s.changes.compare.headRef}`
+      : null,
   };
 }
 
@@ -835,14 +838,19 @@ async function runBatch(
   // than silently reviewing the diff alone.
   const headAvailable = headRef !== '' && (await hasCommit(rec.repoPath, headRef).catch(() => false));
   if (!headAvailable) {
+    const compare = changes.compare;
     const target = changes.commit
       ? `commit ${changes.commit.shortHash}`
-      : `${forgeLabel(changes.forge)} head commit`;
+      : compare
+        ? `comparison head ${compare.headRef}`
+        : `${forgeLabel(changes.forge)} head commit`;
     throw new Error(
       `The ${target} is not available locally — ` +
         (changes.commit
           ? 'start the review again from the commit.'
-          : 'use "Checkout branch" to fetch it, then start the review again.'),
+          : compare
+            ? 'run the comparison again after the ref is available locally.'
+            : 'use "Checkout branch" to fetch it, then start the review again.'),
     );
   }
   const ctx: ToolContext = {
@@ -867,7 +875,7 @@ async function runBatch(
     {
       role: 'user',
       content:
-        `Review the ${changes.commit ? 'commit' : 'merge request'} changes above. ` +
+        `Review the ${changes.commit ? 'commit' : changes.compare ? 'branch comparison' : 'merge request'} changes above. ` +
         'Report each issue by calling add_comment; only comment on the files listed ' +
         'above. When you are done, call finish_batch.',
     },
@@ -1178,6 +1186,7 @@ function buildSystemPrompt(
   batchTotal: number,
 ): string {
   const commit = changes.commit;
+  const compare = changes.compare;
   const batching = batchTotal > 1;
   const files = batch
     .map((f) => `- ${f.newPath}${f.newFile ? ' (new)' : ''}${f.deletedFile ? ' (deleted)' : ''}`)
@@ -1185,15 +1194,19 @@ function buildSystemPrompt(
   const diffs = batch
     .map((f) => `### ${f.newPath}\n${f.diff || '(binary or empty diff)'}`)
     .join('\n\n');
-  const target = commit ? 'commit' : forgeLabel(changes.forge);
-  const headLabel = commit ? 'the commit' : 'the merge request head';
+  const target = commit ? 'commit' : compare ? 'branch comparison' : forgeLabel(changes.forge);
+  const headLabel = commit ? 'the commit' : compare ? 'the comparison head' : 'the merge request head';
   const baseLabel = commit
     ? commit.baseHash
       ? `Base: ${commit.baseHash.slice(0, 8)} (first parent)`
       : 'Root commit: every file is new.'
-    : `Branches: ${changes.mr.sourceBranch} → ${changes.mr.targetBranch}`;
+    : compare
+      ? compare.mode === 'merge-base'
+        ? `Comparing ${compare.baseRef}...${compare.headRef} from merge base ${(compare.mergeBaseSha ?? compare.baseSha).slice(0, 8)}`
+        : `Comparing ${compare.baseRef}..${compare.headRef} directly (tip to tip)`
+      : `Branches: ${changes.mr.sourceBranch} → ${changes.mr.targetBranch}`;
   const lines = [
-    `You are reviewing a ${commit ? 'single commit' : target}.`,
+    `You are reviewing a ${commit ? 'single commit' : compare ? 'branch comparison' : target}.`,
     rule.instructions,
     '',
     ...(commit
@@ -1202,16 +1215,24 @@ function buildSystemPrompt(
           `Author: ${commit.author}`,
           baseLabel,
         ]
-      : [
-          `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,
-          baseLabel,
-        ]),
+      : compare
+        ? [
+            `Comparison: ${compare.headRef} → ${compare.baseRef}`,
+            baseLabel,
+            compare.ahead > 0 || compare.behind > 0
+              ? `Commits: head is ${compare.ahead} ahead and ${compare.behind} behind the base.`
+              : '',
+          ].filter(Boolean)
+        : [
+            `${changes.forge === 'github' ? 'Pull request' : 'Merge request'} #${changes.mr.iid}: ${changes.mr.title}`,
+            baseLabel,
+          ]),
     '',
     // When the review is split across batches, make the model's scope explicit:
     // it is reviewing a subset, and the other changed files belong to other batches.
     ...(batching
       ? [
-          `This is batch ${batchIndex} of ${batchTotal} of this ${commit ? 'commit' : 'merge request'}; ` +
+          `This is batch ${batchIndex} of ${batchTotal} of this ${commit ? 'commit' : compare ? 'branch comparison' : 'merge request'}; ` +
             'only the files listed below are under review here. The remaining changed ' +
             'files are covered by the other batches — do not search for them, read ' +
             'their diffs, or comment on them.',

@@ -441,6 +441,10 @@ export interface ReviewFile {
   renamedFile: boolean;
   /** Unified diff text (may be empty for binary/too-large files). */
   diff: string;
+  /** True when git reports the change as binary (only set by local comparisons). */
+  binary?: boolean;
+  /** True when the path is a gitlink (mode 160000, a submodule). */
+  isSubmodule?: boolean;
 }
 
 /** Diff anchors required to position a line-level review comment. */
@@ -448,6 +452,34 @@ export interface DiffRefs {
   baseSha: string;
   headSha: string;
   startSha: string;
+}
+
+/** How two refs are compared: from their merge base, or tip-to-tip. */
+export type CompareMode = 'merge-base' | 'direct';
+
+/** User-requested branch/tag/commit comparison. */
+export interface CompareRefsRequest {
+  base: string;
+  head: string;
+  mergeBase: boolean;
+}
+
+/** Resolved information about a local branch comparison. */
+export interface ReviewCompareInfo {
+  /** Base/destination ref as requested. */
+  baseRef: string;
+  /** Head/source ref as requested. */
+  headRef: string;
+  /** Resolved tip commits. */
+  baseSha: string;
+  headSha: string;
+  /** Common ancestor used as the diff base, or null for a direct tip diff. */
+  mergeBaseSha: string | null;
+  mode: CompareMode;
+  /** Commits reachable from head but not base. */
+  ahead: number;
+  /** Commits reachable from base but not head. */
+  behind: number;
 }
 
 /** A request plus its changed files and diff refs. */
@@ -459,6 +491,8 @@ export interface ReviewChanges {
   diffRefs: DiffRefs;
   /** Present when this review targets a single local commit rather than a request. */
   commit?: ReviewCommitInfo;
+  /** Present when this review targets a local comparison rather than a request. */
+  compare?: ReviewCompareInfo;
 }
 
 // Back-compat aliases: the persisted session wire shape keeps the `mr`/`iid`
@@ -586,6 +620,8 @@ export interface ReviewSession {
   forge: ForgeKind;
   /** Short commit hash when this session reviews a single commit, else null. */
   commit: string | null;
+  /** `base...head` when this session reviews a local comparison, else null. */
+  compare: string | null;
 }
 
 /** A review session restored in full, ready to render in the review view. */

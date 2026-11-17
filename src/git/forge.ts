@@ -5,7 +5,15 @@
 // over HTTP, callable directly. Types come from src/types.ts and are identical on
 // both sides. The browser UI still talks to /api (see src/ui/).
 
-import type { AiModelInfo, ForgeKind, ReviewChanges, ReviewJob, ReviewRequest, ReviewRuleConfig } from '../types';
+import type {
+  AiModelInfo,
+  CompareRefsRequest,
+  ForgeKind,
+  ReviewChanges,
+  ReviewJob,
+  ReviewRequest,
+  ReviewRuleConfig,
+} from '../types';
 import type { StoredProvider } from '../settings';
 
 /** Open merge/pull requests for the repository's resolved forge. */
@@ -52,6 +60,29 @@ export async function apiStartCommitReview(
 ): Promise<{ job: ReviewJob; changes: ReviewChanges }> {
   const { startCommitReview } = await import('../review');
   return startCommitReview({ repoPath, hash, providerId, rule });
+}
+
+/** Build a local branch comparison's changed files (mirrors `POST /api/compare`). */
+export async function apiCompareBranches(
+  repoPath: string,
+  refs: CompareRefsRequest,
+): Promise<ReviewChanges> {
+  const { reviewChangesForCompare } = await import('../review');
+  return reviewChangesForCompare(repoPath, refs);
+}
+
+/**
+ * Start a local-only review of a branch comparison (mirrors `POST
+ * /api/review/generate-compare`).
+ */
+export async function apiStartCompareReview(
+  repoPath: string,
+  refs: CompareRefsRequest,
+  providerId?: string,
+  rule?: Partial<ReviewRuleConfig>,
+): Promise<{ job: ReviewJob; changes: ReviewChanges }> {
+  const { startCompareReview } = await import('../review');
+  return startCompareReview({ repoPath, ...refs, providerId, rule });
 }
 
 /** Check out a request's source branch and reset it to the request head. */

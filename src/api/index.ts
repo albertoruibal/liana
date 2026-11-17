@@ -23,6 +23,8 @@ import {
   saveReviewSessionComments,
   startCommitReview,
   startReview,
+  reviewChangesForCompare,
+  startCompareReview,
   testForge,
   testGitLab,
   testProvider,
@@ -76,7 +78,7 @@ import {
   worktreeMove,
   worktreePrune,
 } from './worktrees';
-import { selectedWorktreeDiffs, commitFiles, commitPatch, worktreePatch, fileContents } from './diffs';
+import { selectedWorktreeDiffs, commitFiles, commitPatch, worktreePatch, fileContents, fileContentsBetween } from './diffs';
 import { loadRebasePlan, executeRebase } from './rebase';
 import {
   validRefName,
@@ -309,6 +311,59 @@ export function createApi(defaultRepo: string | null): Api {
           rule: parsed.rule,
         });
         return { status: 200, body: { ok: true, job, changes } };
+      }
+      if (route === '/compare' && method === 'POST') {
+        const parsed = JSON.parse(rawBody) as {
+          base?: string;
+          head?: string;
+        };
+        if (!parsed.base?.trim() || !parsed.head?.trim()) {
+          return { status: 400, body: { error: 'Missing base or head ref' } };
+        }
+        const changes = await reviewChangesForCompare(repoPath, {
+          base: parsed.base.trim(),
+          head: parsed.head.trim(),
+          mergeBase: false,
+        });
+        return { status: 200, body: { ok: true, changes } };
+      }
+      if (route === '/review/generate-compare' && method === 'POST') {
+        const parsed = JSON.parse(rawBody) as {
+          base?: string;
+          head?: string;
+          providerId?: string;
+          rule?: Partial<ReviewRuleConfig>;
+        };
+        if (!parsed.base?.trim() || !parsed.head?.trim()) {
+          return { status: 400, body: { error: 'Missing base or head ref' } };
+        }
+        const { job, changes } = await startCompareReview({
+          repoPath,
+          base: parsed.base.trim(),
+          head: parsed.head.trim(),
+          mergeBase: false,
+          providerId: parsed.providerId,
+          rule: parsed.rule,
+        });
+        return { status: 200, body: { ok: true, job, changes } };
+      }
+      if (route === '/review-file-content' && method === 'POST') {
+        const { baseSha, headSha, path: filePath, oldPath } = JSON.parse(rawBody) as {
+          baseSha?: string;
+          headSha?: string;
+          path?: string;
+          oldPath?: string | null;
+        };
+        if (!headSha?.trim()) return { status: 400, body: { error: 'Missing headSha' } };
+        if (!filePath?.trim()) return { status: 400, body: { error: 'Missing path' } };
+        const contents = await fileContentsBetween(
+          repoPath,
+          typeof baseSha === 'string' ? baseSha : '',
+          headSha.trim(),
+          filePath.trim(),
+          typeof oldPath === 'string' && oldPath ? oldPath : null,
+        );
+        return { status: 200, body: { ok: true, ...contents } };
       }
       if (route === '/review/checkout-branch' && method === 'POST') {
         const { iid, branch, forge } = JSON.parse(rawBody) as {
