@@ -113,7 +113,7 @@ export function renderTabs(): void {
       const panel = store.activePanel;
       const review = document.createElement('button');
       review.type = 'button';
-      review.className = `repo-tab repo-tab-review${panel.kind === 'review' && panel.repoId === tab.id ? ' is-active' : ''}`;
+      review.className = `repo-tab repo-tab-review${panel.kind === 'review' && panel.repoId === tab.id && panel.mode === 'request' ? ' is-active' : ''}`;
       const running = tab.review.job?.state === 'running';
       review.title = `Code review · ${tab.name}\n${reviewTabSubtitle(tab.review)}${running ? '\nReview running…' : ''}`;
       review.dataset.review = tab.id;
@@ -141,6 +141,41 @@ export function renderTabs(): void {
       review.appendChild(close);
       review.addEventListener('click', () => activateReviewTab(tab.id));
       strip.appendChild(review);
+    }
+
+    // A branch-comparison tab sits at the same level as Code review.
+    if (tab.compare) {
+      const panel = store.activePanel;
+      const compare = document.createElement('button');
+      compare.type = 'button';
+      compare.className = `repo-tab repo-tab-compare${panel.kind === 'review' && panel.repoId === tab.id && panel.mode === 'compare' ? ' is-active' : ''}`;
+      const running = tab.compare.job?.state === 'running';
+      compare.title = `Compare · ${tab.name}\n${reviewTabSubtitle(tab.compare)}${running ? '\nReview running…' : ''}`;
+      compare.dataset.compare = tab.id;
+      compare.innerHTML =
+        `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3.2v6.2a2.4 2.4 0 0 0 2.4 2.4h5.2M9.4 9.4l2.4 2.4-2.4 2.4M11.8 3.2H8.2a2.4 2.4 0 0 0-2.4 2.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const name = document.createElement('span');
+      name.className = 'repo-tab-name';
+      name.textContent = 'Compare';
+      compare.appendChild(name);
+      if (running) {
+        const spinner = document.createElement('span');
+        spinner.className = 'status-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        compare.appendChild(spinner);
+      }
+      const close = document.createElement('span');
+      close.className = 'repo-tab-close';
+      close.textContent = '\u00d7';
+      close.title = `Close ${tab.name} branch comparison`;
+      close.setAttribute('role', 'button');
+      close.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        closeReviewTab(tab.id, 'compare');
+      });
+      compare.appendChild(close);
+      compare.addEventListener('click', () => activateCompareTab(tab.id));
+      strip.appendChild(compare);
     }
 
     // One terminal pill per open worktree shell bound to this repository.
@@ -255,6 +290,7 @@ export async function addRepo(path: string, activate: boolean): Promise<void> {
     panY: 0,
     zoom: 1,
     review: null,
+    compare: null,
     terminals: new Map(),
   };
   store.tabs.push(tab);
@@ -288,25 +324,35 @@ export async function activateRepo(id: string): Promise<void> {
   await refresh();
 }
 
-/** Show the review tab for `repoId`, preserving its loaded MR/job state. */
-export function activateReviewTab(repoId: string): void {
+/** Show one repository's review/compare tab, preserving its loaded state. */
+function activateReviewPanel(repoId: string, mode: 'request' | 'compare'): void {
   const bound = store.tabs.find((t) => t.id === repoId);
-  const state = bound?.review;
+  const state = mode === 'compare' ? bound?.compare : bound?.review;
   if (!bound || !state) return;
-  // The review is bound to one repository; rebind it as active so subsequent
-  // review/GitLab API calls target the same repo the MR belongs to.
+  // The panel is bound to one repository; rebind it as active so subsequent
+  // review/GitLab API calls target the same repo the request belongs to.
   if (store.activeId !== repoId) {
     saveActive();
     loadTab(bound);
     if (bound.lastResponse) renderAll(bound.lastResponse);
     void refresh();
   }
-  store.activePanel = { kind: 'review', repoId };
+  store.activePanel = { kind: 'review', repoId, mode };
   applyPanel();
   paintReview(state);
   renderTabs();
   persistReviewTabs();
   if (!state.job) void loadReviewSessions(state);
+}
+
+/** Show the request review tab for `repoId`, preserving its loaded MR/job state. */
+export function activateReviewTab(repoId: string): void {
+  activateReviewPanel(repoId, 'request');
+}
+
+/** Show the branch-comparison tab for `repoId`, preserving its loaded state. */
+export function activateCompareTab(repoId: string): void {
+  activateReviewPanel(repoId, 'compare');
 }
 
 /** Close a tab; adjacent tab becomes active when the closed one was active. */
@@ -319,6 +365,7 @@ export function closeTab(id: string): void {
   // The panels belong to the tab, so clean them up while the tab is still
   // registered (the close helpers resolve it by id), then drop the tab.
   if (closing.review) closeReviewTab(id);
+  if (closing.compare) closeReviewTab(id, 'compare');
   for (const term of [...closing.terminals.values()]) closeTerminal(term.path);
   store.tabs.splice(idx, 1);
   if (wasActive) {

@@ -4,10 +4,11 @@ import { reviewApi } from './api-client';
 import { refresh } from './actions';
 import { confirmDialog } from './confirm';
 import { loadCode } from './code-loader';
+import { readDiffView, writeDiffView } from './diff-view';
 import { esc, gutter } from './format';
 import { renderCached } from './graph-view';
 import { ReviewTabState, activeReviewState, activeTab, isReviewShown, store } from './store';
-import { activateReviewTab, renderTabs } from './tabs';
+import { activateCompareTab, activateReviewTab, renderTabs } from './tabs';
 import { toast } from './toast';
 import { $ } from './dom';
 import { CodeHandle } from '../code';
@@ -18,6 +19,7 @@ import { closeContextMenu, contextMenu } from './context-menu';
 import { closeMoreMenu, moreMenu } from './more-menu';
 import { closeSearch } from './search';
 import { closeStatusHistory, statusHistory } from './status-bar';
+import { initReviewFileResizer, jumpReviewDiff, layoutReviewDiff, renderReviewChanges, renderReviewFileDiff, selectReviewFile } from './review-changes';
 import { applyPanel } from './terminal-view';
 
 /** The review tab currently shown, if any. */
@@ -26,6 +28,8 @@ export function activeReview(): ReviewTabState | null {
 }
 
 export const REVIEW_TABS_KEY = 'liana-review-tabs';
+
+export const REVIEW_COMPARE_TABS_KEY = 'liana-compare-tabs';
 
 export const REVIEW_ACTIVE_KEY = 'liana-review-active';
 
@@ -44,18 +48,40 @@ export function requestNumber(forge: ForgeKind | undefined, iid: number): string
 /** The review subtitle shown on its tab tooltip: the selected request, or a hint. */
 export function reviewTabSubtitle(state: ReviewTabState | undefined): string {
   const changes = state?.changes;
-  if (!changes) return 'Review an open merge/pull request or a single commit with AI.';
+  if (!changes) {
+    return state?.mode === 'compare'
+      ? 'Compare two local branches with AI.'
+      : 'Review an open merge/pull request or a single commit with AI.';
+  }
   if (changes.commit) {
     return `Commit ${changes.commit.shortHash}: ${changes.commit.subject} — ${changes.files.length} file(s)`;
+  }
+  const compare = changes.compare;
+  if (compare) {
+    const sep = compare.mode === 'merge-base' ? '...' : '..';
+    return `Compare ${compare.baseRef}${sep}${compare.headRef} — ${changes.files.length} file(s)`;
   }
   return `${requestNumber(changes.forge, changes.mr.iid)}: ${changes.mr.title} — ${changes.files.length} file(s)`;
 }
 
-/** Update the review toolbar wording (merge request vs pull request) for a tab. */
+/** Update the review toolbar wording (request vs comparison) for a tab. */
 export function paintForgeWording(state: ReviewTabState): void {
   if (!isReviewShown(state)) return;
   const commit = state.changes?.commit;
+  const compareMode = state.mode === 'compare';
   const select = $<HTMLSelectElement>('#review-mr-select');
+  const { short, long } = forgeLabels(state.changes?.forge);
+  $('#review-mr-toolbar').hidden = compareMode;
+  $('#review-compare-bar').hidden = !compareMode;
+  if (compareMode) {
+    $('#review-mr-label').textContent = 'Branch comparison';
+    $('#review-generate').textContent = 'Review comparison with AI';
+    $('#review-checkout-mr').hidden = true;
+    $('#review-approve-mr').hidden = true;
+    select.disabled = true;
+    select.title = '';
+    return;
+  }
   if (commit) {
     $('#review-mr-label').textContent = 'Commit';
     $('#review-refresh-mrs').hidden = true;
@@ -63,15 +89,16 @@ export function paintForgeWording(state: ReviewTabState): void {
     $('#review-approve-mr').hidden = true;
     select.disabled = true;
     select.title = 'Single-commit reviews keep their proposed comments local.';
+    $('#review-generate').textContent = 'Review with AI';
     return;
   }
-  const { short, long } = forgeLabels(state.changes?.forge);
   $('#review-mr-label').textContent = long.charAt(0).toUpperCase() + long.slice(1);
   $('#review-approve-mr').textContent = `Approve ${short}`;
   $('#review-refresh-mrs').hidden = false;
   $('#review-checkout-mr').hidden = false;
   select.disabled = false;
   select.title = '';
+  $('#review-generate').textContent = 'Review with AI';
   $<HTMLButtonElement>('#review-checkout-mr').disabled = state.changes === null;
 }
 
@@ -125,14 +152,22 @@ export function confirmApprove(state: ReviewTabState): Promise<boolean> {
   });
 }
 
-/** Remember the open review tabs (by path) and which one was visible. */
+/** Remember the open review/compare tabs (by path) and which one was visible. */
 export function persistReviewTabs(): void {
   try {
-    const paths = store.tabs.filter((t) => t.review).map((t) => t.path);
-    localStorage.setItem(REVIEW_TABS_KEY, JSON.stringify(paths));
+    const review = store.tabs.filter((t) => t.review).map((t) => t.path);
+    const compare = store.tabs.filter((t) => t.compare).map((t) => t.path);
+    localStorage.setItem(REVIEW_TABS_KEY, JSON.stringify(review));
+    localStorage.setItem(REVIEW_COMPARE_TABS_KEY, JSON.stringify(compare));
     const active = activeReview();
-    if (active) localStorage.setItem(REVIEW_ACTIVE_KEY, active.repoPath);
-    else localStorage.removeItem(REVIEW_ACTIVE_KEY);
+    if (active) {
+      localStorage.setItem(
+        REVIEW_ACTIVE_KEY,
+        JSON.stringify({ path: active.repoPath, mode: active.mode }),
+      );
+    } else {
+      localStorage.removeItem(REVIEW_ACTIVE_KEY);
+    }
   } catch {
     // localStorage may be unavailable (private mode); review still works in-session.
   }
@@ -147,38 +182,71 @@ export function readSavedReviewPaths(): string[] {
   }
 }
 
-/** Best-effort flush of comment edits for every review tab when the page goes away. */
+export function readSavedComparePaths(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REVIEW_COMPARE_TABS_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Restore the last visible review panel, migrating the old path-only value. */
+export function readSavedReviewActive(): { path: string; mode: 'request' | 'compare' } | null {
+  try {
+    const raw = localStorage.getItem(REVIEW_ACTIVE_KEY);
+    if (!raw) return null;
+    if (raw.startsWith('{')) {
+      const parsed = JSON.parse(raw) as { path?: unknown; mode?: unknown };
+      if (typeof parsed.path === 'string') {
+        return { path: parsed.path, mode: parsed.mode === 'compare' ? 'compare' : 'request' };
+      }
+      return null;
+    }
+    return { path: raw, mode: 'request' };
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort flush of comment edits for every review/compare tab when the page goes away. */
 export function flushReviewEdits(): void {
   for (const tab of store.tabs) {
-    const state = tab.review;
-    if (!state?.job) continue;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-liana-repo': state.repoId,
-    };
-    const token = window.liana?.token;
-    if (token) headers['x-liana-token'] = token;
-    fetch('/api/review/session/save', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ sessionId: state.job.id, comments: state.job.comments }),
-      keepalive: true,
-    }).catch(() => {
-      // The page is unloading; nothing to recover here.
-    });
+    for (const state of [tab.review, tab.compare]) {
+      if (!state?.job) continue;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-liana-repo': state.repoId,
+      };
+      const token = window.liana?.token;
+      if (token) headers['x-liana-token'] = token;
+      fetch('/api/review/session/save', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sessionId: state.job.id, comments: state.job.comments }),
+        keepalive: true,
+      }).catch(() => {
+        // The page is unloading; nothing to recover here.
+      });
+    }
   }
 }
 
 export function refreshSessionSelect(state: ReviewTabState): void {
   const sel = $<HTMLSelectElement>('#review-session-select');
   const current = state.job?.id ?? '';
+  const relevant = state.sessions.filter((s) =>
+    state.mode === 'compare' ? !!s.compare : !s.compare,
+  );
   sel.innerHTML =
     '<option value="">— Saved reviews —</option>' +
-    state.sessions
+    relevant
       .map((s) => {
-        const label = s.commit
-          ? `Commit ${esc(s.commit)} ${esc(s.title)}`
-          : `${requestNumber(s.forge, s.iid)} ${esc(s.title)}`;
+        const label = s.compare
+          ? `Compare ${esc(s.compare)}`
+          : s.commit
+            ? `Commit ${esc(s.commit)} ${esc(s.title)}`
+            : `${requestNumber(s.forge, s.iid)} ${esc(s.title)}`;
         return (
           `<option value="${esc(s.id)}"${s.id === current ? ' selected' : ''}>` +
           `${label} — ${esc(s.state)}${s.commentCount > 0 ? ` (${s.commentCount})` : ''}${s.llmDurationMs > 0 ? ` · ${fmtDuration(s.llmDurationMs)}` : ''}</option>`
@@ -215,6 +283,9 @@ function rememberStartedSession(state: ReviewTabState, job: ReviewJob): void {
     llmDurationMs: job.llmDurationMs,
     forge: changes.forge,
     commit: changes.commit?.shortHash ?? null,
+    compare: changes.compare
+      ? `${changes.compare.baseRef}${changes.compare.mode === 'merge-base' ? '...' : '..'}${changes.compare.headRef}`
+      : null,
   };
   state.sessions = [entry, ...state.sessions.filter((s) => s.id !== entry.id)];
   if (isReviewShown(state)) refreshSessionSelect(state);
@@ -242,6 +313,13 @@ export async function restoreSession(state: ReviewTabState, sessionId: string): 
 export function applySessionView(state: ReviewTabState, view: ReviewSessionView): void {
   state.changes = view.changes;
   state.job = view.job;
+  const compare = view.changes.compare;
+  state.mode = compare ? 'compare' : 'request';
+  if (compare) {
+    state.compareBase = compare.baseRef;
+    state.compareHead = compare.headRef;
+  }
+  state.selectedFile = null;
   // Keep the MR picker in step with the session it belongs to, even when the
   // request is no longer open (refreshMrSelect renders it as an extra option).
   state.mrIid = view.changes.mr.iid;
@@ -255,9 +333,12 @@ export function applySessionView(state: ReviewTabState, view: ReviewSessionView)
   if (!isReviewShown(state)) return;
   paintForgeWording(state);
   refreshMrSelect(state);
-  $('#review-approve-mr').hidden = !!view.changes.commit;
+  paintCompareForm(state);
+  renderReviewChanges(state);
+  $('#review-approve-mr').hidden = !!view.changes.commit || !!view.changes.compare;
   renderJob(state, view.job);
   if (view.job.comments.length === 0) $('#review-queue-wrap').hidden = true;
+  paintReviewPane(state);
 }
 
 export function refreshMrSelect(state: ReviewTabState): void {
@@ -270,13 +351,21 @@ export function refreshMrSelect(state: ReviewTabState): void {
     $('#review-generate').hidden = true;
     return;
   }
+  if (state.mode === 'compare' || state.changes?.compare) {
+    sel.innerHTML = '<option value="0">Branch comparison</option>';
+    sel.value = '0';
+    sel.disabled = true;
+    return;
+  }
   sel.disabled = false;
+  const { long } = forgeLabels(state.changes?.forge);
   const listed = state.mrs.some((m) => m.iid === state.mrIid);
   // A session may target a request that is no longer open (closed/merged);
   // pin it as an extra option so the picker still reflects the restored MR.
   const pinned =
     state.mrIid > 0 && !listed && state.changes ? state.changes.mr : undefined;
   sel.innerHTML =
+    `<option value="">— Select ${long} —</option>` +
     (pinned
       ? `<option value="${pinned.iid}">${requestNumber(state.changes?.forge, pinned.iid)} ${esc(pinned.title)} — (not open)</option>`
       : '') +
@@ -286,13 +375,17 @@ export function refreshMrSelect(state: ReviewTabState): void {
           `<option value="${m.iid}">${requestNumber(state.changes?.forge, m.iid)} ${esc(m.draft ? 'Draft: ' : '')}${esc(m.title)} — ${esc(m.sourceBranch)}→${esc(m.targetBranch)}</option>`,
       )
       .join('');
-  // Restore this tab's selection when it exists (listed or pinned), else default.
+  // Restore this tab's selection when it exists (listed or pinned), else the placeholder.
   if (state.mrIid > 0 && (listed || pinned)) {
     sel.value = String(state.mrIid);
   } else {
-    state.mrIid = Number(sel.value) || 0;
+    state.mrIid = 0;
+    sel.value = '';
   }
-  $<HTMLButtonElement>('#review-generate').toggleAttribute('disabled', state.mrs.length === 0);
+  $<HTMLButtonElement>('#review-generate').toggleAttribute(
+    'disabled',
+    state.mrs.length === 0 || state.mrIid === 0,
+  );
 }
 
 export async function loadMergeRequests(state: ReviewTabState): Promise<void> {
@@ -326,6 +419,8 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
       fetch?: { fetched: boolean; error?: string };
     }>(state, '/forge/mr', fetchRefs ? { iid, fetch: true } : { iid });
     state.changes = changes;
+    state.mode = 'request';
+    state.selectedFile = null;
     state.job = null;
     state.edits.clear();
     state.showRejected = false;
@@ -335,6 +430,8 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     if (!isReviewShown(state)) return true;
     refreshSessionSelect(state);
     paintForgeWording(state);
+    renderReviewChanges(state);
+    paintReviewPane(state);
     $('#review-queue-wrap').hidden = true;
     paintJobControls(state, null);
     $('#review-approve-mr').hidden = false;
@@ -1034,7 +1131,7 @@ function autosizeCommentBodies(root: ParentNode): void {
 /** Build a fresh comment card (with the HTML excerpt fallback) and wire it up. */
 function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement {
   const line = commentLineLabel(c);
-  const commitReview = !!state.changes?.commit;
+  const localOnly = !!state.changes?.commit || !!state.changes?.compare;
   const scanning = c.stage === 'pending' && state.job?.state === 'running';
   const stage = scanning ? '<span class="review-stage-badge">scanning…</span>' : '';
   const template = document.createElement('template');
@@ -1052,7 +1149,7 @@ function createCommentCard(state: ReviewTabState, c: ReviewComment): HTMLElement
       <div class="review-comment-actions">
         <button type="button" class="btn review-comment-reject" data-id="${esc(c.id)}">Reject</button>
         ${
-          commitReview
+          localOnly
             ? ''
             : `<button type="button" class="btn review-comment-approve" data-id="${esc(c.id)}">Post comment</button>`
         }
@@ -1168,10 +1265,52 @@ function applyCommentEdits(state: ReviewTabState, comments: ReviewComment[]): vo
   }
 }
 
+function commentsEmptyText(state: ReviewTabState): string {
+  const job = state.job;
+  if (!job) return 'No proposed comments yet.';
+  if (job.state === 'running') return 'Waiting for proposed comments…';
+  if (job.comments.length > 0) return 'All proposed comments are posted.';
+  return 'No proposed comments.';
+}
+
+function paintCommentsEmpty(state: ReviewTabState): void {
+  const el = $('#review-comments-empty');
+  const unposted = state.job?.comments.filter((c) => c.status !== 'posted').length ?? 0;
+  el.hidden = unposted > 0;
+  if (unposted === 0) el.textContent = commentsEmptyText(state);
+}
+
+/** Keep the Changes/Comments subtab badges in step with the target and job. */
+function updateReviewPaneBadges(state: ReviewTabState): void {
+  const files = state.changes?.files.length ?? 0;
+  $('#review-subtab-changes-count').textContent = files > 0 ? `(${files})` : '';
+  const unposted = state.job?.comments.filter((c) => c.status !== 'posted').length ?? 0;
+  $('#review-subtab-comments-count').textContent = unposted > 0 ? `(${unposted})` : '';
+}
+
+/** Show the active Changes/Comments subtab and update its badges/empty state. */
+export function paintReviewPane(state: ReviewTabState): void {
+  if (!isReviewShown(state)) return;
+  const pane = state.reviewPane;
+  document.querySelectorAll<HTMLButtonElement>('.review-subtab').forEach((btn) => {
+    const active = btn.dataset.reviewPane === pane;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-selected', String(active));
+  });
+  $('#review-changes-pane').hidden = pane !== 'changes';
+  $('#review-comments-pane').hidden = pane !== 'comments';
+  updateReviewPaneBadges(state);
+  paintCommentsEmpty(state);
+  if (pane === 'changes') requestAnimationFrame(() => layoutReviewDiff(state));
+  else if (isReviewShown(state)) renderCommentQueue(state);
+}
+
 export function renderCommentQueue(state: ReviewTabState): void {
   const job = state.job;
   if (!job || job.comments.length === 0) {
     $('#review-queue-wrap').hidden = true;
+    updateReviewPaneBadges(state);
+    paintCommentsEmpty(state);
     return;
   }
   applyCommentEdits(state, job.comments);
@@ -1179,9 +1318,13 @@ export function renderCommentQueue(state: ReviewTabState): void {
   const unposted = job.comments.filter((c) => c.status !== 'posted');
   if (unposted.length === 0) {
     $('#review-queue-wrap').hidden = true;
+    updateReviewPaneBadges(state);
+    paintCommentsEmpty(state);
     return;
   }
   $('#review-queue-wrap').hidden = false;
+  updateReviewPaneBadges(state);
+  paintCommentsEmpty(state);
   const total = unposted.length;
   const pending =
     job.state === 'running' ? unposted.filter((c) => c.stage === 'pending').length : 0;
@@ -1194,7 +1337,7 @@ export function renderCommentQueue(state: ReviewTabState): void {
   const list = $('#review-comment-list');
   reconcileCommentList(state, list, visible);
   // Upgrade the excerpt placeholders to inline Monaco diffs (no-op if unavailable).
-  if (isReviewShown(state)) void mountExcerptEditors(state, list);
+  if (isReviewShown(state) && state.reviewPane === 'comments') void mountExcerptEditors(state, list);
 }
 
 /** Record a comment's local status/body so a poll re-render preserves it. */
@@ -1208,7 +1351,7 @@ export function setCommentStatus(state: ReviewTabState, c: ReviewComment, status
 
 /** Approve a comment: mark it, then post that comment alone to the MR. */
 export async function approveComment(state: ReviewTabState, id: string): Promise<void> {
-  if (state.changes?.commit) return;
+  if (state.changes?.commit || state.changes?.compare) return;
   const c = state.job?.comments.find((x) => x.id === id);
   if (!c || c.status === 'posted' || state.sending.has(id)) return;
   state.sending.add(id);
@@ -1236,7 +1379,7 @@ export function rejectComment(state: ReviewTabState, id: string): void {
 export async function sendComment(state: ReviewTabState, id: string): Promise<void> {
   const job = state.job;
   const changes = state.changes;
-  if (!job || !changes || changes.commit) return;
+  if (!job || !changes || changes.commit || changes.compare) return;
   const c = job.comments.find((x) => x.id === id);
   if (!c) return;
   const status = $('#review-status');
@@ -1358,7 +1501,7 @@ export async function persistSessionEdits(state: ReviewTabState): Promise<void> 
 /** Load the selected MR, then start a review job for it. */
 export async function generateReview(): Promise<void> {
   const state = activeReview();
-  if (!state || state.changes?.commit) return;
+  if (!state || state.mode !== 'request' || state.changes?.commit || state.changes?.compare) return;
   if (!(await loadSelectedMr(true))) return;
   if (!state.changes) return;
   const status = $('#review-status');
@@ -1387,7 +1530,7 @@ export async function generateReview(): Promise<void> {
 export async function checkoutMrBranch(): Promise<void> {
   const state = activeReview();
   const changes = state?.changes;
-  if (!state || !changes || changes.commit) return;
+  if (!state || !changes || changes.commit || changes.compare) return;
   const branch = changes.mr.sourceBranch.trim();
   const { short } = forgeLabels(changes.forge);
   const status = $('#review-status');
@@ -1418,18 +1561,262 @@ export async function checkoutMrBranch(): Promise<void> {
   }
 }
 
-/** The current repository's review state, creating it on first use. */
-function ensureReviewState(): ReviewTabState | null {
-  if (!store.activeId) {
-    toast('Open a repository first.', 'info');
-    return null;
+/** Short display form of a ref (commit SHAs abridged). */
+function refLabel(ref: string): string {
+  return /^[0-9a-f]{40}$/i.test(ref) ? ref.slice(0, 10) : ref;
+}
+
+interface CompareRefOption {
+  name: string;
+  isRemote: boolean;
+  isTag?: boolean;
+}
+
+/** Branches, remote-tracking refs, and tags available for a local comparison. */
+function compareRefs(state: ReviewTabState): CompareRefOption[] {
+  const tab = store.tabs.find((t) => t.id === state.repoId);
+  const resp = tab?.lastResponse ?? (state.repoId === store.activeId ? store.lastResponse : null);
+  const out: CompareRefOption[] = [];
+  const seen = new Set<string>();
+  for (const branch of resp?.state?.branches ?? []) {
+    if (!branch.name || branch.name.endsWith('/HEAD') || seen.has(branch.name)) continue;
+    seen.add(branch.name);
+    out.push({ name: branch.name, isRemote: branch.isRemote });
   }
-  const tab = activeTab();
-  if (!tab) return null;
-  if (tab.review) return tab.review;
-  const state: ReviewTabState = {
-    repoId: store.activeId,
-    repoPath: tab.path,
+  if (resp?.state?.detachedHead && !seen.has('HEAD')) {
+    seen.add('HEAD');
+    out.unshift({ name: 'HEAD', isRemote: false });
+  }
+  for (const commit of resp?.commits ?? []) {
+    for (const ref of commit.refs) {
+      if (ref.kind !== 'tag' || !ref.name || seen.has(ref.name)) continue;
+      seen.add(ref.name);
+      out.push({ name: ref.name, isRemote: false, isTag: true });
+    }
+  }
+  return out;
+}
+
+function preferredBaseRef(refs: CompareRefOption[]): string {
+  const names = new Set(refs.map((r) => r.name));
+  for (const candidate of ['origin/main', 'main', 'origin/master', 'master']) {
+    if (names.has(candidate)) return candidate;
+  }
+  return refs.find((r) => r.isRemote)?.name ?? refs[0]?.name ?? '';
+}
+
+function preferredHeadRef(state: ReviewTabState, refs: CompareRefOption[]): string {
+  const tab = store.tabs.find((t) => t.id === state.repoId);
+  const resp = tab?.lastResponse ?? (state.repoId === store.activeId ? store.lastResponse : null);
+  const head = resp?.state?.headBranch;
+  if (head && refs.some((r) => r.name === head)) return head;
+  if (refs.some((r) => r.name === 'HEAD')) return 'HEAD';
+  return refs.find((r) => !r.isRemote && !r.isTag)?.name ?? refs[0]?.name ?? '';
+}
+
+function fillRefSelect(select: HTMLSelectElement, refs: CompareRefOption[], current: string): void {
+  const known = refs.some((r) => r.name === current);
+  const pinned =
+    current && !known
+      ? `<option value="${esc(current)}">${esc(refLabel(current))}${
+          /^[0-9a-f]{40}$/i.test(current) ? ' (commit)' : ''
+        }</option>`
+      : '';
+  const group = (label: string, list: CompareRefOption[]): string =>
+    list.length === 0
+      ? ''
+      : `<optgroup label="${esc(label)}">${list
+          .map((r) => `<option value="${esc(r.name)}">${esc(r.name)}</option>`)
+          .join('')}</optgroup>`;
+  select.innerHTML =
+    pinned +
+    group('Local', refs.filter((r) => !r.isRemote && !r.isTag)) +
+    group('Tags', refs.filter((r) => r.isTag)) +
+    group('Remote', refs.filter((r) => r.isRemote));
+  if (current) select.value = current;
+}
+
+/** Fill the compare bar and keep its buttons/hint in step with the refs. */
+function paintCompareForm(state: ReviewTabState): void {
+  if (!isReviewShown(state)) return;
+  const refs = compareRefs(state);
+  if (!state.compareBase) state.compareBase = preferredBaseRef(refs);
+  if (!state.compareHead) state.compareHead = preferredHeadRef(state, refs);
+  fillRefSelect($<HTMLSelectElement>('#review-compare-base'), refs, state.compareBase);
+  fillRefSelect($<HTMLSelectElement>('#review-compare-head'), refs, state.compareHead);
+  const ready = !!state.compareBase && !!state.compareHead;
+  $<HTMLButtonElement>('#review-compare-run').toggleAttribute('disabled', !ready);
+  if (state.mode === 'compare') {
+    $<HTMLButtonElement>('#review-generate').toggleAttribute('disabled', !ready);
+  }
+  const hint = $('#review-compare-hint');
+  const usesRemote = refs.some(
+    (r) => r.isRemote && (r.name === state.compareBase || r.name === state.compareHead),
+  );
+  if (state.mode !== 'compare') {
+    hint.hidden = true;
+    hint.textContent = '';
+  } else if (refs.length === 0) {
+    hint.hidden = false;
+    hint.textContent = 'No local branches, remote branches, or tags are available to compare.';
+  } else if (usesRemote) {
+    hint.hidden = false;
+    hint.textContent =
+      'Comparing the two branch tips directly (base..head). Remote-tracking refs are used ' +
+      'as last fetched — pull to refresh them before comparing.';
+  } else {
+    hint.hidden = false;
+    hint.textContent = 'Comparing the two branch tips directly (base..head).';
+  }
+}
+
+/** Forget the current review target without touching a running server-side job. */
+function clearReviewTarget(state: ReviewTabState): void {
+  window.clearTimeout(state.poll);
+  window.clearTimeout(state.saveTimer);
+  state.poll = undefined;
+  state.saveTimer = undefined;
+  state.changes = null;
+  state.job = null;
+  state.edits.clear();
+  state.sending.clear();
+  state.showRejected = false;
+  state.headWarning = null;
+  state.mrIid = 0;
+  state.selectedFile = null;
+  state.diffFile = 0;
+  state.diffHunk = -1;
+  state.diffFor = null;
+}
+
+/** Confirm replacing a running review; finished/paused sessions are kept on disk. */
+function confirmReplaceReview(
+  state: ReviewTabState,
+  title: string,
+  confirmLabel: string,
+): Promise<boolean> {
+  if (state.job?.state !== 'running') return Promise.resolve(true);
+  return confirmDialog({
+    title,
+    message:
+      'A review is running in this tab. Starting a new target hides it; it keeps ' +
+      'running in the background and remains available under Saved reviews.',
+    confirmLabel,
+  });
+}
+
+/** Load a local comparison's changed files without starting an AI review. */
+async function runCompare(
+  state: ReviewTabState,
+  refs?: { base: string; head: string },
+): Promise<void> {
+  const base = refs?.base ?? $<HTMLSelectElement>('#review-compare-base').value;
+  const head = refs?.head ?? $<HTMLSelectElement>('#review-compare-head').value;
+  const status = $('#review-status');
+  if (!base || !head) {
+    status.textContent = 'Choose a base and a head ref to compare.';
+    return;
+  }
+  if (!(await confirmReplaceReview(state, 'Start a comparison?', 'Compare'))) return;
+  clearReviewTarget(state);
+  state.mode = 'compare';
+  state.compareBase = base;
+  state.compareHead = head;
+  paintForgeWording(state);
+  paintCompareForm(state);
+  status.textContent = 'Comparing…';
+  try {
+    const { changes } = await reviewApi<{ changes: ReviewChanges }>(state, '/compare', {
+      base,
+      head,
+      mergeBase: false,
+    });
+    state.changes = changes;
+    state.selectedFile = null;
+    renderTabs();
+    if (!isReviewShown(state)) return;
+    refreshSessionSelect(state);
+    paintForgeWording(state);
+    paintCompareForm(state);
+    renderReviewChanges(state);
+    paintReviewPane(state);
+    $('#review-queue-wrap').hidden = true;
+    paintJobControls(state, null);
+    $('#review-approve-mr').hidden = true;
+    status.textContent = '';
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
+/** Start a local-only AI review for the comparison currently in the form. */
+async function generateCompareReview(state: ReviewTabState): Promise<void> {
+  const base = $<HTMLSelectElement>('#review-compare-base').value;
+  const head = $<HTMLSelectElement>('#review-compare-head').value;
+  const status = $('#review-status');
+  if (!base || !head) {
+    status.textContent = 'Choose a base and a head ref to compare.';
+    return;
+  }
+  if (!(await confirmReplaceReview(state, 'Start a comparison review?', 'Start review'))) return;
+  clearReviewTarget(state);
+  state.mode = 'compare';
+  state.compareBase = base;
+  state.compareHead = head;
+  status.textContent = 'Starting comparison review…';
+  try {
+    const { job, changes } = await reviewApi<{ job: ReviewJob; changes: ReviewChanges }>(
+      state,
+      '/review/generate-compare',
+      { base, head, mergeBase: false },
+    );
+    state.changes = changes;
+    state.job = job;
+    state.selectedFile = null;
+    rememberStartedSession(state, job);
+    state.edits.clear();
+    state.showRejected = false;
+    state.headWarning = null;
+    renderTabs();
+    if (isReviewShown(state)) {
+      refreshSessionSelect(state);
+      paintForgeWording(state);
+      paintCompareForm(state);
+      renderReviewChanges(state);
+      $('#review-queue-wrap').hidden = true;
+      renderJob(state, job);
+      paintReviewPane(state);
+    }
+    status.textContent = '';
+    window.clearTimeout(state.poll);
+    state.poll = window.setTimeout(() => void pollJob(state), 600);
+    void loadReviewSessions(state);
+  } catch (err) {
+    status.textContent = String(err);
+  }
+}
+
+/** Open the comparison panel from the graph context menu. */
+async function openCompareReview(base: string, head: string): Promise<void> {
+  const state = ensureReviewState('compare');
+  if (!state) return;
+  if (!(await confirmReplaceReview(state, 'Start a comparison?', 'Compare'))) return;
+  clearReviewTarget(state);
+  state.compareBase = base;
+  state.compareHead = head;
+  showReviewPanel(state);
+  await runCompare(state, { base, head });
+}
+
+/** Create a review state for one repository and mode. */
+export function createReviewState(
+  repoId: string,
+  repoPath: string,
+  mode: 'request' | 'compare',
+): ReviewTabState {
+  return {
+    repoId,
+    repoPath,
     changes: null,
     job: null,
     poll: undefined,
@@ -1441,12 +1828,52 @@ function ensureReviewState(): ReviewTabState | null {
     showRejected: false,
     sending: new Set(),
     headWarning: null,
+    mode,
+    compareBase: '',
+    compareHead: '',
+    selectedFile: null,
+    diffLayout: readDiffView(),
+    reviewPane: 'changes',
+    diffFile: 0,
+    diffHunk: -1,
+    diffFor: null,
   };
-  tab.review = state;
+}
+
+/** The active repository's review state for one mode, creating it on first use. */
+function ensureReviewState(mode: 'request' | 'compare'): ReviewTabState | null {
+  if (!store.activeId) {
+    toast('Open a repository first.', 'info');
+    return null;
+  }
+  const tab = activeTab();
+  if (!tab) return null;
+  const existing = mode === 'compare' ? tab.compare : tab.review;
+  if (existing) return existing;
+  const state = createReviewState(store.activeId, tab.path, mode);
+  if (mode === 'compare') tab.compare = state;
+  else tab.review = state;
   return state;
 }
 
-/** Hide the graph/detail columns and show the review view for this repository. */
+/** Show one review/compare panel and refresh its pickers. */
+function showReviewPanel(state: ReviewTabState): void {
+  store.activePanel = { kind: 'review', repoId: state.repoId, mode: state.mode };
+  resetReviewDom();
+  refreshMrSelect(state);
+  refreshSessionSelect(state);
+  paintForgeWording(state);
+  paintCompareForm(state);
+  renderReviewChanges(state);
+  persistReviewTabs();
+  applyPanel();
+  renderTabs();
+  paintReviewPane(state);
+  if (state.mode === 'request') void loadMergeRequests(state);
+  void loadReviewSessions(state);
+}
+
+/** Hide the graph/detail columns and show the request review view. */
 export function openReviewTab(): void {
   const existing = store.activeId ? activeTab()?.review : null;
   if (existing) {
@@ -1456,35 +1883,26 @@ export function openReviewTab(): void {
       if (store.activeId) activateReviewTab(store.activeId);
       return;
     }
-    window.clearTimeout(existing.poll);
-    window.clearTimeout(existing.saveTimer);
-    existing.changes = null;
-    existing.job = null;
-    existing.edits.clear();
-    existing.showRejected = false;
-    existing.headWarning = null;
-    existing.mrIid = 0;
-    store.activePanel = { kind: 'review', repoId: existing.repoId };
-    resetReviewDom();
-    refreshMrSelect(existing);
-    refreshSessionSelect(existing);
-    paintForgeWording(existing);
-    applyPanel();
-    renderTabs();
-    void loadMergeRequests(existing);
-    void loadReviewSessions(existing);
+    clearReviewTarget(existing);
+    existing.mode = 'request';
+    showReviewPanel(existing);
     return;
   }
-  const state = ensureReviewState();
+  const state = ensureReviewState('request');
   if (!state) return;
-  store.activePanel = { kind: 'review', repoId: state.repoId };
-  resetReviewDom();
-  refreshSessionSelect(state);
-  persistReviewTabs();
-  applyPanel();
-  renderTabs();
-  void loadMergeRequests(state);
-  void loadReviewSessions(state);
+  showReviewPanel(state);
+}
+
+/** Hide the graph/detail columns and show the branch-comparison view. */
+export function openCompareTab(): void {
+  const existing = store.activeId ? activeTab()?.compare : null;
+  if (existing) {
+    if (store.activeId) activateCompareTab(store.activeId);
+    return;
+  }
+  const state = ensureReviewState('compare');
+  if (!state) return;
+  showReviewPanel(state);
 }
 
 /**
@@ -1492,7 +1910,7 @@ export function openReviewTab(): void {
  * are local-only: there is no request to post them to.
  */
 export async function openCommitReview(hash: string): Promise<void> {
-  const state = ensureReviewState();
+  const state = ensureReviewState('request');
   if (!state) return;
   if (state.job?.state === 'running') {
     const proceed = await confirmDialog({
@@ -1506,20 +1924,19 @@ export async function openCommitReview(hash: string): Promise<void> {
   }
   window.clearTimeout(state.poll);
   window.clearTimeout(state.saveTimer);
-  state.changes = null;
-  state.job = null;
-  state.edits.clear();
-  state.showRejected = false;
-  state.headWarning = null;
-  state.mrIid = 0;
-  store.activePanel = { kind: 'review', repoId: state.repoId };
+  clearReviewTarget(state);
+  state.mode = 'request';
+  store.activePanel = { kind: 'review', repoId: state.repoId, mode: 'request' };
   resetReviewDom();
   refreshSessionSelect(state);
   refreshMrSelect(state);
   paintForgeWording(state);
+  paintCompareForm(state);
+  renderReviewChanges(state);
   persistReviewTabs();
   applyPanel();
   renderTabs();
+  paintReviewPane(state);
   const status = $('#review-status');
   status.textContent = 'Starting commit review…';
   try {
@@ -1536,10 +1953,12 @@ export async function openCommitReview(hash: string): Promise<void> {
     state.headWarning = null;
     refreshMrSelect(state);
     paintForgeWording(state);
+    renderReviewChanges(state);
     $('#review-approve-mr').hidden = true;
     $('#review-queue-wrap').hidden = true;
     status.textContent = '';
     if (isReviewShown(state)) renderJob(state, job);
+    paintReviewPane(state);
     renderTabs();
     window.clearTimeout(state.poll);
     state.poll = window.setTimeout(() => void pollJob(state), 600);
@@ -1555,6 +1974,11 @@ export function resetReviewDom(): void {
   paintJobControls(null, null);
   $('#review-approve-mr').hidden = true;
   $('#review-warning').hidden = true;
+  $('#review-changes').hidden = true;
+  $('#review-changes-pane').hidden = true;
+  $('#review-comments-pane').hidden = true;
+  $('#review-file-list').innerHTML = '';
+  $('#review-file-diff').innerHTML = '';
   $<HTMLSelectElement>('#review-mr-select').disabled = false;
   $('#review-refresh-mrs').hidden = false;
   $('#review-checkout-mr').hidden = false;
@@ -1566,36 +1990,48 @@ export function paintReview(state: ReviewTabState): void {
   refreshSessionSelect(state);
   const changes = state.changes;
   paintForgeWording(state);
-  $('#review-approve-mr').hidden = changes === null || !!changes.commit;
+  paintCompareForm(state);
+  renderReviewChanges(state);
+  $('#review-approve-mr').hidden = changes === null || !!changes.commit || !!changes.compare;
   $('#review-queue-wrap').hidden = true;
   paintJobControls(state, state.job);
   $('#review-status').textContent = '';
   paintReviewWarning(state);
   if (state.job) renderJob(state, state.job);
+  paintReviewPane(state);
   autosizeCommentBodies($('#review-view'));
 }
 
 /** Close a repository's review tab and, if it was visible, fall back to the graph. */
-export function closeReviewTab(repoId: string): void {
+export function closeReviewTab(repoId: string, mode: 'request' | 'compare' = 'request'): void {
   const tab = store.tabs.find((t) => t.id === repoId);
-  const state = tab?.review;
+  const state = mode === 'compare' ? tab?.compare : tab?.review;
   if (!tab || !state) return;
   window.clearTimeout(state.poll);
   window.clearTimeout(state.saveTimer);
   // Only the visible tab owns mounted excerpt editors; drop them on close.
   const wasShown = isReviewShown(state);
   if (wasShown) disposeExcerptEditors();
-  tab.review = null;
+  if (mode === 'compare') tab.compare = null;
+  else tab.review = null;
   if (wasShown) {
-    store.activePanel = { kind: 'graph' };
-    applyPanel();
-    renderCached();
+    const other = mode === 'compare' ? tab.review : tab.compare;
+    if (other) {
+      store.activePanel = { kind: 'review', repoId: tab.id, mode: other.mode };
+      applyPanel();
+      paintReview(other);
+    } else {
+      store.activePanel = { kind: 'graph' };
+      applyPanel();
+      renderCached();
+    }
   }
   renderTabs();
   persistReviewTabs();
 }
 
 export function initReview(): void {
+  initReviewFileResizer();
   window.addEventListener('pagehide', flushReviewEdits);
 
   // The graph context menu asks for a single-commit review through this event,
@@ -1603,6 +2039,14 @@ export function initReview(): void {
   window.addEventListener('liana-review-commit', (ev) => {
     const hash = (ev as CustomEvent<unknown>).detail;
     if (typeof hash === 'string' && hash) void openCommitReview(hash);
+  });
+
+  // The graph context menu's "Compare with current branch" entry.
+  window.addEventListener('liana-review-compare', (ev) => {
+    const detail = (ev as CustomEvent<{ base?: unknown; head?: unknown }>).detail;
+    const base = typeof detail?.base === 'string' ? detail.base : '';
+    const head = typeof detail?.head === 'string' ? detail.head : '';
+    if (base && head) void openCompareReview(base, head);
   });
 
   // Text can reflow when the window narrows; re-grow comment bodies so their
@@ -1621,6 +2065,11 @@ export function initReview(): void {
     openReviewTab();
   });
 
+  $('#btn-compare').addEventListener('click', () => {
+    closeMoreMenu();
+    openCompareTab();
+  });
+
   $('#review-refresh-mrs').addEventListener('click', () => {
     const state = activeReview();
     if (state) void loadMergeRequests(state);
@@ -1633,9 +2082,108 @@ export function initReview(): void {
     void loadSelectedMr(true);
   });
 
-  $('#review-generate').addEventListener('click', () => void generateReview());
+  $('#review-generate').addEventListener('click', () => {
+    const state = activeReview();
+    if (!state) return;
+    if (state.mode === 'compare') void generateCompareReview(state);
+    else void generateReview();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.review-subtab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const state = activeReview();
+      if (!state) return;
+      const pane = btn.dataset.reviewPane === 'comments' ? 'comments' : 'changes';
+      if (state.reviewPane === pane) return;
+      state.reviewPane = pane;
+      paintReviewPane(state);
+    });
+  });
 
   $('#review-checkout-mr').addEventListener('click', () => void checkoutMrBranch());
+  $('#review-compare-run').addEventListener('click', () => {
+    const state = activeReview();
+    if (state) void runCompare(state);
+  });
+
+  $('#review-compare-swap').addEventListener('click', () => {
+    const state = activeReview();
+    if (!state) return;
+    const base = state.compareBase;
+    state.compareBase = state.compareHead;
+    state.compareHead = base;
+    paintCompareForm(state);
+  });
+
+  $('#review-compare-base').addEventListener('change', () => {
+    const state = activeReview();
+    if (!state) return;
+    state.compareBase = $<HTMLSelectElement>('#review-compare-base').value;
+    paintCompareForm(state);
+  });
+
+  $('#review-compare-head').addEventListener('change', () => {
+    const state = activeReview();
+    if (!state) return;
+    state.compareHead = $<HTMLSelectElement>('#review-compare-head').value;
+    paintCompareForm(state);
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.review-diff-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const state = activeReview();
+      if (!state) return;
+      state.diffLayout = btn.dataset.diffLayout === 'split' ? 'split' : 'unified';
+      writeDiffView(state.diffLayout);
+      renderReviewFileDiff(state);
+      document.querySelectorAll<HTMLButtonElement>('.review-diff-btn').forEach((other) => {
+        const active = other.dataset.diffLayout === state.diffLayout;
+        other.classList.toggle('is-active', active);
+        other.setAttribute('aria-pressed', String(active));
+      });
+    });
+  });
+
+  $('#review-file-list').addEventListener('click', (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const row = target.closest<HTMLElement>('.review-file-row');
+    if (!row) return;
+    const state = activeReview();
+    const key = row.dataset.file ?? '';
+    if (state && key) selectReviewFile(state, key);
+  });
+
+  $('#review-diff-prev').addEventListener('click', () => {
+    const state = activeReview();
+    if (state) jumpReviewDiff(state, -1);
+  });
+
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if ($<HTMLDialogElement>('#diff-dialog').open) return;
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+      const state = activeReview();
+      if (!state || !isReviewShown(state) || state.reviewPane !== 'changes') return;
+      const target = ev.target;
+      if (
+        target instanceof HTMLElement &&
+        !target.closest('.monaco-editor') &&
+        target.closest('input, textarea, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      ev.preventDefault();
+      jumpReviewDiff(state, ev.key === 'ArrowUp' ? -1 : 1);
+    },
+    true,
+  );
+  $('#review-diff-next').addEventListener('click', () => {
+    const state = activeReview();
+    if (state) jumpReviewDiff(state, 1);
+  });
 
   // The batch/step progress line is the model-log trigger: clicking it (or
   // pressing Enter/Space on it) opens the log for the current job.
@@ -1749,12 +2297,11 @@ export function initReview(): void {
     const id = state.job.id;
     void reviewApi(state, '/review/session/delete', { sessionId: id })
       .then(() => {
-        window.clearTimeout(state.poll);
-        state.job = null;
-        state.changes = null;
-        state.edits.clear();
-        state.showRejected = false;
+        clearReviewTarget(state);
         refreshSessionSelect(state);
+        renderReviewChanges(state);
+        paintForgeWording(state);
+        paintCompareForm(state);
         $('#review-queue-wrap').hidden = true;
         paintJobControls(state, null);
         $('#review-status').textContent = 'Saved review deleted.';

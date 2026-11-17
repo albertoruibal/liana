@@ -54,6 +54,14 @@ export interface MenuItem {
   separator?: boolean;
 }
 
+/** Open the review panel in comparison mode against the current branch. */
+function compareWithCurrentBranch(ref: string): void {
+  const current = store.lastResponse?.state?.headBranch ?? 'HEAD';
+  window.dispatchEvent(
+    new CustomEvent('liana-review-compare', { detail: { base: current, head: ref } }),
+  );
+}
+
 export function buildMenu(target: ContextTarget): MenuItem[] {
   const items: MenuItem[] = [];
   const hash = target.hash;
@@ -74,6 +82,10 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
       label: 'Review commit with AI…',
       action: () =>
         window.dispatchEvent(new CustomEvent('liana-review-commit', { detail: hash })),
+    });
+    items.push({
+      label: 'Compare commit with current branch…',
+      action: () => compareWithCurrentBranch(hash),
     });
   }
   const name = target.name ?? '';
@@ -110,6 +122,12 @@ export function buildMenu(target: ContextTarget): MenuItem[] {
   if ((target.kind === 'local' || target.kind === 'remote' || target.kind === 'tag') && name) {
     items.push({ separator: true });
     items.push({ label: 'Copy name', action: () => void copyToClipboard(name) });
+    if (name !== currentBranch) {
+      items.push({
+        label: `Compare ${name} with ${currentBranch || 'HEAD'}…`,
+        action: () => compareWithCurrentBranch(name),
+      });
+    }
   }
   if (target.kind === 'local' && name) {
     items.push({ label: `Rename branch ${name}…`, action: () => void renameBranch(name) });

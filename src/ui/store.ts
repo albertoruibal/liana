@@ -45,9 +45,10 @@ export interface RepoTab {
   panY: number;
   zoom: number;
 
-  // Panels this repository owns. A review and any number of worktree terminals
-  // live with their repo, so closing/activating a repo manages them directly.
+  // Panels this repository owns. Code review, branch comparison, and any number
+  // of worktree terminals live with their repo, so closing/activating manages them.
   review: ReviewTabState | null;
+  compare: ReviewTabState | null;
   /** Embedded terminals keyed by the worktree path the shell runs in. */
   terminals: Map<string, TerminalState>;
 }
@@ -75,6 +76,21 @@ export interface ReviewTabState {
   sending: Set<string>;
   /** Set when the request head is missing, so the AI review runs diff-only. */
   headWarning: string | null;
+  /** Whether the review form targets a forge request or a local comparison. */
+  mode: 'request' | 'compare';
+  compareBase: string;
+  compareHead: string;
+  /** Selected changed file (new path when present, else old path). */
+  selectedFile: string | null;
+  /** Layout of the changed-files diff pane. */
+  diffLayout: 'unified' | 'split';
+  /** Which subtab is visible inside this review/compare tab. */
+  reviewPane: 'changes' | 'comments';
+  /** Explicit difference navigator cursor: file index and hunk index. */
+  diffFile: number;
+  diffHunk: number;
+  /** Changes object the cursor belongs to; reset when the target changes. */
+  diffFor: ReviewChanges | null;
 }
 
 /** An open embedded terminal, keyed by the worktree path it runs in. */
@@ -97,7 +113,7 @@ export interface TerminalState {
  */
 export type ActivePanel =
   | { kind: 'graph' }
-  | { kind: 'review'; repoId: string }
+  | { kind: 'review'; repoId: string; mode: 'request' | 'compare' }
   | { kind: 'terminal'; repoId: string; path: string };
 
 interface ViewStore {
@@ -162,14 +178,16 @@ export function terminalForPath(path: string): TerminalState | undefined {
 /** True while `state`'s review is the visible panel. */
 export function isReviewShown(state: ReviewTabState): boolean {
   const panel = store.activePanel;
-  return panel.kind === 'review' && panel.repoId === state.repoId;
+  return panel.kind === 'review' && panel.repoId === state.repoId && panel.mode === state.mode;
 }
 
 /** The review state currently shown, if any. */
 export function activeReviewState(): ReviewTabState | null {
   const panel = store.activePanel;
   if (panel.kind !== 'review') return null;
-  return store.tabs.find((t) => t.id === panel.repoId)?.review ?? null;
+  const tab = store.tabs.find((t) => t.id === panel.repoId);
+  if (!tab) return null;
+  return panel.mode === 'compare' ? tab.compare : tab.review;
 }
 
 /** Copy the live active-tab globals back into the tab record. */

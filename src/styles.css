@@ -2208,6 +2208,41 @@ button.file-row .file-stats {
   gap: 16px;
 }
 
+.diff-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.diff-change-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.diff-change-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.diff-change-position {
+  min-width: 44px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.diff-change-keys,
+.review-diff-keys {
+  font-size: 10px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
 .diff-view-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -2496,6 +2531,17 @@ dialog[open] {
   min-height: 18px;
   margin-bottom: 8px;
   font-size: 12.5px;
+}
+
+.review-control-row #review-status {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0 10px;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 dialog textarea {
@@ -3684,8 +3730,13 @@ dialog select:focus-visible {
 #terminal-view {
   flex: 1;
   min-width: 0;
-  overflow: auto;
   background: var(--bg-graph);
+}
+
+#review-view {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* The terminal scrolls inside xterm itself, not the view. */
@@ -3703,9 +3754,11 @@ dialog select:focus-visible {
 
 .review-inner {
   width: 100%;
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: auto;
   padding: 20px 24px 44px;
 }
 
@@ -3754,12 +3807,320 @@ dialog select:focus-visible {
   padding-bottom: 0;
 }
 
+.review-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
 .review-options {
   display: flex;
+  flex: 0 1 auto;
   gap: 14px;
   align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.review-subtabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.review-subtab.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.review-subtab-count {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.review-pane {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.review-comments-empty {
+  padding: 14px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  font-size: 13px;
+}
+
+#review-comments-pane .review-queue {
+  flex: 1 1 auto;
+  max-height: none;
+  margin-bottom: 0;
+}
+
+.review-toolbar-main {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.review-picker-group {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+#review-mr-toolbar {
+  flex: 1 1 300px;
+}
+
+#review-compare-bar {
+  flex: 2 1 420px;
+}
+
+.review-saved-group {
+  flex: 1 1 260px;
+}
+
+.review-picker-group .review-mr-picker {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.review-picker-group .btn {
+  flex: 0 0 auto;
+}
+
+.review-compare-hint {
+  margin: -2px 0 12px;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+
+.review-changes {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
   margin-bottom: 12px;
+}
+
+.review-changes-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.review-changes-head h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.review-changes-head #review-changes-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.review-diff-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.review-diff-nav #review-diff-position {
+  min-width: 44px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.review-diff-nav-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.review-diff-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.review-diff-btn {
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
+
+.review-diff-btn.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.review-changes-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.review-file-list {
+  flex: 0 0 var(--review-files-width, 260px);
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border-soft);
+}
+
+.review-file-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-right: 1px solid var(--border-soft);
+  transition: background var(--dur) var(--ease);
+}
+
+.review-file-resizer:hover,
+body.is-col-resizing .review-file-resizer {
+  background: var(--accent-soft);
+}
+
+body.is-col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.review-file-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-file-row:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+}
+
+.review-file-empty {
+  padding: 8px;
+  font-size: 12.5px;
+}
+
+.review-file-row.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.review-file-status {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.review-file-status.status-a {
+  color: var(--add);
+}
+
+.review-file-status.status-d {
+  color: var(--del);
+}
+
+.review-file-status.status-r {
+  color: var(--accent-2);
+}
+
+.review-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.review-file-row.is-active .review-file-path {
+  overflow-x: auto;
+  text-overflow: clip;
+  scrollbar-width: none;
+}
+
+.review-file-row.is-active .review-file-path::-webkit-scrollbar {
+  display: none;
+}
+
+.review-file-flag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--fg-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 5px;
+}
+
+.review-file-diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .review-changes-body {
+    flex-direction: column;
+  }
+
+  .review-file-list {
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: 30vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .review-file-resizer {
+    display: none;
+  }
+
+  .review-file-diff {
+    flex: 1 1 auto;
+    min-height: 40vh;
+  }
 }
 
 .review-progress {
@@ -3807,13 +4168,6 @@ dialog select:focus-visible {
   display: none;
 }
 
-.review-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
-}
-
 .repo-tab-review svg {
   width: 15px;
   height: 15px;
@@ -3821,6 +4175,17 @@ dialog select:focus-visible {
 }
 
 .repo-tab-review .status-spinner {
+  width: 13px;
+  height: 13px;
+}
+
+.repo-tab-compare svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.repo-tab-compare .status-spinner {
   width: 13px;
   height: 13px;
 }
@@ -4140,7 +4505,8 @@ dialog select:focus-visible {
   margin-bottom: 12px;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  max-height: 45%;
   min-height: 0;
 }
 

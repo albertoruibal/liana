@@ -84,6 +84,10 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.4h10v11.2H3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.4 5.4h5.2M5.4 8h5.2M5.4 10.6h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <span>Code review</span>
       </button>
+      <button type="button" id="btn-compare">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3.2v6.2a2.4 2.4 0 0 0 2.4 2.4h5.2M9.4 9.4l2.4 2.4-2.4 2.4M11.8 3.2H8.2a2.4 2.4 0 0 0-2.4 2.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Compare</span>
+      </button>
       <button type="button" id="btn-settings">
         <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <span>Settings</span>
@@ -132,30 +136,38 @@
       <div id="detail-resizer" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
       <aside id="detail-pane"></aside>
 
-      <section id="review-view" class="review-view" hidden aria-label="Code review">
+      <section id="review-view" class="review-view" hidden aria-label="Code review and branch comparison">
         <div class="review-inner">
-          <div class="review-toolbar">
-            <label class="review-mr-picker">
-              <span id="review-mr-label">Merge request</span>
-              <select id="review-mr-select"></select>
-            </label>
-            <button type="button" class="btn" id="review-refresh-mrs" title="Reload open merge/pull requests">↻</button>
+          <div class="review-toolbar review-toolbar-main">
+            <div id="review-mr-toolbar" class="review-picker-group">
+              <label class="review-mr-picker">
+                <span id="review-mr-label">Merge request</span>
+                <select id="review-mr-select"></select>
+              </label>
+              <button type="button" class="btn" id="review-refresh-mrs" title="Reload open merge/pull requests">↻</button>
+            </div>
+            <div id="review-compare-bar" class="review-picker-group review-compare-bar" hidden>
+              <label class="review-mr-picker">
+                Base / destination
+                <select id="review-compare-base"></select>
+              </label>
+              <button type="button" class="btn" id="review-compare-swap" title="Swap base and head">⇄</button>
+              <label class="review-mr-picker">
+                Head / source
+                <select id="review-compare-head"></select>
+              </label>
+              <button type="button" class="btn" id="review-compare-run">Compare</button>
+            </div>
+            <div class="review-picker-group review-saved-group">
+              <label class="review-mr-picker">
+                Saved review
+                <select id="review-session-select"></select>
+              </label>
+              <button type="button" class="btn" id="review-refresh-sessions" title="Reload saved reviews">↻</button>
+              <button type="button" class="btn" id="review-delete-session" title="Delete the selected saved review">Delete</button>
+            </div>
           </div>
-          <div class="review-toolbar">
-            <label class="review-mr-picker">
-              Saved review
-              <select id="review-session-select"></select>
-            </label>
-            <button type="button" class="btn" id="review-refresh-sessions" title="Reload saved reviews">↻</button>
-            <button type="button" class="btn" id="review-delete-session" title="Delete the selected saved review">Delete</button>
-          </div>
-          <div class="review-options">
-            <button type="button" class="btn" id="review-checkout-mr" disabled>Checkout branch</button>
-            <button type="button" class="btn btn-primary" id="review-generate">Review with AI</button>
-            <button type="button" class="btn" id="review-pause-job" hidden>Pause</button>
-            <button type="button" class="btn" id="review-resume-job" hidden>Resume</button>
-            <button type="button" class="btn" id="review-cancel-job" hidden>Cancel</button>
-          </div>
+          <div id="review-compare-hint" class="review-compare-hint muted" hidden></div>
 
           <div id="review-warning" class="review-warning" hidden></div>
 
@@ -164,18 +176,61 @@
             <span id="review-progress-text">Working…</span>
           </button>
 
-          <div id="review-status" class="dialog-status"></div>
-
-          <div id="review-queue-wrap" class="review-queue" hidden>
-            <div class="review-queue-head">
-              <h4>Proposed comments <span id="review-queue-count" class="muted"></span></h4>
-              <button type="button" class="btn" id="review-toggle-rejected" hidden></button>
+          <div class="review-control-row">
+            <div class="review-subtabs" role="tablist" aria-label="Review pane">
+              <button type="button" class="btn review-subtab is-active" data-review-pane="changes" role="tab" aria-selected="true">
+                Changes <span id="review-subtab-changes-count" class="review-subtab-count muted"></span>
+              </button>
+              <button type="button" class="btn review-subtab" data-review-pane="comments" role="tab" aria-selected="false">
+                Comments <span id="review-subtab-comments-count" class="review-subtab-count muted"></span>
+              </button>
             </div>
-            <div id="review-comment-list" class="review-comment-list"></div>
+            <div id="review-status" class="dialog-status"></div>
+            <div class="review-options">
+              <button type="button" class="btn" id="review-checkout-mr" disabled>Checkout branch</button>
+              <button type="button" class="btn btn-primary" id="review-generate">Review with AI</button>
+              <button type="button" class="btn" id="review-pause-job" hidden>Pause</button>
+              <button type="button" class="btn" id="review-resume-job" hidden>Resume</button>
+              <button type="button" class="btn" id="review-cancel-job" hidden>Cancel</button>
+              <button type="button" class="btn" id="review-approve-mr" hidden>Approve MR</button>
+            </div>
           </div>
 
-          <div class="review-actions">
-            <button class="btn" id="review-approve-mr" hidden>Approve MR</button>          </div>
+          <div id="review-changes-pane" class="review-pane">
+          <section id="review-changes" class="review-changes" hidden>
+            <div class="review-changes-head">
+              <h4>Changed files <span id="review-changes-count" class="muted"></span></h4>
+              <span id="review-changes-summary" class="muted"></span>
+              <div class="review-diff-nav">
+                <button type="button" class="btn review-diff-nav-btn" id="review-diff-prev" title="Previous change (Ctrl+↑)" aria-label="Previous change (Ctrl+↑)" disabled>↑</button>
+                <span id="review-diff-position" class="muted"></span>
+                <button type="button" class="btn review-diff-nav-btn" id="review-diff-next" title="Next change (Ctrl+↓)" aria-label="Next change (Ctrl+↓)" disabled>↓</button>
+                <span class="review-diff-keys muted" aria-hidden="true">Ctrl+↑/↓</span>
+              </div>
+              <div class="review-diff-toggle">
+                <button type="button" class="btn review-diff-btn is-active" data-diff-layout="unified">Unified</button>
+                <button type="button" class="btn review-diff-btn" data-diff-layout="split">Split</button>
+              </div>
+            </div>
+            <div class="review-changes-body">
+              <ul id="review-file-list" class="review-file-list"></ul>
+              <div id="review-file-resizer" class="review-file-resizer" role="separator" aria-orientation="vertical" title="Drag to resize the file list"></div>
+              <div id="review-file-diff" class="review-file-diff diff-body"></div>
+            </div>
+          </section>
+          </div>
+
+          <div id="review-comments-pane" class="review-pane" hidden>
+            <div id="review-queue-wrap" class="review-queue" hidden>
+              <div class="review-queue-head">
+                <h4>Proposed comments <span id="review-queue-count" class="muted"></span></h4>
+                <button type="button" class="btn" id="review-toggle-rejected" hidden></button>
+              </div>
+              <div id="review-comment-list" class="review-comment-list"></div>
+            </div>
+            <div id="review-comments-empty" class="review-comments-empty muted">No proposed comments yet.</div>
+          </div>
+
         </div>
       </section>
 
@@ -474,13 +529,21 @@
           <h3 id="diff-title">File diff</h3>
           <p class="muted hint" id="diff-subtitle"></p>
         </div>
-        <div class="diff-view-toggle" role="group" aria-label="Diff layout">
-          <button type="button" class="diff-view-btn" data-view="unified">Unified</button>
-          <button type="button" class="diff-view-btn" data-view="split">Split</button>
+        <div class="diff-head-tools">
+          <div class="diff-change-nav" role="group" aria-label="Diff changes">
+            <button type="button" class="btn diff-change-btn" id="diff-change-prev" title="Previous change (Ctrl+↑)" aria-label="Previous change (Ctrl+↑)" disabled>↑</button>
+            <span id="diff-change-position" class="diff-change-position muted"></span>
+            <button type="button" class="btn diff-change-btn" id="diff-change-next" title="Next change (Ctrl+↓)" aria-label="Next change (Ctrl+↓)" disabled>↓</button>
+            <span class="diff-change-keys muted" aria-hidden="true">Ctrl+↑/↓</span>
+          </div>
+          <div class="diff-view-toggle" role="group" aria-label="Diff layout">
+            <button type="button" class="diff-view-btn" data-view="unified">Unified</button>
+            <button type="button" class="diff-view-btn" data-view="split">Split</button>
+          </div>
+          <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
         </div>
-        <button type="button" class="icon-btn dialog-close" aria-label="Close dialog" title="Close">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </button>
       </div>
       <div id="diff-body" class="diff-body"></div>
       <div id="diff-status" class="dialog-status"></div>

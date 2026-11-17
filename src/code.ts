@@ -174,6 +174,14 @@ export interface CodeHandle {
   revealLineRange(startLine: number, endLine: number): void;
   /** Scroll a diff handle to its first change once the diff is computed. No-op otherwise. */
   revealFirstDiff(): void;
+  /** Number of change regions in a diff handle; 0 for single editors. */
+  diffChangeCount(): number;
+  /** Reveal a 0-based change region in a diff handle. No-op for single editors. */
+  revealDiffChange(index: number): void;
+  /** Run `cb` when a diff handle recomputes its changes. No-op for single editors. */
+  onDiffUpdated(cb: () => void): void;
+  /** Recompute the editor layout after its container changes size or visibility. */
+  layout(): void;
   dispose(): void;
 }
 
@@ -441,6 +449,10 @@ export function createEditor(
     replaceTrackedRange: (id, text) => tracked.api.replaceTrackedRange(id, text),
     revealLineRange: (startLine, endLine) => tracked.api.revealLineRange(startLine, endLine),
     revealFirstDiff: () => {},
+    diffChangeCount: () => 0,
+    revealDiffChange: () => {},
+    onDiffUpdated: () => {},
+    layout: () => editor.layout(),
     dispose: () => {
       scroll.dispose();
       lines.dispose();
@@ -515,6 +527,7 @@ export function createDiffEditor(
   // Inline diffs scroll as one; the modified sub-editor is the shared viewport.
   const scroll = scrollControl(editor.getModifiedEditor());
   const lines = lineDecorationControl(editor.getModifiedEditor());
+  const diffSubs: monaco.IDisposable[] = [];
   return {
     kind: 'diff',
     setValue: () => {},
@@ -529,9 +542,28 @@ export function createDiffEditor(
     trackLineRange: () => '',
     getTrackedLineRange: () => null,
     replaceTrackedRange: () => null,
-    revealLineRange: () => {},
+    revealLineRange: (startLine) => {
+      editor.getModifiedEditor().revealLineInCenter(startLine, monaco.editor.ScrollType.Immediate);
+    },
     revealFirstDiff: () => editor.revealFirstDiff(),
+    diffChangeCount: () => editor.getLineChanges()?.length ?? 0,
+    revealDiffChange: (index) => {
+      const change = (editor.getLineChanges() ?? [])[index];
+      if (!change) return;
+      const line = Math.max(
+        1,
+        change.modifiedStartLineNumber || change.modifiedEndLineNumber || 1,
+      );
+      editor
+        .getModifiedEditor()
+        .revealLineInCenter(line, monaco.editor.ScrollType.Immediate);
+    },
+    onDiffUpdated: (cb) => {
+      diffSubs.push(editor.onDidUpdateDiff(cb));
+    },
+    layout: () => editor.layout(),
     dispose: () => {
+      for (const sub of diffSubs) sub.dispose();
       scroll.dispose();
       lines.dispose();
       for (const d of decorations) d.clear();

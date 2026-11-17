@@ -28,8 +28,8 @@ import { initPrompt } from './prompt';
 import { initCherryPick } from './cherry-pick';
 import { refresh } from './actions';
 import { api } from './api-client';
-import { REVIEW_ACTIVE_KEY, loadMergeRequests, loadReviewSessions, paintReview, persistReviewTabs, readSavedReviewPaths } from './review-view';
-import { ReviewTabState, saveActive, terminalForPath } from './store';
+import { createReviewState, loadMergeRequests, loadReviewSessions, paintReview, persistReviewTabs, readSavedComparePaths, readSavedReviewActive, readSavedReviewPaths } from './review-view';
+import { saveActive, terminalForPath } from './store';
 import { ACTIVE_KEY, REPOS_KEY, RepoEntry, activateRepo, addRepo, loadTab, readSavedRepos, renderNoRepo, renderTabs } from './tabs';
 
 // UI entry: starts the app. Every feature owns an `initX()` that binds its own
@@ -117,20 +117,16 @@ async function bootstrap(): Promise<void> {
     renderNoRepo();
   }
 
-  // Reopen the review tabs that were open before the reload, each bound to its repo.
-  let savedReviewPaths = readSavedReviewPaths();
-  let savedReviewActive: string | null = null;
-  try {
-    savedReviewActive = localStorage.getItem(REVIEW_ACTIVE_KEY);
-  } catch {
-    savedReviewActive = null;
-  }
+  // Reopen the review/compare tabs that were open before the reload.
+  const savedReviewPaths = readSavedReviewPaths();
+  const savedComparePaths = readSavedComparePaths();
+  let savedReviewActive = readSavedReviewActive();
   // Migrate the pre-multi-review key so an existing single review tab survives.
   try {
     const legacy = localStorage.getItem('liana-review-repo');
     if (legacy) {
       if (!savedReviewPaths.includes(legacy)) savedReviewPaths.push(legacy);
-      if (!savedReviewActive) savedReviewActive = legacy;
+      if (!savedReviewActive) savedReviewActive = { path: legacy, mode: 'request' };
       localStorage.removeItem('liana-review-repo');
     }
   } catch {
@@ -139,30 +135,24 @@ async function bootstrap(): Promise<void> {
   for (const path of savedReviewPaths) {
     const bound = store.tabs.find((t) => t.path === path);
     if (!bound) continue;
-    const state: ReviewTabState = {
-      repoId: bound.id,
-      repoPath: bound.path,
-      changes: null,
-      job: null,
-      poll: undefined,
-      saveTimer: undefined,
-      edits: new Map(),
-      mrs: [],
-      mrIid: 0,
-      sessions: [],
-      showRejected: false,
-      sending: new Set(),
-      headWarning: null,
-    };
+    const state = createReviewState(bound.id, bound.path, 'request');
     bound.review = state;
     void loadMergeRequests(state);
     void loadReviewSessions(state);
   }
+  for (const path of savedComparePaths) {
+    const bound = store.tabs.find((t) => t.path === path);
+    if (!bound) continue;
+    const state = createReviewState(bound.id, bound.path, 'compare');
+    bound.compare = state;
+    void loadReviewSessions(state);
+  }
   if (savedReviewActive) {
-    const bound = store.tabs.find((t) => t.path === savedReviewActive);
-    const state = bound?.review;
+    const bound = store.tabs.find((t) => t.path === savedReviewActive?.path);
+    const state =
+      savedReviewActive.mode === 'compare' ? bound?.compare : bound?.review;
     if (bound && state) {
-      store.activePanel = { kind: 'review', repoId: bound.id };
+      store.activePanel = { kind: 'review', repoId: bound.id, mode: savedReviewActive.mode };
       // Review is a per-repo view; make its repository active so it stays bound.
       if (store.activeId !== bound.id) {
         saveActive();
