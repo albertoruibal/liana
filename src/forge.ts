@@ -111,6 +111,34 @@ export function runGit(
 }
 
 /**
+ * Turn the raw cause chain into a short, actionable sentence. Only the common
+ * failures are classified; anything else falls through to the raw text.
+ */
+function explainNetworkFailure(text: string): string | null {
+  const dns = /\b(ENOTFOUND|EAI_AGAIN)\b/.exec(text);
+  if (dns) {
+    const host = /(?:getaddrinfo|lookup)\s+(?:ENOTFOUND|EAI_AGAIN)\s+([^\s()]+)/i.exec(text)?.[1];
+    return host
+      ? `cannot resolve "${host}" (DNS ${dns[1]}) — check the server URL and your network/VPN`
+      : `the server hostname could not be resolved (DNS ${dns[1]}) — check the server URL and your network/VPN`;
+  }
+  if (/\bECONNREFUSED\b/.test(text)) {
+    return 'the connection was refused (ECONNREFUSED) — check that the server is running and the URL/port are correct';
+  }
+  if (/\bECONNRESET\b/.test(text)) return 'the connection was reset (ECONNRESET) — try again';
+  if (/\b(ENETUNREACH|EHOSTUNREACH)\b/.test(text)) {
+    return 'the network is unreachable (ENETUNREACH) — check your connection/VPN';
+  }
+  if (/\bETIMEDOUT\b|UND_ERR_(CONNECT|HEADERS|BODY)_TIMEOUT/.test(text)) {
+    return 'the connection timed out — the server may be down or blocked by a firewall';
+  }
+  if (/(?:CERT_|_CERT\b|ERR_TLS_|self[- ]signed)/i.test(text)) {
+    return `TLS certificate verification failed — check the server's certificate (${text})`;
+  }
+  return null;
+}
+
+/**
  * Extract a useful message from a failed `fetch`. Node wraps network failures
  * in a generic `TypeError: fetch failed` and hides the real reason (DNS,
  * connection refused, TLS, or an undici connect/headers/body timeout) in
@@ -126,9 +154,7 @@ export function describeFetchError(err: unknown): string {
     cur = (cur as { cause?: unknown }).cause;
   }
   const text = parts.join(' ← ') || String(err);
-  // An undici timeout (10s connect, 300s headers/body) is the common silent case.
-  if (/UND_ERR_(CONNECT|HEADERS|BODY)_TIMEOUT/.test(text)) return `network timeout: ${text}`;
-  return text;
+  return explainNetworkFailure(text) ?? text;
 }
 
 /** Whether a commit-ish already exists in the local object database. */

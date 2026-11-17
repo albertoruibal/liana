@@ -64,7 +64,7 @@ async function gitlabFetch(
     // Preserve the HTTP-status error from the `!res.ok` branch above; only a
     // genuine fetch failure (a TypeError) hides its cause behind "fetch failed".
     if (err instanceof TypeError) {
-      throw new Error(`GitLab ${method} ${urlPath} failed: ${describeFetchError(err)}`);
+      throw new Error(`Could not reach GitLab at ${cfg.baseUrl}: ${describeFetchError(err)}`);
     }
     throw err;
   } finally {

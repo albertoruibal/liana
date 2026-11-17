@@ -74,7 +74,7 @@ async function githubFetch(method: string, urlPath: string, body?: unknown): Pro
     // Preserve HTTP-status errors (e.g. the 422/404 fallback in createReviewComment);
     // only a genuine fetch failure (a TypeError) hides its cause behind "fetch failed".
     if (err instanceof TypeError) {
-      throw new Error(`GitHub ${method} ${urlPath} failed: ${describeFetchError(err)}`);
+      throw new Error(`Could not reach GitHub at ${cfg.baseUrl}: ${describeFetchError(err)}`);
     }
     throw err;
   } finally {
