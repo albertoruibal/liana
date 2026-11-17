@@ -428,6 +428,7 @@ export async function loadSelectedMr(fetchRefs = false): Promise<boolean> {
     // A tab switch landed while this was in flight — the state is updated but
     // the DOM belongs to another review now.
     if (!isReviewShown(state)) return true;
+    refreshMrSelect(state);
     refreshSessionSelect(state);
     paintForgeWording(state);
     renderReviewChanges(state);
