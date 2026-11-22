@@ -29,15 +29,18 @@
     "lit": "^3.3.3",
     "monaco-editor": "^0.57.0",
     "node-pty": "^1.1.0",
-    "undici": "^8.12.2"
+    "undici": "^8.13.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "electron": "^44.9.0",
-    "electron-builder": "^26.15.3",
+    "@types/node": "^26.6.6",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "typescript": "~7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.8"
+  },
+  "overrides": {
+    "dompurify": "^3.5.0"
   },
   "allowScripts": {
     "esbuild@0.28.2": true
